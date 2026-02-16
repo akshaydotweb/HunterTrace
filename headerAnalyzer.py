@@ -1,12 +1,22 @@
 #!/usr/bin/env python3
 """
-Complete Attacker IP Identification System - Full Pipeline
-Stage 1: Extract headers → Stage 2: Classify IPs → Stage 3: Trace Proxy Chain
+COMPLETE ATTACKER IP IDENTIFICATION SYSTEM
+Full 4-Stage Pipeline in Single File
 
-Single command flow:
-    python3 complete_pipeline.py ./phishing_email.eml
-    python3 complete_pipeline.py email.eml --json full_analysis.json
-    python3 complete_pipeline.py email.eml --verbose
+Stages:
+  1. Email Header Extraction (RFC 2822 parsing, IP extraction)
+  2. IP Classification (Tor/VPN/Proxy detection with real APIs)
+  3A. Proxy Chain Analysis (obfuscation layer detection)
+  3B. WHOIS/Reverse DNS Enrichment (organization & ownership metadata)
+
+Single command:
+    python3 complete_attacker_identification_system.py ./phishing_email.eml
+    python3 complete_attacker_identification_system.py email.eml --json report.json --verbose
+    python3 complete_attacker_identification_system.py email.eml --skip-enrichment
+
+Requirements:
+    pip install requests python-whois dnspython
+    export ABUSEIPDB_API_KEY="your_api_key_here"
 """
 
 import sys
@@ -14,10 +24,12 @@ import os
 import json
 import re
 import email
+import socket
 import requests
 import time
-from typing import List, Dict, Optional, Tuple
-from dataclasses import dataclass, asdict
+import whois
+from typing import List, Dict, Optional, Tuple, Set
+from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 import argparse
@@ -25,11 +37,12 @@ from pathlib import Path
 
 
 # ============================================================================
-# STAGE 1: HEADER EXTRACTION
+# STAGE 1: EMAIL HEADER EXTRACTION
 # ============================================================================
 
 @dataclass
 class ReceivedHeaderDetail:
+    """Individual email hop information"""
     hop_number: int
     ip: Optional[str]
     hostname: Optional[str]
@@ -39,8 +52,10 @@ class ReceivedHeaderDetail:
     raw_header: str
     parsing_confidence: float
 
+
 @dataclass
 class ReceivedChainAnalysis:
+    """Complete email header chain analysis"""
     email_from: str
     email_to: str
     email_subject: str
@@ -54,6 +69,7 @@ class ReceivedChainAnalysis:
     spoofing_risk: float
     confidence: float
     red_flags: List[str]
+
 
 class HeaderExtractor:
     """Stage 1: Extract headers from email"""
@@ -100,21 +116,24 @@ class HeaderExtractor:
             hop = self._parse_header(header_text, i)
             hops.append(hop)
         
+        # Reverse to chronological order (emails are bottom-to-top)
         hops.reverse()
         
+        # Renumber hops
         for i, hop in enumerate(hops):
             hop.hop_number = i + 1
         
         origin_ip = hops[0].ip if hops else None
         destination_ip = hops[-1].ip if hops else None
         
+        # Detect spoofing
         received_spf = msg.get('Received-SPF', None)
         red_flags = []
         spoofing_risk = 0.0
         
         if received_spf and "fail" in received_spf.lower():
             spoofing_risk += 0.25
-            red_flags.append(f"[CRITICAL] SPF FAILED")
+            red_flags.append("[CRITICAL] SPF FAILED: " + received_spf)
         
         for hop in hops:
             if hop.hostname and ("compromised" in hop.hostname.lower() or "fake" in hop.hostname.lower()):
@@ -140,7 +159,7 @@ class HeaderExtractor:
         return analysis
     
     def _parse_header(self, header_text: str, hop_number: int) -> ReceivedHeaderDetail:
-        """Parse single header"""
+        """Parse single Received header"""
         
         ip = None
         hostname = None
@@ -149,19 +168,23 @@ class HeaderExtractor:
         authentication = {}
         parsing_confidence = 0.5
         
+        # Extract IP
         ip_match = self.patterns["ip_only"].search(header_text)
         if ip_match:
             ip = ip_match.group(1)
             parsing_confidence = 0.95
         
+        # Extract hostname
         by_match = self.patterns["by_clause"].search(header_text)
         if by_match:
             hostname = by_match.group(1)
         
+        # Extract protocol
         protocol_match = self.patterns["protocol"].search(header_text)
         if protocol_match:
             protocol = protocol_match.group(1).upper()
         
+        # Check for TLS
         if "TLS" in header_text or "encrypted" in header_text.lower():
             authentication["tls"] = True
         
@@ -183,6 +206,7 @@ class HeaderExtractor:
 
 @dataclass
 class IPClassification:
+    """IP classification result"""
     ip: str
     classification: str
     confidence: float
@@ -197,18 +221,21 @@ class IPClassification:
     is_proxy: bool
     timestamp_analyzed: str
 
+
 class IPClassifierLight:
     """Stage 2: Classify extracted IPs"""
     
     def __init__(self):
         self.abuse_api_key = os.getenv("ABUSEIPDB_API_KEY")
-        self.tor_exits = None
+        self.tor_cache = None
+        self.tor_cache_time = 0
     
     def classify_ips(self, ips: List[str]) -> Dict[str, IPClassification]:
         """Classify multiple IPs"""
         results = {}
         for ip in ips:
             results[ip] = self.classify_ip(ip)
+            time.sleep(0.2)  # Rate limiting
         return results
     
     def classify_ip(self, ip: str) -> IPClassification:
@@ -275,11 +302,16 @@ class IPClassifierLight:
         )
     
     def _check_abuseipdb(self, ip: str) -> Optional[Dict]:
-        """Query AbuseIPDB"""
+        """Query AbuseIPDB API"""
         try:
             headers = {"Key": self.abuse_api_key, "Accept": "application/json"}
             params = {"ipAddress": ip, "maxAgeInDays": 90, "verbose": ""}
-            response = requests.get("https://api.abuseipdb.com/api/v2/check", headers=headers, params=params, timeout=10)
+            response = requests.get(
+                "https://api.abuseipdb.com/api/v2/check",
+                headers=headers,
+                params=params,
+                timeout=10
+            )
             data = response.json()
             
             if "data" in data:
@@ -293,23 +325,31 @@ class IPClassifierLight:
         return None
     
     def _is_tor_exit(self, ip: str) -> bool:
-        """Check if Tor exit"""
+        """Check if IP is Tor exit node"""
         try:
-            response = requests.get("https://check.torproject.org/exit-addresses", timeout=5)
-            for line in response.text.split('\n'):
-                if line.startswith('ExitAddress') and ip in line:
-                    return True
+            current_time = time.time()
+            # Cache for 1 hour
+            if self.tor_cache is None or (current_time - self.tor_cache_time) > 3600:
+                response = requests.get("https://check.torproject.org/exit-addresses", timeout=5)
+                self.tor_cache = response.text
+                self.tor_cache_time = current_time
+            
+            if self.tor_cache:
+                for line in self.tor_cache.split('\n'):
+                    if line.startswith('ExitAddress') and ip in line:
+                        return True
         except:
             pass
         return False
 
 
 # ============================================================================
-# STAGE 3: PROXY CHAIN ANALYSIS
+# STAGE 3A: PROXY CHAIN ANALYSIS
 # ============================================================================
 
 @dataclass
 class ProxyLayer:
+    """Single layer in proxy chain"""
     position: int
     ip: str
     classification: str
@@ -321,8 +361,10 @@ class ProxyLayer:
     provider: Optional[str]
     evidence: List[str]
 
+
 @dataclass
 class ProxyChainAnalysis:
+    """Complete proxy chain analysis"""
     chain: List[ProxyLayer]
     obfuscation_count: int
     obfuscation_types: List[str]
@@ -332,8 +374,9 @@ class ProxyChainAnalysis:
     analysis_notes: List[str]
     timestamp_analyzed: str
 
+
 class ProxyChainTracer:
-    """Stage 3: Analyze proxy chain"""
+    """Stage 3A: Analyze proxy chain for obfuscation"""
     
     def __init__(self):
         self.obfuscation_types_map = {
@@ -346,7 +389,7 @@ class ProxyChainTracer:
         }
     
     def trace_chain(self, classified_ips: List[Dict]) -> ProxyChainAnalysis:
-        """Analyze IP chain"""
+        """Analyze IP chain for obfuscation layers"""
         
         chain = []
         obfuscation_count = 0
@@ -396,7 +439,7 @@ class ProxyChainTracer:
             true_origin_confidence = 0.0
             analysis_notes.append(f"[OBFUSCATED] {obfuscation_count} hiding layer(s) detected")
             analysis_notes.append(f"[METHODS] {', '.join(sorted(obfuscation_types))}")
-            analysis_notes.append("[CONCLUSION] True origin cannot be determined")
+            analysis_notes.append("[CONCLUSION] True origin cannot be determined without law enforcement assistance")
         else:
             if chain:
                 likely_real_origin = chain[0].ip
@@ -419,50 +462,446 @@ class ProxyChainTracer:
 
 
 # ============================================================================
-# REPORT GENERATOR
+# STAGE 3B: WHOIS/REVERSE DNS ENRICHMENT
 # ============================================================================
+
+@dataclass
+class ReverseDNSResult:
+    """Reverse DNS lookup result"""
+    ip: str
+    hostname: Optional[str]
+    ptr_record: Optional[str]
+    lookup_success: bool
+    confidence: float
+    timestamp: str
+
+
+@dataclass
+class WHOISData:
+    """WHOIS lookup result"""
+    ip: str
+    asn: Optional[str]
+    cidr: Optional[str]
+    organization: Optional[str]
+    registrar: Optional[str]
+    registration_date: Optional[str]
+    last_updated: Optional[str]
+    netname: Optional[str]
+    country: Optional[str]
+    raw_whois: str
+    lookup_success: bool
+    confidence: float
+    timestamp: str
+
+
+@dataclass
+class HostingTypeAnalysis:
+    """Hosting type classification"""
+    ip: str
+    hosting_type: str
+    shared_hosting: bool
+    confidence: float
+    evidence: List[str]
+    risk_level: str
+    timestamp: str
+
+
+@dataclass
+class IPEnrichmentResult:
+    """Complete IP enrichment with all metadata"""
+    ip: str
+    reverse_dns: ReverseDNSResult
+    whois_data: WHOISData
+    hosting_analysis: HostingTypeAnalysis
+    is_infrastructure: bool
+    ownership_confidence: float
+    enrichment_notes: List[str]
+    timestamp: str
+
+
+class ReverseDNSLookup:
+    """Perform reverse DNS lookups"""
+    
+    def __init__(self, timeout: int = 5):
+        self.timeout = timeout
+        self.cache = {}
+    
+    def lookup(self, ip: str) -> ReverseDNSResult:
+        """Resolve IP to hostname"""
+        
+        if ip in self.cache:
+            return self.cache[ip]
+        
+        hostname = None
+        ptr_record = None
+        lookup_success = False
+        confidence = 0.0
+        
+        try:
+            hostname, aliaslist, ipaddrlist = socket.gethostbyaddr(ip)
+            lookup_success = True
+            confidence = 0.90
+            ptr_record = hostname
+        except socket.herror:
+            pass
+        except socket.timeout:
+            pass
+        except Exception:
+            pass
+        
+        result = ReverseDNSResult(
+            ip=ip,
+            hostname=hostname,
+            ptr_record=ptr_record,
+            lookup_success=lookup_success,
+            confidence=confidence,
+            timestamp=datetime.now().isoformat()
+        )
+        
+        self.cache[ip] = result
+        return result
+
+
+class WHOISLookupManager:
+    """Perform WHOIS lookups with caching"""
+    
+    def __init__(self, timeout: int = 10):
+        self.timeout = timeout
+        self.cache = {}
+        self.failed_ips = set()
+    
+    def lookup(self, ip: str) -> WHOISData:
+        """Perform WHOIS lookup"""
+        
+        if ip in self.cache:
+            return self.cache[ip]
+        
+        if ip in self.failed_ips:
+            return self._empty_whois(ip, success=False)
+        
+        asn = None
+        cidr = None
+        organization = None
+        registrar = None
+        registration_date = None
+        last_updated = None
+        netname = None
+        country = None
+        raw_whois = ""
+        lookup_success = False
+        confidence = 0.0
+        
+        try:
+            w = whois.whois(ip)
+            raw_whois = str(w)
+            lookup_success = True
+            confidence = 0.85
+            
+            # Parse WHOIS response
+            org_field = w.get('org', [None])[0] if isinstance(w.get('org'), list) else w.get('org')
+            if not org_field:
+                org_field = w.get('organization', [None])[0] if isinstance(w.get('organization'), list) else w.get('organization')
+            
+            organization = org_field
+            
+            # ASN extraction
+            asn_field = w.get('asn', None)
+            if asn_field:
+                asn = asn_field[0] if isinstance(asn_field, list) else asn_field
+            
+            # CIDR extraction
+            cidr_field = w.get('cidr', None)
+            if cidr_field:
+                cidr = cidr_field[0] if isinstance(cidr_field, list) else cidr_field
+            
+            # Netname
+            netname_field = w.get('netname', None)
+            if netname_field:
+                netname = netname_field[0] if isinstance(netname_field, list) else netname_field
+            
+            # Country
+            country_field = w.get('country', None)
+            if country_field:
+                country = country_field[0] if isinstance(country_field, list) else country_field
+            
+            # Dates
+            updated = w.get('updated_date', None)
+            if updated:
+                last_updated = updated[0].isoformat() if isinstance(updated, list) else updated.isoformat()
+            
+            created = w.get('created_date', None)
+            if created:
+                registration_date = created[0].isoformat() if isinstance(created, list) else created.isoformat()
+        
+        except Exception:
+            self.failed_ips.add(ip)
+        
+        result = WHOISData(
+            ip=ip,
+            asn=asn,
+            cidr=cidr,
+            organization=organization,
+            registrar=registrar,
+            registration_date=registration_date,
+            last_updated=last_updated,
+            netname=netname,
+            country=country,
+            raw_whois=raw_whois,
+            lookup_success=lookup_success,
+            confidence=confidence,
+            timestamp=datetime.now().isoformat()
+        )
+        
+        self.cache[ip] = result
+        return result
+    
+    def _empty_whois(self, ip: str, success: bool = False) -> WHOISData:
+        """Return empty WHOIS result"""
+        return WHOISData(
+            ip=ip,
+            asn=None,
+            cidr=None,
+            organization=None,
+            registrar=None,
+            registration_date=None,
+            last_updated=None,
+            netname=None,
+            country=None,
+            raw_whois="",
+            lookup_success=success,
+            confidence=0.0,
+            timestamp=datetime.now().isoformat()
+        )
+
+
+class HostingTypeDetector:
+    """Detect if IP is residential, datacenter, or hosting provider"""
+    
+    def __init__(self):
+        self.datacenter_keywords = [
+            'digital ocean', 'aws', 'amazon', 'google cloud', 'azure', 'linode',
+            'vultr', 'hetzner', 'rackspace', 'ovh', 'ionos', 'namecheap',
+            'hostgator', 'bluehost', 'dreamhost', 'godaddy', 'data center',
+            'server', 'hosting', 'cloud', 'provider', 'vps', 'dedicated'
+        ]
+        
+        self.residential_keywords = [
+            'residential', 'home', 'consumer', 'broadband', 'isp', 'comcast',
+            'verizon', 'att', 'charter', 'cox', 'spectrum', 'vodafone'
+        ]
+        
+        self.shared_hosting_keywords = [
+            'shared', 'vps', 'virtual', 'reseller', 'cloud'
+        ]
+    
+    def analyze(self, whois_data: WHOISData, reverse_dns: ReverseDNSResult) -> HostingTypeAnalysis:
+        """Analyze hosting type"""
+        
+        hosting_type = "UNKNOWN"
+        shared_hosting = False
+        confidence = 0.0
+        evidence = []
+        risk_level = "MEDIUM"
+        
+        combined_text = (
+            (whois_data.organization or "") +
+            " " +
+            (whois_data.netname or "") +
+            " " +
+            (reverse_dns.hostname or "")
+        ).lower()
+        
+        # Check for datacenter
+        for keyword in self.datacenter_keywords:
+            if keyword in combined_text:
+                hosting_type = "DATACENTER"
+                confidence = max(confidence, 0.85)
+                evidence.append(f"Found keyword: {keyword}")
+                risk_level = "HIGH"
+                break
+        
+        # Check for shared hosting
+        if hosting_type == "DATACENTER":
+            for keyword in self.shared_hosting_keywords:
+                if keyword in combined_text:
+                    shared_hosting = True
+                    confidence = max(confidence, 0.80)
+                    evidence.append(f"Shared hosting indicator: {keyword}")
+                    break
+        
+        # Check for residential
+        if hosting_type == "UNKNOWN":
+            for keyword in self.residential_keywords:
+                if keyword in combined_text:
+                    hosting_type = "RESIDENTIAL"
+                    confidence = 0.80
+                    evidence.append(f"Residential keyword: {keyword}")
+                    risk_level = "LOW"
+                    break
+        
+        # Heuristics from WHOIS
+        if hosting_type == "UNKNOWN" and whois_data.lookup_success:
+            if whois_data.organization:
+                if any(x in whois_data.organization.lower() for x in ['inc', 'llc', 'corp']):
+                    hosting_type = "HOSTING_PROVIDER"
+                    confidence = 0.70
+                    evidence.append("Company organization structure")
+                    risk_level = "HIGH"
+            
+            if whois_data.asn:
+                hosting_type = "HOSTING_PROVIDER"
+                confidence = 0.75
+                evidence.append(f"ASN identified: {whois_data.asn}")
+                risk_level = "MEDIUM"
+        
+        # Default
+        if hosting_type == "UNKNOWN":
+            hosting_type = "UNKNOWN"
+            confidence = 0.3
+            risk_level = "MEDIUM"
+        
+        return HostingTypeAnalysis(
+            ip=whois_data.ip,
+            hosting_type=hosting_type,
+            shared_hosting=shared_hosting,
+            confidence=confidence,
+            evidence=evidence,
+            risk_level=risk_level,
+            timestamp=datetime.now().isoformat()
+        )
+
+
+class IPEnrichmentStage3B:
+    """Stage 3B: Orchestrate WHOIS and Reverse DNS enrichment"""
+    
+    def __init__(self):
+        self.reverse_dns = ReverseDNSLookup()
+        self.whois = WHOISLookupManager()
+        self.hosting_detector = HostingTypeDetector()
+    
+    def enrich_ip(self, ip: str) -> IPEnrichmentResult:
+        """Enrich single IP with full metadata"""
+        
+        # Reverse DNS
+        reverse_dns_result = self.reverse_dns.lookup(ip)
+        
+        # WHOIS
+        whois_result = self.whois.lookup(ip)
+        
+        # Hosting type analysis
+        hosting_analysis = self.hosting_detector.analyze(whois_result, reverse_dns_result)
+        
+        # Determine if infrastructure
+        is_infrastructure = hosting_analysis.hosting_type in ["DATACENTER", "HOSTING_PROVIDER"]
+        
+        # Calculate ownership confidence
+        ownership_confidence = (
+            (reverse_dns_result.confidence * 0.3) +
+            (whois_result.confidence * 0.4) +
+            (hosting_analysis.confidence * 0.3)
+        )
+        
+        # Build enrichment notes
+        enrichment_notes = []
+        
+        if is_infrastructure:
+            enrichment_notes.append(f"[INFRASTRUCTURE] Hosted on {hosting_analysis.hosting_type.lower()}")
+            if hosting_analysis.shared_hosting:
+                enrichment_notes.append("[SHARED] Multiple domains/customers on same IP")
+        else:
+            enrichment_notes.append(f"[ORIGIN] {hosting_analysis.hosting_type.lower()}")
+        
+        if whois_result.organization:
+            enrichment_notes.append(f"[ORGANIZATION] {whois_result.organization}")
+        
+        if whois_result.asn:
+            enrichment_notes.append(f"[ASN] {whois_result.asn}")
+        
+        if whois_result.country:
+            enrichment_notes.append(f"[COUNTRY] {whois_result.country}")
+        
+        result = IPEnrichmentResult(
+            ip=ip,
+            reverse_dns=reverse_dns_result,
+            whois_data=whois_result,
+            hosting_analysis=hosting_analysis,
+            is_infrastructure=is_infrastructure,
+            ownership_confidence=ownership_confidence,
+            enrichment_notes=enrichment_notes,
+            timestamp=datetime.now().isoformat()
+        )
+        
+        return result
+    
+    def enrich_multiple(self, ips: List[str]) -> Dict[str, IPEnrichmentResult]:
+        """Enrich multiple IPs"""
+        
+        results = {}
+        for ip in ips:
+            results[ip] = self.enrich_ip(ip)
+            time.sleep(1)  # Rate limiting
+        
+        return results
+
+
+# ============================================================================
+# COMPLETE PIPELINE + REPORT GENERATION
+# ============================================================================
+
+@dataclass
+class CompletePipelineResult:
+    """Complete analysis result with all stages"""
+    header_analysis: ReceivedChainAnalysis
+    classifications: Dict[str, IPClassification]
+    proxy_analysis: ProxyChainAnalysis
+    enrichment_results: Optional[Dict[str, IPEnrichmentResult]] = None
+
 
 class CompletePipelineReport:
     """Generate complete analysis report"""
     
-    def __init__(self, header_analysis, classifications, proxy_analysis):
-        self.header = header_analysis
-        self.classifications = classifications
-        self.proxy = proxy_analysis
+    def __init__(self, result: CompletePipelineResult):
+        self.header = result.header_analysis
+        self.classifications = result.classifications
+        self.proxy = result.proxy_analysis
+        self.enrichment = result.enrichment_results
     
     def generate_text_report(self, verbose: bool = False) -> str:
-        """Generate text report"""
+        """Generate comprehensive text report"""
         
         lines = []
-        lines.append("[COMPLETE PHISHING EMAIL ANALYSIS REPORT]")
-        lines.append("=" * 70)
+        lines.append("[ATTACKER IP IDENTIFICATION SYSTEM - COMPLETE ANALYSIS]")
+        lines.append("=" * 80)
         
         # Email info
-        lines.append("\n[EMAIL INFORMATION]")
+        lines.append("\n[STAGE 1: EMAIL HEADER INFORMATION]")
+        lines.append("-" * 80)
         lines.append(f"  From: {self.header.email_from}")
         lines.append(f"  To: {self.header.email_to}")
         lines.append(f"  Subject: {self.header.email_subject}")
         lines.append(f"  Date: {self.header.email_date}")
-        lines.append(f"  Spoofing Risk: {self.header.spoofing_risk:.0%}")
+        lines.append(f"  Message-ID: {self.header.message_id}")
+        lines.append(f"\n  Spoofing Risk: {self.header.spoofing_risk:.0%}")
+        lines.append(f"  Header Confidence: {self.header.confidence:.0%}")
         
         if self.header.red_flags:
-            lines.append(f"  Red Flags:")
-            for flag in self.header.red_flags[:3]:  # Show first 3
-                lines.append(f"    - {flag}")
+            lines.append(f"\n  Red Flags ({len(self.header.red_flags)}):")
+            for flag in self.header.red_flags[:5]:
+                lines.append(f"    {flag}")
         
         # Header chain
-        lines.append("\n[HEADER CHAIN ANALYSIS]")
-        lines.append(f"  Total Hops: {self.header.hop_count}")
-        lines.append(f"  Origin IP: {self.header.origin_ip}")
-        lines.append(f"  Destination IP: {self.header.destination_ip}")
+        lines.append(f"\n  Header Chain: {self.header.hop_count} hops found")
+        lines.append(f"    Origin IP: {self.header.origin_ip}")
+        lines.append(f"    Destination IP: {self.header.destination_ip}")
         
-        if verbose:
-            lines.append(f"  Hops:")
+        if verbose and self.header.hops:
+            lines.append(f"\n  Detailed Hops:")
             for hop in self.header.hops:
-                lines.append(f"    {hop.hop_number}. {hop.ip} ({hop.hostname})")
+                lines.append(f"    [{hop.hop_number}] {hop.ip or 'N/A'} - {hop.hostname or 'N/A'}")
         
-        # IP Classifications
-        lines.append("\n[IP CLASSIFICATIONS (STAGE 2)]")
+        # Stage 2: Classifications
+        lines.append("\n\n[STAGE 2: IP CLASSIFICATION ANALYSIS]")
+        lines.append("-" * 80)
         
         for ip in sorted(self.classifications.keys()):
             result = self.classifications[ip]
@@ -470,13 +909,46 @@ class CompletePipelineReport:
             lines.append(f"    Classification: {result.classification}")
             lines.append(f"    Confidence: {result.confidence:.0%}")
             lines.append(f"    Threat Score: {result.threat_score}/100")
+            lines.append(f"    Abuse Reports: {result.abuse_reports}")
+            
+            if result.country:
+                lines.append(f"    Country: {result.country}")
             
             if result.evidence:
-                lines.append(f"    Evidence: {'; '.join(result.evidence[:2])}")
+                lines.append(f"    Evidence:")
+                for ev in result.evidence[:3]:
+                    lines.append(f"      - {ev}")
+            
+            # Stage 3B enrichment
+            if self.enrichment and ip in self.enrichment:
+                enrich = self.enrichment[ip]
+                lines.append(f"\n    [STAGE 3B: WHOIS ENRICHMENT]")
+                
+                if enrich.reverse_dns.hostname:
+                    lines.append(f"      Reverse DNS: {enrich.reverse_dns.hostname}")
+                
+                if enrich.whois_data.organization:
+                    lines.append(f"      Organization: {enrich.whois_data.organization}")
+                
+                if enrich.whois_data.asn:
+                    lines.append(f"      ASN: {enrich.whois_data.asn}")
+                
+                if enrich.whois_data.cidr:
+                    lines.append(f"      CIDR: {enrich.whois_data.cidr}")
+                
+                hosting = enrich.hosting_analysis.hosting_type
+                lines.append(f"      Hosting Type: {hosting}")
+                lines.append(f"      Risk Level: {enrich.hosting_analysis.risk_level}")
+                lines.append(f"      Ownership Confidence: {enrich.ownership_confidence:.0%}")
+                
+                if enrich.enrichment_notes:
+                    for note in enrich.enrichment_notes[:3]:
+                        lines.append(f"      {note}")
         
-        # Proxy chain
-        lines.append("\n[PROXY CHAIN ANALYSIS (STAGE 3)]")
-        lines.append(f"  Obfuscation Layers: {self.proxy.obfuscation_count}")
+        # Stage 3A: Proxy chain
+        lines.append("\n\n[STAGE 3A: PROXY CHAIN ANALYSIS]")
+        lines.append("-" * 80)
+        lines.append(f"  Obfuscation Layers Detected: {self.proxy.obfuscation_count}")
         
         if self.proxy.obfuscation_types:
             lines.append(f"  Methods: {', '.join(self.proxy.obfuscation_types)}")
@@ -485,92 +957,109 @@ class CompletePipelineReport:
         lines.append(f"  Likely Real Origin: {self.proxy.likely_real_origin}")
         lines.append(f"  Origin Confidence: {self.proxy.true_origin_confidence:.0%}")
         
-        # Flow diagram
-        lines.append("\n[ATTACK FLOW]")
+        # Attack flow diagram
+        lines.append("\n  [ATTACK FLOW DIAGRAM]")
         
         for i, layer in enumerate(self.proxy.chain):
-            ip_short = layer.ip[-10:] if len(layer.ip) > 10 else layer.ip
+            ip_short = layer.ip[-12:] if len(layer.ip) > 12 else layer.ip
             obf_marker = " [OBFUSCATED]" if layer.is_obfuscation else ""
             threat_marker = " [HIGH THREAT]" if layer.threat_score > 75 else ""
             
-            lines.append(f"  [{i+1}] {ip_short:<12} {layer.classification:<20}{threat_marker}{obf_marker}")
+            lines.append(f"    [{i+1}] {ip_short:<15} {layer.classification:<18}{threat_marker}{obf_marker}")
             
             if i < len(self.proxy.chain) - 1:
-                lines.append("       |")
-                lines.append("       v")
+                lines.append("         |")
+                lines.append("         v")
         
         # Conclusion
-        lines.append("\n[CONCLUSION]")
-        lines.append("=" * 70)
+        lines.append("\n\n[ANALYSIS CONCLUSION]")
+        lines.append("=" * 80)
         
         for note in self.proxy.analysis_notes:
             lines.append(f"  {note}")
         
+        # Recommendations
         lines.append("\n[RECOMMENDED ACTIONS]")
         
         if self.proxy.obfuscation_count > 0:
-            lines.append("  1. Alert law enforcement (Tor/VPN forensics)")
-            lines.append("  2. Monitor for pattern changes")
-            lines.append("  3. Correlate with other campaigns")
+            lines.append("  1. Alert law enforcement (Tor/VPN forensics required)")
+            lines.append("  2. Monitor for related patterns in other campaigns")
+            lines.append("  3. Correlate with threat intelligence databases")
+            lines.append("  4. Consider infrastructure blocking")
         else:
-            lines.append("  1. Contact hosting provider")
-            lines.append("  2. File abuse report")
-            lines.append("  3. Request ISP logs via subpoena")
+            lines.append("  1. Contact IP's hosting provider abuse team")
+            lines.append("  2. File DMCA/abuse report with AbuseIPDB")
+            lines.append("  3. Request ISP logs via subpoena (legal)")
+            lines.append("  4. Document evidence for law enforcement")
         
-        lines.append("\n" + "=" * 70 + "\n")
+        lines.append("\n" + "=" * 80 + "\n")
         
         return "\n".join(lines)
     
     def to_json(self) -> Dict:
-        """Export to JSON"""
+        """Export complete analysis to JSON"""
+        
+        enrichment_data = {}
+        if self.enrichment:
+            for ip, enrich in self.enrichment.items():
+                enrichment_data[ip] = {
+                    "reverse_dns": asdict(enrich.reverse_dns),
+                    "whois": asdict(enrich.whois_data),
+                    "hosting_analysis": asdict(enrich.hosting_analysis),
+                    "is_infrastructure": enrich.is_infrastructure,
+                    "ownership_confidence": enrich.ownership_confidence,
+                    "notes": enrich.enrichment_notes
+                }
         
         return {
+            "timestamp": datetime.now().isoformat(),
             "email": {
                 "from": self.header.email_from,
                 "to": self.header.email_to,
                 "subject": self.header.email_subject,
                 "date": self.header.email_date,
+                "message_id": self.header.message_id,
                 "spoofing_risk": self.header.spoofing_risk,
                 "red_flags": self.header.red_flags
             },
-            "stage1_header_chain": {
-                "hops": self.header.hop_count,
+            "stage1_header_extraction": {
+                "hops_found": self.header.hop_count,
                 "origin_ip": self.header.origin_ip,
-                "destination_ip": self.header.destination_ip
+                "destination_ip": self.header.destination_ip,
+                "confidence": self.header.confidence,
+                "hop_details": [asdict(hop) for hop in self.header.hops]
             },
-            "stage2_ip_classifications": {
+            "stage2_ip_classification": {
                 ip: asdict(c) for ip, c in self.classifications.items()
             },
-            "stage3_proxy_chain": {
+            "stage3a_proxy_chain": {
                 "obfuscation_count": self.proxy.obfuscation_count,
                 "obfuscation_types": self.proxy.obfuscation_types,
                 "apparent_origin": self.proxy.apparent_origin,
                 "likely_real_origin": self.proxy.likely_real_origin,
                 "true_origin_confidence": self.proxy.true_origin_confidence,
                 "analysis_notes": self.proxy.analysis_notes,
-                "chain": [asdict(layer) for layer in self.proxy.chain]
-            }
+                "chain_layers": [asdict(layer) for layer in self.proxy.chain]
+            },
+            "stage3b_whois_enrichment": enrichment_data
         }
 
 
-# ============================================================================
-# MASTER PIPELINE
-# ============================================================================
-
 class CompletePipeline:
-    """Master pipeline: Stage 1 → Stage 2 → Stage 3"""
+    """Master pipeline orchestrating all 4 stages"""
     
-    def __init__(self, verbose: bool = False):
+    def __init__(self, verbose: bool = False, skip_enrichment: bool = False):
         self.extractor = HeaderExtractor()
         self.classifier = IPClassifierLight()
         self.tracer = ProxyChainTracer()
+        self.enricher = IPEnrichmentStage3B() if not skip_enrichment else None
         self.verbose = verbose
     
-    def run(self, email_file: str) -> Optional[CompletePipelineReport]:
-        """Run complete pipeline"""
+    def run(self, email_file: str) -> Optional[CompletePipelineResult]:
+        """Run all 4 stages"""
         
-        print("[START] Complete Phishing Analysis Pipeline")
-        print("=" * 70)
+        print("[START] Complete Attacker IP Identification Pipeline")
+        print("=" * 80)
         
         # STAGE 1: Extract headers
         print("\n[STAGE 1] Extracting email headers...")
@@ -581,7 +1070,7 @@ class CompletePipeline:
             print("[ERROR] Failed to parse email")
             return None
         
-        print(f"[SUCCESS] Found {header_analysis.hop_count} hops")
+        print(f"[SUCCESS] Found {header_analysis.hop_count} hops in email chain")
         
         # Extract unique IPs
         unique_ips = []
@@ -591,7 +1080,7 @@ class CompletePipeline:
                 unique_ips.append(hop.ip)
                 seen.add(hop.ip)
         
-        print(f"[INFO] Unique IPs: {', '.join(unique_ips)}")
+        print(f"[INFO] Unique IPs found: {', '.join(unique_ips)}")
         
         # STAGE 2: Classify IPs
         print("\n[STAGE 2] Classifying IPs...")
@@ -600,12 +1089,11 @@ class CompletePipeline:
         for ip in unique_ips:
             result = self.classifier.classify_ip(ip)
             classifications[ip] = result
-            print(f"  {ip}: {result.classification} ({result.confidence:.0%})")
+            print(f"  {ip}: {result.classification} (confidence: {result.confidence:.0%}, threat: {result.threat_score}/100)")
         
-        # STAGE 3: Trace proxy chain
-        print("\n[STAGE 3] Tracing proxy chain...")
+        # STAGE 3A: Trace proxy chain
+        print("\n[STAGE 3A] Analyzing proxy chain...")
         
-        # Build classified IPs list in chain order
         classified_chain = []
         for hop in header_analysis.hops:
             if hop.ip and hop.ip in classifications:
@@ -613,33 +1101,67 @@ class CompletePipeline:
                 classified_chain.append(classified_data)
         
         proxy_analysis = self.tracer.trace_chain(classified_chain)
-        print(f"  Obfuscation layers: {proxy_analysis.obfuscation_count}")
-        print(f"  Real origin: {proxy_analysis.likely_real_origin}")
+        print(f"  Obfuscation layers detected: {proxy_analysis.obfuscation_count}")
+        print(f"  Real origin status: {proxy_analysis.likely_real_origin}")
         
-        # Generate report
-        print("\n[GENERATING REPORT]")
+        # STAGE 3B: WHOIS enrichment
+        enrichment_results = None
+        if self.enricher:
+            print("\n[STAGE 3B] Enriching with WHOIS/DNS data...")
+            try:
+                enrichment_results = {}
+                for ip in unique_ips:
+                    result = self.enricher.enrich_ip(ip)
+                    enrichment_results[ip] = result
+                    org = result.whois_data.organization or "Unknown"
+                    country = result.whois_data.country or "?"
+                    print(f"  {ip}: {org} ({country})")
+            except Exception as e:
+                if self.verbose:
+                    print(f"  [WARNING] Enrichment failed: {e}")
+                enrichment_results = None
+        else:
+            print("\n[NOTICE] Stage 3B skipped (requires python-whois library)")
         
-        report = CompletePipelineReport(header_analysis, classifications, proxy_analysis)
+        # Create result
+        result = CompletePipelineResult(
+            header_analysis=header_analysis,
+            classifications=classifications,
+            proxy_analysis=proxy_analysis,
+            enrichment_results=enrichment_results
+        )
         
-        return report
+        print("\n[STAGE COMPLETE] All stages finished successfully")
+        
+        return result
 
 
 # ============================================================================
-# MAIN
+# CLI ENTRY POINT
 # ============================================================================
 
 def main():
-    """Main entry point"""
+    """Command-line interface"""
     
     parser = argparse.ArgumentParser(
-        description="Complete Attacker IP Identification Pipeline",
+        description="Complete Attacker IP Identification System (All 4 Stages)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
-  python3 complete_pipeline.py ./phishing_email.eml
-  python3 complete_pipeline.py email.eml --json full_report.json
-  python3 complete_pipeline.py email.eml --verbose
-  python3 complete_pipeline.py email.eml --json report.json --verbose
+STAGES:
+  1. Email header extraction (RFC 2822 parsing, IP extraction in order)
+  2. IP classification (Tor/VPN/Proxy detection with real APIs)
+  3A. Proxy chain analysis (obfuscation layers detection)
+  3B. WHOIS/Reverse DNS enrichment (organization & ASN metadata)
+
+EXAMPLES:
+  python3 complete_attacker_identification_system.py ./phishing.eml
+  python3 complete_attacker_identification_system.py email.eml --json report.json
+  python3 complete_attacker_identification_system.py email.eml --verbose
+  python3 complete_attacker_identification_system.py email.eml --skip-enrichment
+
+SETUP:
+  pip install requests python-whois dnspython
+  export ABUSEIPDB_API_KEY="your_key_here"
         """
     )
     
@@ -651,13 +1173,19 @@ Examples:
     parser.add_argument(
         "--json",
         metavar="OUTPUT_FILE",
-        help="Export full report to JSON"
+        help="Export full analysis to JSON file"
     )
     
     parser.add_argument(
         "--verbose",
         action="store_true",
         help="Show detailed output"
+    )
+    
+    parser.add_argument(
+        "--skip-enrichment",
+        action="store_true",
+        help="Skip Stage 3B (WHOIS enrichment)"
     )
     
     args = parser.parse_args()
@@ -668,24 +1196,29 @@ Examples:
         sys.exit(1)
     
     # Run pipeline
-    pipeline = CompletePipeline(verbose=args.verbose)
-    report = pipeline.run(args.email_file)
+    pipeline = CompletePipeline(verbose=args.verbose, skip_enrichment=args.skip_enrichment)
+    result = pipeline.run(args.email_file)
     
-    if not report:
-        print("[ERROR] Pipeline failed")
+    if not result:
+        print("[ERROR] Pipeline execution failed")
         sys.exit(1)
     
-    # Display report
+    # Generate and display report
     print("\n")
+    report = CompletePipelineReport(result)
     print(report.generate_text_report(verbose=args.verbose))
     
     # Export JSON if requested
     if args.json:
-        with open(args.json, 'w') as f:
-            json.dump(report.to_json(), f, indent=2)
-        print(f"[SUCCESS] Full report exported to: {args.json}")
+        try:
+            with open(args.json, 'w') as f:
+                json.dump(report.to_json(), f, indent=2)
+            print(f"[SUCCESS] Full analysis exported to: {args.json}")
+        except Exception as e:
+            print(f"[ERROR] Failed to export JSON: {e}")
+            sys.exit(1)
     
-    print("[COMPLETE] Analysis finished")
+    print("[COMPLETE] Analysis finished successfully")
 
 
 if __name__ == "__main__":
