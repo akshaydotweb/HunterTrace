@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 COMPLETE ATTACKER IP IDENTIFICATION SYSTEM
+Full 7-Stage Pipeline in Single File
 
 Stages:
   1. Email Header Extraction (RFC 2822 parsing, IP extraction)
@@ -9,6 +10,8 @@ Stages:
   3B. WHOIS/Reverse DNS Enrichment (organization & ownership metadata)
   3C. Infrastructure Correlation (attack pattern detection, team sizing)
   4. Threat Intelligence Aggregation (C2 detection, malware analysis, threat scoring)
+  [GEOLOCATION] Attacker Geolocation (city-level location with coordinates, timezone, ISP)
+  5. Attribution Analysis (final synthesis, evidence packaging, law enforcement reports)
 
 Single command:
     python3 complete_attacker_identification_system.py ./phishing_email.eml
@@ -38,6 +41,20 @@ try:
     HOSTING_KEYWORDS_AVAILABLE = True
 except ImportError:
     HOSTING_KEYWORDS_AVAILABLE = False
+
+# Import geolocation enrichment module
+try:
+    from geolocationEnrichment import GeolocationEnricher, GeolocationData, format_coordinates, get_distance_between_points
+    GEOLOCATION_AVAILABLE = True
+except ImportError:
+    GEOLOCATION_AVAILABLE = False
+
+# Import Stage 5: Attribution Analysis
+try:
+    from attributeAnalysis import AttributionAnalysisEngine, Stage5Attribution
+    STAGE5_AVAILABLE = True
+except ImportError:
+    STAGE5_AVAILABLE = False
 
 
 # ============================================================================
@@ -1906,6 +1923,8 @@ class CompletePipelineResult:
     enrichment_results: Optional[Dict[str, IPEnrichmentResult]] = None
     correlation_analysis: Optional[CorrelationAnalysis] = None
     threat_intelligence: Optional[ThreatIntelligenceAnalysis] = None
+    geolocation_results: Optional[Dict[str, 'GeolocationData']] = None
+    attribution_analysis: Optional['Stage5Attribution'] = None
 
 
 class CompletePipelineReport:
@@ -1918,6 +1937,8 @@ class CompletePipelineReport:
         self.enrichment = result.enrichment_results
         self.correlation = result.correlation_analysis
         self.threat_intelligence = result.threat_intelligence
+        self.geolocation = result.geolocation_results
+        self.attribution = result.attribution_analysis
     
     def generate_text_report(self, verbose: bool = False) -> str:
         """Generate comprehensive text report"""
@@ -1926,8 +1947,52 @@ class CompletePipelineReport:
         lines.append("[ATTACKER IP IDENTIFICATION SYSTEM - COMPLETE ANALYSIS]")
         lines.append("=" * 80)
         
+        # ========================================================================
+        # PRIMARY FOCUS: ATTACKER GEOLOCATION
+        # ========================================================================
+        if self.geolocation:
+            lines.append("\n[PRIMARY: ATTACKER GEOLOCATION ANALYSIS]")
+            lines.append("=" * 80)
+            
+            # Find primary attack location
+            primary_locations = {}
+            for ip, geoloc in self.geolocation.items():
+                if geoloc and geoloc.city and geoloc.country:
+                    city_key = f"{geoloc.city}, {geoloc.country}"
+                    primary_locations[city_key] = primary_locations.get(city_key, 0) + 1
+            
+            if primary_locations:
+                sorted_locations = sorted(primary_locations.items(), key=lambda x: x[1], reverse=True)
+                lines.append(f"\n  PRIMARY ORIGIN (Most frequent):")
+                lines.append(f"    Location: {sorted_locations[0][0]}")
+                lines.append(f"    Detected in: {sorted_locations[0][1]} hop(s)")
+                
+                # Get details of primary location
+                for ip, geoloc in self.geolocation.items():
+                    if geoloc and geoloc.city == sorted_locations[0][0].split(',')[0]:
+                        if geoloc.latitude and geoloc.longitude:
+                            lines.append(f"    Coordinates: {format_coordinates(geoloc.latitude, geoloc.longitude)}")
+                        if geoloc.timezone:
+                            lines.append(f"    Timezone: {geoloc.timezone}")
+                        if geoloc.accuracy_radius_km:
+                            lines.append(f"    Accuracy Radius: ±{geoloc.accuracy_radius_km} km")
+                        lines.append(f"    Confidence: {geoloc.confidence:.0%}")
+                        break
+            
+            # All detected locations
+            lines.append(f"\n  ALL DETECTED LOCATIONS:")
+            for ip, geoloc in sorted(self.geolocation.items()):
+                if geoloc and geoloc.confidence > 0:
+                    if geoloc.city:
+                        coord_str = ""
+                        if geoloc.latitude and geoloc.longitude:
+                            coord_str = f" [{format_coordinates(geoloc.latitude, geoloc.longitude)}]"
+                        lines.append(f"    {ip}: {geoloc.city}, {geoloc.country}{coord_str}")
+                    elif geoloc.country:
+                        lines.append(f"    {ip}: {geoloc.country} (city unknown)")
+        
         # Email info
-        lines.append("\n[STAGE 1: EMAIL HEADER INFORMATION]")
+        lines.append("\n\n[STAGE 1: EMAIL HEADER INFORMATION]")
         lines.append("-" * 80)
         lines.append(f"  From: {self.header.email_from}")
         lines.append(f"  To: {self.header.email_to}")
@@ -2145,6 +2210,76 @@ class CompletePipelineReport:
             lines.append("  3. Request ISP logs via subpoena (legal)")
             lines.append("  4. Document evidence for law enforcement")
         
+        # ========================================================================
+        # STAGE 5: FINAL ATTRIBUTION ANALYSIS
+        # ========================================================================
+        if self.attribution:
+            lines.append("\n[STAGE 5: FINAL ATTRIBUTION & EVIDENCE ANALYSIS]")
+            lines.append("=" * 80)
+            
+            # Attribution Statement
+            lines.append(f"\n  CONFIDENCE LEVEL: {self.attribution.confidence_level}")
+            lines.append(f"  Overall Confidence Score: {self.attribution.confidence_scoring.overall_confidence:.0%}")
+            
+            lines.append(f"\n  ATTRIBUTION STATEMENT:")
+            for stmt_line in self.attribution.final_attribution_statement.split('\n'):
+                lines.append(f"    {stmt_line}")
+            
+            # Attacker Profile
+            profile = self.attribution.attacker_profile
+            lines.append(f"\n  ATTACKER PROFILE:")
+            lines.append(f"    Primary Origin: {profile.primary_origin}")
+            lines.append(f"    Origin Confidence: {profile.origin_confidence:.0%}")
+            if profile.countries_used:
+                lines.append(f"    Countries Used: {', '.join(profile.countries_used)}")
+            if profile.cities_detected:
+                lines.append(f"    Cities Detected: {', '.join(list(profile.cities_detected)[:5])}")
+            
+            lines.append(f"\n  INFRASTRUCTURE PROFILE:")
+            lines.append(f"    Unique ASNs: {len(profile.unique_asns)}")
+            lines.append(f"    Unique ISPs: {profile.unique_isps}")
+            lines.append(f"    Infrastructure Diversity: {profile.infrastructure_diversity}")
+            lines.append(f"    Operational Security Level: {profile.operational_security_level}")
+            
+            lines.append(f"\n  ATTACK CHARACTERISTICS:")
+            lines.append(f"    Attack Type: {profile.attack_type}")
+            lines.append(f"    Estimated Team Size: {profile.estimated_team_size}")
+            lines.append(f"    Likely Motivation: {profile.likely_motivation}")
+            lines.append(f"    Uses Tor: {profile.uses_tor}")
+            lines.append(f"    Uses VPN: {profile.uses_vpn}")
+            lines.append(f"    Uses Residential Proxies: {profile.uses_residential_proxies}")
+            
+            # Confidence Breakdown
+            lines.append(f"\n  CONFIDENCE BREAKDOWN:")
+            lines.append(f"    Location Confidence: {self.attribution.confidence_scoring.location_confidence:.0%}")
+            lines.append(f"    Infrastructure Confidence: {self.attribution.confidence_scoring.infrastructure_confidence:.0%}")
+            lines.append(f"    Threat Intel Confidence: {self.attribution.confidence_scoring.threat_intel_confidence:.0%}")
+            lines.append(f"    Behavioral Confidence: {self.attribution.confidence_scoring.behavioral_confidence:.0%}")
+            lines.append(f"    Technical Confidence: {self.attribution.confidence_scoring.technical_confidence:.0%}")
+            
+            # Supporting Evidence Summary
+            lines.append(f"\n  SUPPORTING EVIDENCE ({len(self.attribution.supporting_evidence)} items):")
+            for i, evidence in enumerate(self.attribution.supporting_evidence[:10], 1):  # Show top 10
+                lines.append(f"    {i}. [{evidence.category.upper()}] {evidence.description}")
+                lines.append(f"       Confidence: {evidence.confidence:.0%}, Severity: {evidence.severity}")
+            
+            if len(self.attribution.supporting_evidence) > 10:
+                lines.append(f"    ... and {len(self.attribution.supporting_evidence) - 10} more evidence items")
+            
+            # Attribution Graph Summary
+            if self.attribution.attribution_graph:
+                graph = self.attribution.attribution_graph
+                lines.append(f"\n  ATTRIBUTION GRAPH:")
+                lines.append(f"    Nodes (IPs/ASNs): {len(graph.nodes)}")
+                lines.append(f"    Relationships: {len(graph.edges)}")
+                lines.append(f"    Infrastructure Clusters: {len(graph.clusters)}")
+            
+            # Recommended Actions from Stage 5
+            if self.attribution.recommended_actions:
+                lines.append(f"\n  STAGE 5 RECOMMENDATIONS:")
+                for i, action in enumerate(self.attribution.recommended_actions[:5], 1):
+                    lines.append(f"    {i}. {action}")
+        
         lines.append("\n" + "=" * 80 + "\n")
         
         return "\n".join(lines)
@@ -2196,7 +2331,9 @@ class CompletePipelineReport:
             },
             "stage3b_whois_enrichment": enrichment_data,
             "stage3c_infrastructure_correlation": asdict(self.correlation) if self.correlation else None,
-            "stage4_threat_intelligence": self._threat_intel_to_dict() if self.threat_intelligence else None
+            "stage4_threat_intelligence": self._threat_intel_to_dict() if self.threat_intelligence else None,
+            "geolocation_analysis": self._geolocation_to_dict() if self.geolocation else None,
+            "stage5_attribution_analysis": self._attribution_to_dict() if self.attribution else None
         }
     
     def _threat_intel_to_dict(self) -> Dict:
@@ -2240,10 +2377,126 @@ class CompletePipelineReport:
             "estimated_team_size_range": list(self.correlation.estimated_team_size_range),
             "operational_notes": self.correlation.operational_notes
         }
+    
+    def _geolocation_to_dict(self) -> Dict:
+        """Convert geolocation data to dictionary for JSON export"""
+        if not self.geolocation:
+            return {}
+        
+        geolocations_dict = {}
+        for ip, geoloc in self.geolocation.items():
+            if geoloc:
+                geolocations_dict[ip] = {
+                    "country": geoloc.country,
+                    "country_code": geoloc.country_code,
+                    "city": geoloc.city,
+                    "latitude": geoloc.latitude,
+                    "longitude": geoloc.longitude,
+                    "timezone": geoloc.timezone,
+                    "asn": geoloc.asn,
+                    "provider": geoloc.provider,
+                    "accuracy_radius_km": geoloc.accuracy_radius_km,
+                    "confidence": geoloc.confidence,
+                    "sources": geoloc.sources
+                }
+        
+        return {
+            "ips_with_location": geolocations_dict,
+            "summary": {
+                "total_ips": len(self.geolocation),
+                "ips_with_coordinates": len([g for g in self.geolocation.values() if g and g.latitude and g.longitude]),
+                "unique_countries": len(set(g.country for g in self.geolocation.values() if g and g.country)),
+                "unique_cities": len(set(f"{g.city},{g.country}" for g in self.geolocation.values() if g and g.city and g.country))
+            }
+        }
+    
+    def _attribution_to_dict(self) -> Dict:
+        """Convert Stage 5 attribution analysis to dictionary for JSON export"""
+        if not self.attribution:
+            return {}
+        
+        # Extract attacker profile
+        profile = self.attribution.attacker_profile
+        profile_dict = {
+            "primary_origin": profile.primary_origin,
+            "origin_confidence": profile.origin_confidence,
+            "countries_used": list(profile.countries_used),
+            "cities_detected": list(profile.cities_detected),
+            "timezones": list(profile.timezones),
+            "unique_isps": profile.unique_isps,
+            "unique_asns": len(profile.unique_asns),
+            "hosting_types": list(profile.hosting_types),
+            "uses_tor": profile.uses_tor,
+            "uses_vpn": profile.uses_vpn,
+            "uses_residential_proxies": profile.uses_residential_proxies,
+            "infrastructure_diversity": profile.infrastructure_diversity,
+            "operational_security_level": profile.operational_security_level,
+            "attack_type": profile.attack_type,
+            "estimated_team_size": profile.estimated_team_size,
+            "likely_motivation": profile.likely_motivation,
+            "activity_timezone": profile.activity_timezone,
+            "activity_hours": profile.activity_hours,
+            "campaign_frequency": profile.campaign_frequency
+        }
+        
+        # Extract attribution graph
+        graph_dict = {}
+        if self.attribution.attribution_graph:
+            graph = self.attribution.attribution_graph
+            graph_dict = {
+                "nodes_count": len(graph.nodes),
+                "edges_count": len(graph.edges),
+                "clusters_count": len(graph.clusters),
+                "clusters": [
+                    {
+                        "id": c.get("id"),
+                        "purpose": c.get("purpose"),
+                        "confidence": c.get("confidence"),
+                        "nodes": c.get("nodes", [])
+                    }
+                    for c in graph.clusters
+                ]
+            }
+        
+        # Extract confidence scoring
+        confidence = self.attribution.confidence_scoring
+        confidence_dict = {
+            "overall_confidence": confidence.overall_confidence,
+            "location_confidence": confidence.location_confidence,
+            "infrastructure_confidence": confidence.infrastructure_confidence,
+            "threat_intel_confidence": confidence.threat_intel_confidence,
+            "behavioral_confidence": confidence.behavioral_confidence,
+            "technical_confidence": confidence.technical_confidence,
+            "confidence_reasoning": confidence.confidence_reasoning
+        }
+        
+        # Extract supporting evidence
+        evidence_list = []
+        for evidence in self.attribution.supporting_evidence:
+            evidence_list.append({
+                "category": evidence.category,
+                "description": evidence.description,
+                "confidence": evidence.confidence,
+                "severity": evidence.severity,
+                "stage_origin": evidence.stage_origin,
+                "source": evidence.source
+            })
+        
+        return {
+            "timestamp": self.attribution.timestamp,
+            "attacker_profile": profile_dict,
+            "attribution_graph": graph_dict,
+            "confidence_scoring": confidence_dict,
+            "supporting_evidence": evidence_list,
+            "final_attribution_statement": self.attribution.final_attribution_statement,
+            "confidence_level": self.attribution.confidence_level,
+            "evidence_package": self.attribution.evidence_package,
+            "recommended_actions": self.attribution.recommended_actions
+        }
 
 
 class CompletePipeline:
-    """Master pipeline orchestrating all 6 stages (1, 2, 3A, 3B, 3C, 4)"""
+    """Master pipeline orchestrating all 7 stages (1, 2, 3A, 3B, 3C, 4, Geolocation, 5)"""
     
     def __init__(self, verbose: bool = False, skip_enrichment: bool = False):
         self.extractor = HeaderExtractor()
@@ -2252,10 +2505,12 @@ class CompletePipeline:
         self.enricher = IPEnrichmentStage3B() if not skip_enrichment else None
         self.correlator = InfrastructureCorrelationEngine()
         self.threat_intel_engine = ThreatIntelligenceEngine()
+        self.geolocation_enricher = GeolocationEnricher(verbose=verbose) if GEOLOCATION_AVAILABLE else None
+        self.attribution_analyzer = AttributionAnalysisEngine(verbose=verbose) if STAGE5_AVAILABLE else None
         self.verbose = verbose
     
     def run(self, email_file: str) -> Optional[CompletePipelineResult]:
-        """Run all 5 stages (1: Headers, 2: Classification, 3A: Proxy Chain, 3B: Enrichment, 3C: Correlation, 4: Threat Intelligence)"""
+        """Run all 7 stages (1: Headers, 2: Classification, 3A: Proxy Chain, 3B: Enrichment, 3C: Correlation, 4: Threat Intelligence, Geolocation, 5: Attribution)"""
         
         print("[START] Complete Attacker IP Identification Pipeline")
         print("=" * 80)
@@ -2351,8 +2606,7 @@ class CompletePipeline:
         if enrichment_results:
             try:
                 threat_intelligence = self.threat_intel_engine.analyze_ips(
-                    ips=unique_ips,
-                    enrichments=enrichment_results
+                    ips=unique_ips
                 )
                 
                 if threat_intelligence.critical_ips:
@@ -2370,6 +2624,66 @@ class CompletePipeline:
         else:
             print("  [NOTICE] Stage 4 skipped (requires Stage 3B enrichment data)")
         
+        # GEOLOCATION ENRICHMENT: Fetch precise location for each IP
+        print("\n[GEOLOCATION] Enriching IPs with geolocation data...")
+        geolocation_results = None
+        
+        if self.geolocation_enricher:
+            try:
+                geolocation_results = self.geolocation_enricher.enrich_multiple_ips(unique_ips)
+                
+                # Print geolocation summary
+                geoloc_summary = self.geolocation_enricher.get_geolocation_summary(geolocation_results)
+                
+                if geoloc_summary['countries']:
+                    countries_list = ', '.join([f"{c}({n})" for c, n in sorted(geoloc_summary['countries'].items(), key=lambda x: x[1], reverse=True)])
+                    print(f"  Countries detected: {countries_list}")
+                
+                if geoloc_summary['cities']:
+                    top_cities = sorted(geoloc_summary['cities'].items(), key=lambda x: x[1], reverse=True)[:3]
+                    cities_list = ', '.join([f"{c}({n})" for c, n in top_cities])
+                    print(f"  Primary cities: {cities_list}")
+                
+                if geoloc_summary['coordinates']:
+                    centerpoint = self.geolocation_enricher.calculate_centerpoint(geoloc_summary['coordinates'])
+                    if centerpoint:
+                        print(f"  Geographic centerpoint: {format_coordinates(centerpoint[0], centerpoint[1])}")
+                    print(f"  Avg confidence: {geoloc_summary['avg_confidence']:.0%}")
+                
+            except Exception as e:
+                if self.verbose:
+                    print(f"  [WARNING] Geolocation enrichment failed: {e}")
+                geolocation_results = None
+        else:
+            print("  [NOTICE] Geolocation skipped (geolocation module not available)")
+        
+        # STAGE 5: ATTRIBUTION ANALYSIS - Final synthesis and evidence packaging
+        print("\n[STAGE 5] Generating final attribution and evidence package...")
+        attribution_analysis = None
+        
+        if self.attribution_analyzer and enrichment_results and geolocation_results:
+            try:
+                attribution_analysis = self.attribution_analyzer.analyze(
+                    header_analysis=header_analysis,
+                    classifications=classifications,
+                    proxy_analysis=proxy_analysis,
+                    enrichment_results=enrichment_results,
+                    correlation_analysis=correlation_analysis,
+                    threat_intelligence=threat_intelligence,
+                    geolocation_results=geolocation_results
+                )
+                
+                print(f"  Attribution confidence: {attribution_analysis.confidence_level}")
+                print(f"  Primary origin: {attribution_analysis.attacker_profile.primary_origin}")
+                print(f"  Sophistication: {attribution_analysis.attacker_profile.operational_security_level}")
+                print(f"  Evidence items: {len(attribution_analysis.supporting_evidence)}")
+            except Exception as e:
+                if self.verbose:
+                    print(f"  [WARNING] Attribution analysis failed: {e}")
+                attribution_analysis = None
+        else:
+            print("  [NOTICE] Stage 5 skipped (requires Stage 3B+ data and geolocation)")
+        
         # Create result
         result = CompletePipelineResult(
             header_analysis=header_analysis,
@@ -2377,7 +2691,9 @@ class CompletePipeline:
             proxy_analysis=proxy_analysis,
             enrichment_results=enrichment_results,
             correlation_analysis=correlation_analysis,
-            threat_intelligence=threat_intelligence
+            threat_intelligence=threat_intelligence,
+            geolocation_results=geolocation_results,
+            attribution_analysis=attribution_analysis
         )
         
         print("\n[STAGE COMPLETE] All stages finished successfully")
