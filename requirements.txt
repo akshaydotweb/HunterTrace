@@ -1,3 +1,5 @@
 requests
 geoip2 
 whois
+dnspython
+python-whois
