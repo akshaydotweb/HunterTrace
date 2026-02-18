@@ -56,6 +56,12 @@ try:
 except ImportError:
     STAGE5_AVAILABLE = False
 
+# Import Advanced Real IP Extractor (11+ techniques from research paper)
+try:
+    from advancedRealIpExtractor import AdvancedRealIPExtractor, extract_real_ip_summary as extract_real_ip_summary_advanced
+    ADVANCED_REAL_IP_EXTRACTOR_AVAILABLE = True
+except ImportError:
+    ADVANCED_REAL_IP_EXTRACTOR_AVAILABLE = False
 
 # ============================================================================
 # STAGE 1: EMAIL HEADER EXTRACTION
@@ -1925,6 +1931,7 @@ class CompletePipelineResult:
     threat_intelligence: Optional[ThreatIntelligenceAnalysis] = None
     geolocation_results: Optional[Dict[str, 'GeolocationData']] = None
     attribution_analysis: Optional['Stage5Attribution'] = None
+    real_ip_analysis: Optional['RealIPAnalysis'] = None
 
 
 class CompletePipelineReport:
@@ -1939,6 +1946,7 @@ class CompletePipelineReport:
         self.threat_intelligence = result.threat_intelligence
         self.geolocation = result.geolocation_results
         self.attribution = result.attribution_analysis
+        self.real_ip = result.real_ip_analysis
     
     def generate_text_report(self, verbose: bool = False) -> str:
         """Generate comprehensive text report"""
@@ -1978,6 +1986,21 @@ class CompletePipelineReport:
                             lines.append(f"    Accuracy Radius: ±{geoloc.accuracy_radius_km} km")
                         lines.append(f"    Confidence: {geoloc.confidence:.0%}")
                         break
+            
+            # ====================================================================
+            # QUICK REFERENCE: CITY & COORDINATES FOR LAW ENFORCEMENT
+            # ====================================================================
+            lines.append(f"\n  QUICK REFERENCE - CITY & COORDINATES:")
+            lines.append(f"    " + "-" * 76)
+            lines.append(f"    {'IP Address':<20} {'City':<20} {'Country':<15} {'Coordinates':<22}")
+            lines.append(f"    " + "-" * 76)
+            
+            for ip, geoloc in sorted(self.geolocation.items()):
+                if geoloc and geoloc.confidence > 0 and geoloc.city:
+                    coord_str = format_coordinates(geoloc.latitude, geoloc.longitude) if (geoloc.latitude and geoloc.longitude) else "N/A"
+                    lines.append(f"    {ip:<20} {geoloc.city:<20} {geoloc.country:<15} {coord_str:<22}")
+            
+            lines.append(f"    " + "-" * 76)
             
             # All detected locations
             lines.append(f"\n  ALL DETECTED LOCATIONS:")
@@ -2088,6 +2111,36 @@ class CompletePipelineReport:
             if i < len(self.proxy.chain) - 1:
                 lines.append("         |")
                 lines.append("         v")
+        
+        # REAL IP EXTRACTION: Display true IP behind VPN/proxy
+        if self.real_ip:
+            lines.append("\n\n[REAL IP EXTRACTION - VPN/PROXY BYPASS ANALYSIS]")
+            lines.append("=" * 80)
+            
+            lines.append(f"\n  ⚠️  IDENTIFIED REAL ATTACKER IP: {self.real_ip.suspected_real_ip or 'UNKNOWN'}")
+            lines.append(f"  Confidence: {self.real_ip.confidence_score:.0%}")
+            lines.append(f"  Obfuscation Level: {self.real_ip.obfuscation_level.value.upper()}")
+            
+            if self.real_ip.vpn_provider:
+                lines.append(f"  VPN Provider Detected: {self.real_ip.vpn_provider}")
+            
+            if self.real_ip.likely_real_infrastructure:
+                lines.append(f"  Real Infrastructure: {self.real_ip.likely_real_infrastructure}")
+            
+            # Display techniques used if available
+            if hasattr(self.real_ip, 'techniques_used') and self.real_ip.techniques_used:
+                lines.append(f"\n  Techniques Applied ({len(self.real_ip.techniques_used)}):")
+                for i, technique in enumerate(self.real_ip.techniques_used, 1):
+                    lines.append(f"    {i}. {technique}")
+                lines.append(f"\n  [SOURCE: Research Paper - 'A Survey on Tracing IP Address Behind VPN/Proxy Server']")
+            
+            lines.append(f"\n  Key Evidence Items:")
+            for i, evidence in enumerate(self.real_ip.evidence_items[:5], 1):
+                lines.append(f"    {i}. {evidence}")
+            
+            lines.append(f"\n  Analysis Notes:")
+            for note in self.real_ip.analysis_notes[:3]:
+                lines.append(f"    {note}")
         
         # Stage 3C: Infrastructure Correlation
         if self.correlation:
@@ -2333,6 +2386,7 @@ class CompletePipelineReport:
             "stage3c_infrastructure_correlation": asdict(self.correlation) if self.correlation else None,
             "stage4_threat_intelligence": self._threat_intel_to_dict() if self.threat_intelligence else None,
             "geolocation_analysis": self._geolocation_to_dict() if self.geolocation else None,
+            "real_ip_extraction": self._real_ip_to_dict() if self.real_ip else None,
             "stage5_attribution_analysis": self._attribution_to_dict() if self.attribution else None
         }
     
@@ -2384,6 +2438,8 @@ class CompletePipelineReport:
             return {}
         
         geolocations_dict = {}
+        city_coordinates_summary = []
+        
         for ip, geoloc in self.geolocation.items():
             if geoloc:
                 geolocations_dict[ip] = {
@@ -2399,15 +2455,48 @@ class CompletePipelineReport:
                     "confidence": geoloc.confidence,
                     "sources": geoloc.sources
                 }
+                
+                # Build city & coordinates summary for law enforcement
+                if geoloc.city and geoloc.country and geoloc.latitude and geoloc.longitude:
+                    city_coordinates_summary.append({
+                        "ip_address": ip,
+                        "city": geoloc.city,
+                        "country": geoloc.country,
+                        "country_code": geoloc.country_code,
+                        "latitude": geoloc.latitude,
+                        "longitude": geoloc.longitude,
+                        "coordinates_decimal": f"({geoloc.latitude}, {geoloc.longitude})",
+                        "timezone": geoloc.timezone,
+                        "confidence_percentage": f"{geoloc.confidence:.0%}",
+                        "accuracy_radius_km": geoloc.accuracy_radius_km
+                    })
         
         return {
             "ips_with_location": geolocations_dict,
+            "city_and_coordinates_summary": city_coordinates_summary,
             "summary": {
                 "total_ips": len(self.geolocation),
                 "ips_with_coordinates": len([g for g in self.geolocation.values() if g and g.latitude and g.longitude]),
                 "unique_countries": len(set(g.country for g in self.geolocation.values() if g and g.country)),
                 "unique_cities": len(set(f"{g.city},{g.country}" for g in self.geolocation.values() if g and g.city and g.country))
             }
+        }
+    
+    def _real_ip_to_dict(self) -> Dict:
+        """Convert real IP extraction analysis to dictionary for JSON export"""
+        if not self.real_ip:
+            return {}
+        
+        return {
+            "suspected_real_ip": self.real_ip.suspected_real_ip,
+            "origin_ip_from_headers": self.real_ip.origin_ip_from_headers,
+            "obfuscation_level": self.real_ip.obfuscation_level.value,
+            "vpn_provider": self.real_ip.vpn_provider,
+            "likely_real_infrastructure": self.real_ip.likely_real_infrastructure,
+            "confidence_score": self.real_ip.confidence_score,
+            "techniques_used": self.real_ip.techniques_used,
+            "evidence_items": self.real_ip.evidence_items,
+            "analysis_notes": self.real_ip.analysis_notes
         }
     
     def _attribution_to_dict(self) -> Dict:
@@ -2496,9 +2585,9 @@ class CompletePipelineReport:
 
 
 class CompletePipeline:
-    """Master pipeline orchestrating all 7 stages (1, 2, 3A, 3B, 3C, 4, Geolocation, 5)"""
+    """Master pipeline orchestrating all 7 stages (1, 2, 3A, 3B, 3C, 4, Geolocation, 5) + Real IP Extraction"""
     
-    def __init__(self, verbose: bool = False, skip_enrichment: bool = False):
+    def __init__(self, verbose: bool = False, skip_enrichment: bool = False, use_advanced_extraction: bool = True):
         self.extractor = HeaderExtractor()
         self.classifier = IPClassifierLight()
         self.tracer = ProxyChainTracer()
@@ -2507,7 +2596,17 @@ class CompletePipeline:
         self.threat_intel_engine = ThreatIntelligenceEngine()
         self.geolocation_enricher = GeolocationEnricher(verbose=verbose) if GEOLOCATION_AVAILABLE else None
         self.attribution_analyzer = AttributionAnalysisEngine(verbose=verbose) if STAGE5_AVAILABLE else None
+        
+        # Use advanced real IP extractor with 11+ techniques if available
+        if use_advanced_extraction and ADVANCED_REAL_IP_EXTRACTOR_AVAILABLE:
+            self.advanced_real_ip_extractor = AdvancedRealIPExtractor(verbose=verbose)
+            self.real_ip_extractor = None
+        else:
+            self.advanced_real_ip_extractor = None
+            self.real_ip_extractor = RealIPExtractor(verbose=verbose) if REAL_IP_EXTRACTOR_AVAILABLE else None
+        
         self.verbose = verbose
+        self.use_advanced_extraction = use_advanced_extraction and ADVANCED_REAL_IP_EXTRACTOR_AVAILABLE
     
     def run(self, email_file: str) -> Optional[CompletePipelineResult]:
         """Run all 7 stages (1: Headers, 2: Classification, 3A: Proxy Chain, 3B: Enrichment, 3C: Correlation, 4: Threat Intelligence, Geolocation, 5: Attribution)"""
@@ -2684,6 +2783,160 @@ class CompletePipeline:
         else:
             print("  [NOTICE] Stage 5 skipped (requires Stage 3B+ data and geolocation)")
         
+        # REAL IP EXTRACTION: Extract true IP address even if VPN is used
+        print("\n[REAL IP EXTRACTION] Identifying true attacker IP (VPN/Proxy bypass)...")
+        real_ip_analysis = None
+        advanced_real_ip_analysis = None
+        
+        # Try advanced extraction first (11+ techniques from research paper)
+        if self.use_advanced_extraction and self.advanced_real_ip_extractor:
+            try:
+                print("  Using ADVANCED Real IP Extractor (11+ Research Paper Techniques)...")
+                
+                # Prepare data for advanced extractor
+                email_headers_dict = {
+                    'received_from_ip': header_analysis.origin_ip,
+                    'hop_count': header_analysis.hop_count,
+                    'timestamp': str(header_analysis.email_date) if header_analysis.email_date else None,
+                }
+                
+                # Prepare classifications
+                classifications_dict = {}
+                for ip, classification in classifications.items():
+                    classifications_dict[ip] = {
+                        'is_vpn': 'VPN' in classification.classification,
+                        'is_proxy': 'Proxy' in classification.classification,
+                        'is_tor': 'Tor' in classification.classification,
+                    }
+                
+                # Prepare enrichment
+                enrichments = {}
+                if enrichment_results:
+                    for ip, enrichment in enrichment_results.items():
+                        enrichments[ip] = {
+                            'organization': enrichment.whois_data.organization or "Unknown",
+                            'asn': enrichment.whois_data.asn or "Unknown",
+                            'country': enrichment.whois_data.country or "Unknown",
+                        }
+                else:
+                    # Use geolocation data if enrichment not available
+                    if geolocation_results:
+                        for ip, geo in geolocation_results.items():
+                            if geo:
+                                enrichments[ip] = {
+                                    'organization': geo.isp or "Unknown",
+                                    'asn': "Unknown",
+                                    'country': geo.country or "Unknown",
+                                }
+                
+                # Prepare geolocation
+                geolocation = {}
+                if geolocation_results and len(geolocation_results) > 0:
+                    # Use the first known IP's geolocation
+                    for ip, geo in geolocation_results.items():
+                        if geo:
+                            geolocation = {
+                                'ip': ip,
+                                'city': geo.city,
+                                'country': geo.country,
+                                'latitude': geo.latitude,
+                                'longitude': geo.longitude,
+                                'confidence': geo.accuracy or 0.8,
+                            }
+                            break
+                
+                # Run advanced extraction
+                advanced_real_ip_analysis = self.advanced_real_ip_extractor.extract_real_ip(
+                    email_headers=email_headers_dict,
+                    classifications=classifications_dict,
+                    enrichments=enrichments if enrichments else {},
+                    geolocation=geolocation,
+                    honeypot_data=None,  # Would need honeypot integration
+                    dns_queries=None,    # Would need DNS log integration
+                    traffic_patterns=None  # Would need traffic data integration
+                )
+                
+                if advanced_real_ip_analysis:
+                    print(f"  ✓ Advanced extraction complete:")
+                    print(f"    - Real IP: {advanced_real_ip_analysis.suspected_real_ip}")
+                    print(f"    - Confidence: {advanced_real_ip_analysis.confidence_score:.0%}")
+                    print(f"    - Obfuscation: {advanced_real_ip_analysis.obfuscation_level.value.upper()}")
+                    print(f"    - Techniques applied: {len(advanced_real_ip_analysis.techniques_used)}")
+                    if advanced_real_ip_analysis.vpn_provider:
+                        print(f"    - VPN Provider: {advanced_real_ip_analysis.vpn_provider}")
+                    
+                    # Use advanced analysis as primary result
+                    real_ip_analysis = advanced_real_ip_analysis
+            except Exception as e:
+                if self.verbose:
+                    print(f"  [WARNING] Advanced Real IP extraction failed: {e}")
+                advanced_real_ip_analysis = None
+        
+        # Fall back to basic extraction if advanced not available
+        if not real_ip_analysis and self.real_ip_extractor:
+            try:
+                print("  Using standard Real IP Extractor (7 Basic Techniques)...")
+                
+                # Convert classifications to dict format expected by extractor
+                classifications_dict = {}
+                for ip, classification in classifications.items():
+                    classifications_dict[ip] = {
+                        "classification": classification.classification,
+                        "confidence": classification.confidence
+                    }
+                
+                # Convert enrichment to simple dict
+                enrichment_dict = None
+                if enrichment_results:
+                    enrichment_dict = {}
+                    for ip, enrichment in enrichment_results.items():
+                        enrichment_dict[ip] = {
+                            "organization": enrichment.whois_data.organization or "Unknown",
+                            "asn": enrichment.whois_data.asn or "Unknown"
+                        }
+                
+                # Extract geolocation dict
+                geolocations_dict = None
+                if geolocation_results:
+                    geolocations_dict = {}
+                    for ip, geo in geolocation_results.items():
+                        if geo:
+                            geolocations_dict[ip] = {
+                                "city": geo.city,
+                                "country": geo.country,
+                                "latitude": geo.latitude,
+                                "longitude": geo.longitude
+                            }
+                
+                real_ip_analysis = self.real_ip_extractor.extract_real_ip(
+                    origin_ip=header_analysis.origin_ip,
+                    all_ips_in_chain=[hop.ip for hop in header_analysis.hops if hop.ip],
+                    hop_details=[{
+                        "hop_number": hop.hop_number,
+                        "ip": hop.ip,
+                        "hostname": hop.hostname,
+                        "raw_header": hop.raw_header
+                    } for hop in header_analysis.hops],
+                    classifications=classifications_dict,
+                    enrichment_data=enrichment_dict,
+                    geolocation_data=geolocations_dict
+                )
+                
+                if real_ip_analysis:
+                    print(f"  ✓ Standard extraction complete:")
+                    print(f"    - Real IP identified: {real_ip_analysis.suspected_real_ip}")
+                    print(f"    - Confidence: {real_ip_analysis.confidence_score:.0%}")
+                    print(f"    - Obfuscation level: {real_ip_analysis.obfuscation_level.value.upper()}")
+                    if real_ip_analysis.vpn_provider:
+                        print(f"    - VPN Provider: {real_ip_analysis.vpn_provider}")
+            except Exception as e:
+                if self.verbose:
+                    print(f"  [WARNING] Real IP extraction failed: {e}")
+                real_ip_analysis = None
+        
+        if not real_ip_analysis:
+            print("  [NOTICE] Real IP extractor not available")
+        
         # Create result
         result = CompletePipelineResult(
             header_analysis=header_analysis,
@@ -2693,7 +2946,8 @@ class CompletePipeline:
             correlation_analysis=correlation_analysis,
             threat_intelligence=threat_intelligence,
             geolocation_results=geolocation_results,
-            attribution_analysis=attribution_analysis
+            attribution_analysis=attribution_analysis,
+            real_ip_analysis=real_ip_analysis
         )
         
         print("\n[STAGE COMPLETE] All stages finished successfully")
