@@ -6,19 +6,20 @@ ADVANCED REAL IP EXTRACTION MODULE - ENHANCED WITH RESEARCH PAPER TECHNIQUES
 Based on Research Paper: "A Survey on Tracing IP Address Behind VPN/Proxy Server"
 Authors: Manikandakumar M, Nuthan KV
 
-Enhanced with 11+ VPN/Proxy bypass techniques:
+Enhanced with 12 VPN/Proxy bypass techniques + CRITICAL mail provider detection:
 
 1. Email Header Origin Analysis (immutable first hop)
-2. VPN/Proxy Detection Filtering (classification-based)
-3. Infrastructure Correlation (ISP vs datacenter analysis)
-4. IP Geolocation Analysis (real location vs VPN location)
-5. Hop Pattern Analysis (relay detection)
-6. Timing & Artifacts Detection (VPN signatures)
-7. Confidence Scoring (multi-factor calculation)
-8. Honeypot & Canary Token Detection (machine behavior analysis)
-9. DNS Leak Detection (Tor browser vulnerability detection)
-10. Residential IP Proxy (RESIP) Detection (compromised host detection)
-11. Traffic Pattern Analysis (Neural Network Classification Simulation)
+2. CRITICAL - Mail Provider Detection (prevents Gmail/Outlook false positives) ⚡ NEW
+3. VPN/Proxy Detection Filtering (classification-based)
+4. Infrastructure Correlation (ISP vs datacenter analysis)
+5. IP Geolocation Analysis (real location vs VPN location)
+6. Hop Pattern Analysis (relay detection)
+7. Timing & Artifacts Detection (VPN signatures)
+8. Confidence Scoring (multi-factor calculation)
+9. Honeypot & Canary Token Detection (machine behavior analysis)
+10. DNS Leak Detection (Tor browser vulnerability detection)
+11. Residential IP Proxy (RESIP) Detection (compromised host detection)
+12. Traffic Pattern Analysis (Neural Network Classification Simulation)
 """
 
 from dataclasses import dataclass, field
@@ -195,6 +196,52 @@ class AdvancedRealIPExtractor:
         "Linode": ["45.33.0.0/16"],
     }
     
+    # Mail Provider IP Ranges (Technique 2.5 - CRITICAL: Detects when attackers use legitimate mail services)
+    # If origin IP is a known mail provider, skip it and analyze previous hop
+    MAIL_PROVIDER_RANGES = {
+        "Google (Gmail)": [
+            "74.125.0.0/16",      # Google backbone
+            "142.250.0.0/15",     # Google global
+            "172.217.0.0/16",     # Google DNS
+            "172.253.0.0/16",     # Google services
+            "172.254.0.0/16",     # Google infrastructure
+        ],
+        "Microsoft (Outlook/Hotmail)": [
+            "40.101.0.0/16",      # Microsoft global
+            "52.96.0.0/13",       # Microsoft cloud
+            "40.90.0.0/15",       # Microsoft datacenter
+            "104.47.0.0/16",      # Microsoft services
+            "168.63.0.0/16",      # Microsoft Azure internal
+        ],
+        "Yahoo": [
+            "98.136.0.0/13",      # Yahoo backbone
+            "203.84.192.0/19",    # Yahoo Asia
+            "122.200.0.0/13",     # Yahoo services
+        ],
+        "ProtonMail": [
+            "185.70.40.0/22",     # ProtonMail infrastructure
+            "195.154.0.0/15",     # ProtonMail hosting
+        ],
+        "Fastmail": [
+            "185.194.139.0/24",   # Fastmail servers
+            "213.154.0.0/16",     # Fastmail infrastructure
+        ],
+        "Apple (iCloud Mail)": [
+            "17.0.0.0/8",         # Apple global
+            "63.142.0.0/16",      # Apple email
+        ],
+        "Amazon (AWS SES)": [
+            "52.0.0.0/8",         # AWS global (overlaps with cloud, but specifically for mail)
+        ],
+        "SendGrid": [
+            "167.89.0.0/16",      # SendGrid
+            "167.88.0.0/16",      # SendGrid
+        ],
+        "Mailgun": [
+            "159.65.82.0/24",     # Mailgun
+        ],
+    }
+    
     def __init__(self, verbose: bool = False):
         self.verbose = verbose
         self.techniques_applied = []
@@ -230,6 +277,25 @@ class AdvancedRealIPExtractor:
         
         # ===== TECHNIQUE 1: Email Header Origin Analysis =====
         origin_ip = self._technique_email_header_analysis(email_headers, evidence, techniques)
+        
+        # ===== TECHNIQUE 2.5: CRITICAL - Mail Provider Detection =====
+        # Check if origin IP is a known mail provider (Gmail, Outlook, Yahoo, etc.)
+        # If YES: attacker used legitimate mail service → must analyze previous hop
+        mail_provider_result = self._technique_mail_provider_detection(
+            origin_ip, email_headers, evidence, techniques
+        )
+        if mail_provider_result.get('is_mail_provider'):
+            # SKIP THIS IP - analyze the previous relay in the chain instead
+            notes.append(
+                f"  MAIL PROVIDER DETECTED: {mail_provider_result.get('provider_name')}\n"
+                f"   Skipping {origin_ip} - analyzing previous hop in relay chain"
+            )
+            # Try to get previous hop from Received headers
+            received_headers = email_headers.get('Received', [])
+            if isinstance(received_headers, list) and len(received_headers) > 1:
+                # Extract IP from second-to-last Received header
+                origin_ip = self._extract_ip_from_received_header(received_headers[1])
+                notes.append(f"   Real attacker IP likely: {origin_ip}")
         
         # ===== TECHNIQUE 2: VPN/Proxy Detection Filtering =====
         vpn_classification = self._technique_vpn_classification_filter(
@@ -544,6 +610,83 @@ class AdvancedRealIPExtractor:
         
         return None
     
+    def _technique_mail_provider_detection(self, ip: str, email_headers: dict,
+                                           evidence: list, techniques: list) -> dict:
+        """
+        Technique 2.5: CRITICAL - Mail Provider Detection
+        Detects if origin IP is a known legitimate mail provider (Gmail, Outlook, Yahoo, etc.)
+        
+        SECURITY IMPACT: 
+        If attacker uses Gmail/Outlook to send phishing, this prevents false positive
+        where system would report "Attacker in Mountain View, CA" (Google location)
+        instead of actual country where attacker is located.
+        
+        Returns dict with:
+        - is_mail_provider: bool - True if IP belongs to known mail provider
+        - provider_name: str - Name of provider (e.g., "Google (Gmail)")
+        - confidence: float - Confidence score 0-1
+        - recommendation: str - What to do next
+        """
+        techniques.append("Mail Provider Detection (CRITICAL)")
+        
+        if not ip:
+            return {"is_mail_provider": False, "provider_name": None, "confidence": 0.0, "recommendation": "No IP to check"}
+        
+        # Parse IP
+        try:
+            check_ip = ipaddress.ip_address(ip)
+        except ValueError:
+            return {"is_mail_provider": False, "provider_name": None, "confidence": 0.0, "recommendation": f"Invalid IP: {ip}"}
+        
+        # Check against all known mail provider CIDR ranges
+        for provider_name, cidr_blocks in self.MAIL_PROVIDER_RANGES.items():
+            for cidr_str in cidr_blocks:
+                try:
+                    cidr_network = ipaddress.ip_network(cidr_str, strict=False)
+                    if check_ip in cidr_network:
+                        evidence.append(f"   MAIL PROVIDER DETECTED: {provider_name}")
+                        evidence.append(f"   IP {ip} belongs to {provider_name}")
+                        evidence.append(f"   This IP is NOT the attacker origin")
+                        evidence.append(f"   Must analyze previous hop in Received chain")
+                        
+                        return {
+                            "is_mail_provider": True,
+                            "provider_name": provider_name,
+                            "ip": ip,
+                            "cidr_matched": cidr_str,
+                            "confidence": 1.0,
+                            "recommendation": f"SKIP {ip} - analyze previous Received header"
+                        }
+                except ipaddress.NetmaskValueError:
+                    pass
+        
+        # Not a known mail provider
+        evidence.append(f"Origin IP {ip} is NOT a known mail provider (safe to geolocate)")
+        return {
+            "is_mail_provider": False,
+            "provider_name": None,
+            "ip": ip,
+            "confidence": 1.0,
+            "recommendation": "Continue analysis - IP is not from known mail provider"
+        }
+    
+    def _extract_ip_from_received_header(self, received_header: str) -> Optional[str]:
+        """
+        Helper: Extract IP address from a Received header line
+        Example: 'from mail-server.com [192.0.2.1] by relay.com' -> '192.0.2.1'
+        """
+        # Look for pattern [IP] in brackets
+        bracket_match = re.search(r'\[(\d+\.\d+\.\d+\.\d+)\]', received_header)
+        if bracket_match:
+            return bracket_match.group(1)
+        
+        # Look for pattern: 'from IP' or similar
+        ip_match = re.search(r'\b(\d+\.\d+\.\d+\.\d+)\b', received_header)
+        if ip_match:
+            return ip_match.group(1)
+        
+        return None
+    
     def _technique_traffic_pattern_analysis(self, patterns: dict, evidence: list,
                                            techniques: list) -> Optional[TrafficPatternAnalysis]:
         """
@@ -607,7 +750,7 @@ def extract_real_ip_summary(analysis: RealIPAnalysis) -> str:
         "=" * 70,
         "ADVANCED REAL IP EXTRACTION ANALYSIS",
         "=" * 70,
-        f"\n REAL ATTACKER IP: {analysis.suspected_real_ip}",
+        f"\n  REAL ATTACKER IP: {analysis.suspected_real_ip}",
         f"Confidence Level: {analysis.confidence_score:.0%}",
         f"Obfuscation Detected: {analysis.obfuscation_level.value.upper()}",
         f"\nVPN/Proxy Provider: {analysis.vpn_provider or 'None detected'}",

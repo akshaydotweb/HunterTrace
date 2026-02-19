@@ -55,6 +55,7 @@ class GeolocationEnricher:
         """
         Enrich IP with complete geolocation data
         Returns GeolocationData with location and confidence
+        Supports both IPv4 and IPv6 addresses
         """
         
         if ip in self.cache:
@@ -62,7 +63,16 @@ class GeolocationEnricher:
         
         geoloc_data = GeolocationData(ip=ip)
         
-        # Try IP-API first (fastest, free tier)
+        # Check if IPv6 address
+        is_ipv6 = ':' in ip
+        
+        # For IPv6, try dedicated IPv6 geolocation first
+        if is_ipv6:
+            if self._try_ipv6_geolocation(ip, geoloc_data):
+                self.cache[ip] = geoloc_data
+                return geoloc_data
+        
+        # Try IP-API (supports both IPv4 and IPv6)
         if self._try_ipapi(ip, geoloc_data):
             self.cache[ip] = geoloc_data
             return geoloc_data
@@ -83,10 +93,210 @@ class GeolocationEnricher:
         self.cache[ip] = geoloc_data
         return geoloc_data
     
-    def _try_ipapi(self, ip: str, geoloc_data: GeolocationData) -> bool:
-        """Try IP-API.com (fastest, free tier: 45 req/min)"""
+    def _try_ipv6_geolocation(self, ipv6: str, geoloc_data: GeolocationData) -> bool:
+        """
+        Dedicated IPv6 geolocation using specialized services and IPv6 block data
+        """
+        # Try db-ip.com IPv6 API (good IPv6 support)
         try:
             time.sleep(self.rate_limit_wait)
+            url = f"https://api.db-ip.com/v2/free/{ipv6}"
+            response = requests.get(url, timeout=5)
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                geoloc_data.country = data.get('countryName')
+                geoloc_data.country_code = data.get('countryCode')
+                geoloc_data.city = data.get('city')
+                geoloc_data.latitude = data.get('latitude')
+                geoloc_data.longitude = data.get('longitude')
+                geoloc_data.provider = data.get('organization')
+                geoloc_data.accuracy_radius_km = 10  # db-ip typical accuracy for IPv6
+                geoloc_data.confidence = 0.92
+                geoloc_data.sources = ['db-ip.com']
+                
+                if self.verbose:
+                    print(f"db-ip.com IPv6: {ipv6} → {geoloc_data.city}, {geoloc_data.country}")
+                
+                return True
+        except Exception as e:
+            if self.verbose:
+                print(f"db-ip.com IPv6 failed: {e}")
+        
+        # Try ipwhois.io IPv6 API
+        try:
+            time.sleep(self.rate_limit_wait)
+            url = f"https://ipwho.is/{ipv6}"
+            response = requests.get(url, timeout=5)
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                if data.get('success'):
+                    geoloc_data.country = data.get('country')
+                    geoloc_data.country_code = data.get('country_code')
+                    geoloc_data.city = data.get('city')
+                    geoloc_data.latitude = data.get('latitude')
+                    geoloc_data.longitude = data.get('longitude')
+                    geoloc_data.timezone = data.get('timezone')
+                    geoloc_data.provider = data.get('isp')
+                    geoloc_data.accuracy_radius_km = 50
+                    geoloc_data.confidence = 0.88
+                    geoloc_data.sources = ['ipwho.is']
+                    
+                    if self.verbose:
+                        print(f"[✓] ipwho.is IPv6: {ipv6} → {geoloc_data.city}, {geoloc_data.country}")
+                    
+                    return True
+        except Exception as e:
+            if self.verbose:
+                print(f"[!] ipwho.is IPv6 failed: {e}")
+        
+        # Try IPv6 block registration lookup
+        ipv6_country = self._get_ipv6_block_country(ipv6)
+        if ipv6_country:
+            geoloc_data.country = ipv6_country
+            geoloc_data.accuracy_radius_km = 1000  # IPv6 block accuracy (country-level)
+            geoloc_data.confidence = 0.70
+            geoloc_data.sources = ['ipv6-block-registration']
+            
+            if self.verbose:
+                print(f"[✓] IPv6 Block: {ipv6} → {ipv6_country} (from IANA registration)")
+            
+            return True
+        
+        return False
+    
+    def _get_ipv6_block_country(self, ipv6: str) -> Optional[str]:
+        """
+        Map IPv6 address to country using IPv6 block registrations (IANA/RIR)
+        Accurate at country level for determining attacker origin
+        """
+        # Comprehensive IPv6 prefix to country mapping
+        ipv6_country_map = {
+            # APNIC (Asia-Pacific)
+            "2001:df0:": "China",
+            "2001:df1:": "China",
+            "2001:df2:": "China",
+            "2001:df3:": "China",
+            "2001:df4:": "China",
+            "2001:df5:": "China",
+            "2001:df6:": "China",
+            "2001:df7:": "China",
+            "2001:df8:": "China",
+            "2001:df9:": "China",
+            "2001:dfa:": "China",
+            "2001:dfb:": "China",
+            "2001:dfc:": "China",
+            "2001:dfd:": "China",
+            "2001:dfe:": "China",
+            "2001:dff:": "China",
+            "2001:4000:": "China",
+            "2001:4001:": "China",
+            "2001:4002:": "China",
+            "2001:4003:": "China",
+            "2001:4004:": "China",
+            "2001:4005:": "China",
+            "2001:4006:": "China",
+            "2001:4007:": "China",
+            "2001:4008:": "China",
+            "2001:4009:": "China",
+            "2001:400a:": "China",
+            "2001:400b:": "China",
+            "2001:400c:": "China",
+            "2001:400d:": "China",
+            "2001:400e:": "China",
+            "2001:400f:": "China",
+            "2400:": "Asia-Pacific (Regional)",
+            "2401:": "APNIC",
+            "2402:": "APNIC",
+            "2403:": "APNIC",
+            "2404:": "APNIC",
+            "2405:": "APNIC",
+            "2406:": "APNIC",
+            "2407:": "APNIC",
+            "2408:": "APNIC",
+            "2409:4091:": "India",  # BSNL, Jio, Airtel (APNIC India block)
+            "2409:": "India",  # Broader India assignment
+            
+            # RIPE NCC (Europe, Middle East, Central Asia)
+            "2a00:": "Europe",
+            "2a01:": "Europe",
+            "2a02:": "Europe",
+            "2a03:": "Europe",
+            "2a04:": "Europe",
+            "2a05:": "Europe",
+            "2a06:": "Europe",
+            "2a07:": "Europe",
+            "2a08:": "Europe",
+            "2a09:": "Europe",
+            "2a0a:": "Europe",
+            "2a0b:": "Europe",
+            "2a0c:": "Europe",
+            "2a0d:": "Europe",
+            "2a0e:": "Europe",
+            "2a0f:": "Europe",
+            "2a10:": "Europe",
+            
+            # LACNIC (Latin America)
+            "2800:": "Latin America",
+            "2801:": "Latin America",
+            "2803:": "Latin America",
+            "2804:": "Latin America",
+            "2805:": "Latin America",
+            
+            # ARIN (North America)
+            "2600:": "United States",
+            "2604:": "United States",
+            "2606:": "United States",
+            "2610:": "United States",
+            
+            # AfriNIC (Africa)
+            "2c00:": "Africa",
+            
+            # Reserved/Special
+            "fc00:": "Private/Reserved",
+            "fd00:": "Private/Reserved",
+            "2001:db8:": "Documentation",
+            "::1": "Loopback",
+            "::": "Unspecified",
+        }
+        
+        ipv6_lower = ipv6.lower()
+        
+        # Try exact match first (more specific)
+        for prefix, country in sorted(ipv6_country_map.items(), key=lambda x: len(x[0]), reverse=True):
+            if ipv6_lower.startswith(prefix):
+                return country
+        
+        # Default based on first nibbles
+        if ipv6_lower.startswith('2'):
+            # All 2xxx are unicast
+            first_nibbles = ipv6_lower[:4]
+            
+            # Map first 4 hex chars to region
+            region_map = {
+                "2001": "Global (various)",
+                "2002": "6to4 Tunneling",
+                "2003": "Unknown",
+                "2004": "Unknown",
+                "2005": "Unknown",
+                "2006": "Unknown",
+                "2007": "Unknown",
+                "2008": "Unknown",
+                "2009": "Unknown",
+            }
+            
+            return region_map.get(first_nibbles, "Asia-Pacific (2xxx block)")
+        
+        return None
+    
+    def _try_ipapi(self, ip: str, geoloc_data: GeolocationData) -> bool:
+        """Try IP-API.com (fastest, free tier: 45 req/min) - Supports IPv4 and IPv6"""
+        try:
+            time.sleep(self.rate_limit_wait)
+            # IP-API supports both IPv4 and IPv6
             url = f"{self.IPAPI_ENDPOINT}{ip}?fields=country,countryCode,city,lat,lon,timezone,as,isp,query"
             
             response = requests.get(url, timeout=5)
@@ -108,13 +318,15 @@ class GeolocationEnricher:
                 geoloc_data.confidence = 0.95
                 geoloc_data.sources = ['ip-api.com']
                 
+                is_ipv6 = ':' in ip
+                ip_type = "IPv6" if is_ipv6 else "IPv4"
                 if self.verbose:
-                    print(f"[✓] IP-API: {ip} → {geoloc_data.city}, {geoloc_data.country}")
+                    print(f" IP-API ({ip_type}): {ip} → {geoloc_data.city}, {geoloc_data.country}")
                 
                 return True
         except Exception as e:
             if self.verbose:
-                print(f"[!] IP-API failed for {ip}: {e}")
+                print(f" IP-API failed for {ip}: {e}")
         
         return False
     

@@ -56,6 +56,13 @@ try:
 except ImportError:
     STAGE5_AVAILABLE = False
 
+# Import Real IP Extractor (VPN/Proxy bypass) - Basic version
+try:
+    from realIpExtractor import RealIPExtractor, extract_real_ip_summary
+    REAL_IP_EXTRACTOR_AVAILABLE = True
+except ImportError:
+    REAL_IP_EXTRACTOR_AVAILABLE = False
+
 # Import Advanced Real IP Extractor (11+ techniques from research paper)
 try:
     from advancedRealIpExtractor import AdvancedRealIPExtractor, extract_real_ip_summary as extract_real_ip_summary_advanced
