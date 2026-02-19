@@ -607,7 +607,7 @@ def extract_real_ip_summary(analysis: RealIPAnalysis) -> str:
         "=" * 70,
         "ADVANCED REAL IP EXTRACTION ANALYSIS",
         "=" * 70,
-        f"\n⚠️ REAL ATTACKER IP: {analysis.suspected_real_ip}",
+        f"\n REAL ATTACKER IP: {analysis.suspected_real_ip}",
         f"Confidence Level: {analysis.confidence_score:.0%}",
         f"Obfuscation Detected: {analysis.obfuscation_level.value.upper()}",
         f"\nVPN/Proxy Provider: {analysis.vpn_provider or 'None detected'}",

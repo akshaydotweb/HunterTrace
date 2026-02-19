@@ -1,3 +1,5 @@
 .venv 
 mails
 .env
+
+__pycache__

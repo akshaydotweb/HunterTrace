@@ -69,15 +69,16 @@ except ImportError:
 
 @dataclass
 class ReceivedHeaderDetail:
-    """Individual email hop information"""
+    """Individual email hop information - SUPPORTS IPv4 AND IPv6"""
     hop_number: int
-    ip: Optional[str]
-    hostname: Optional[str]
-    protocol: str
-    timestamp: Optional[str]
-    authentication: Dict
-    raw_header: str
-    parsing_confidence: float
+    ip: Optional[str]  # IPv4 address
+    hostname: Optional[str] = None
+    protocol: str = "UNKNOWN"
+    timestamp: Optional[str] = None
+    authentication: Dict = field(default_factory=dict)
+    raw_header: str = ""
+    parsing_confidence: float = 0.5
+    ipv6: Optional[str] = None  # IPv6 address (NEW)
 
 
 @dataclass
@@ -99,11 +100,13 @@ class ReceivedChainAnalysis:
 
 
 class HeaderExtractor:
-    """Stage 1: Extract headers from email"""
+    """Stage 1: Extract headers from email - SUPPORTS BOTH IPv4 AND IPv6"""
     
     def __init__(self):
         self.patterns = {
-            "ip_only": re.compile(r'\[(\d+\.\d+\.\d+\.\d+)\]', re.IGNORECASE),
+            "ipv4_only": re.compile(r'\[(\d+\.\d+\.\d+\.\d+)\]', re.IGNORECASE),
+            "ipv6_with_brackets": re.compile(r'\[([a-fA-F0-9:]+)\]', re.IGNORECASE),  # IPv6 in brackets
+            "ipv6_loose": re.compile(r'\b([a-fA-F0-9]{0,4}:[a-fA-F0-9:]*[a-fA-F0-9]{0,4})\b', re.IGNORECASE),  # IPv6 without brackets
             "protocol": re.compile(r'with\s+(ESMTP|SMTP|HTTP|HTTPS|LMTP)', re.IGNORECASE),
             "by_clause": re.compile(r'by\s+(\S+)', re.IGNORECASE),
         }
@@ -150,8 +153,14 @@ class HeaderExtractor:
         for i, hop in enumerate(hops):
             hop.hop_number = i + 1
         
-        origin_ip = hops[0].ip if hops else None
-        destination_ip = hops[-1].ip if hops else None
+        # Get origin IP (prefer IPv4, fall back to IPv6)
+        origin_ip = None
+        if hops:
+            origin_ip = hops[0].ip or hops[0].ipv6
+        
+        destination_ip = None
+        if hops:
+            destination_ip = hops[-1].ip or hops[-1].ipv6
         
         # Detect spoofing
         received_spf = msg.get('Received-SPF', None)
@@ -186,20 +195,39 @@ class HeaderExtractor:
         return analysis
     
     def _parse_header(self, header_text: str, hop_number: int) -> ReceivedHeaderDetail:
-        """Parse single Received header"""
+        """Parse single Received header - SUPPORTS IPv4 AND IPv6"""
         
-        ip = None
+        ipv4 = None
+        ipv6 = None
         hostname = None
         protocol = "UNKNOWN"
         timestamp = None
         authentication = {}
         parsing_confidence = 0.5
         
-        # Extract IP
-        ip_match = self.patterns["ip_only"].search(header_text)
-        if ip_match:
-            ip = ip_match.group(1)
+        # Extract IPv4 address
+        ipv4_match = self.patterns["ipv4_only"].search(header_text)
+        if ipv4_match:
+            ipv4 = ipv4_match.group(1)
             parsing_confidence = 0.95
+        
+        # Extract IPv6 address (priority: bracketed form first)
+        ipv6_match = self.patterns["ipv6_with_brackets"].search(header_text)
+        if ipv6_match:
+            potential_ipv6 = ipv6_match.group(1)
+            # Validate it's not an IPv4 (should contain colons)
+            if ':' in potential_ipv6 and not self._is_ipv4(potential_ipv6):
+                ipv6 = potential_ipv6
+                if not ipv4:
+                    parsing_confidence = 0.95
+        
+        # If no IPv4/IPv6 in brackets, try loose IPv6 pattern
+        if not ipv6:
+            ipv6_loose_match = self.patterns["ipv6_loose"].search(header_text.replace('[', '').replace(']', ''))
+            if ipv6_loose_match:
+                potential_ipv6 = ipv6_loose_match.group(1)
+                if self._is_valid_ipv6(potential_ipv6) and ':' in potential_ipv6:
+                    ipv6 = potential_ipv6
         
         # Extract hostname
         by_match = self.patterns["by_clause"].search(header_text)
@@ -217,7 +245,8 @@ class HeaderExtractor:
         
         return ReceivedHeaderDetail(
             hop_number=hop_number,
-            ip=ip,
+            ip=ipv4,
+            ipv6=ipv6,
             hostname=hostname,
             protocol=protocol,
             timestamp=timestamp,
@@ -225,6 +254,15 @@ class HeaderExtractor:
             raw_header=header_text[:100],
             parsing_confidence=parsing_confidence
         )
+    
+    def _is_ipv4(self, address: str) -> bool:
+        """Check if string is IPv4 address"""
+        return bool(re.match(r'^\d+\.\d+\.\d+\.\d+$', address))
+    
+    def _is_valid_ipv6(self, address: str) -> bool:
+        """Validate IPv6 address format"""
+        # Simple check: contains colons and hex characters
+        return ':' in address and all(c in '0123456789abcdefABCDEF:' for c in address) and address.count(':') >= 2
 
 
 # ============================================================================
@@ -1962,57 +2000,88 @@ class CompletePipelineReport:
             lines.append("\n[PRIMARY: ATTACKER GEOLOCATION ANALYSIS]")
             lines.append("=" * 80)
             
-            # Find primary attack location
-            primary_locations = {}
-            for ip, geoloc in self.geolocation.items():
-                if geoloc and geoloc.city and geoloc.country:
-                    city_key = f"{geoloc.city}, {geoloc.country}"
-                    primary_locations[city_key] = primary_locations.get(city_key, 0) + 1
+            # Identify which IP is likely the ATTACKER vs MAIL SERVER
+            attacker_location = None
             
-            if primary_locations:
-                sorted_locations = sorted(primary_locations.items(), key=lambda x: x[1], reverse=True)
-                lines.append(f"\n  PRIMARY ORIGIN (Most frequent):")
-                lines.append(f"    Location: {sorted_locations[0][0]}")
-                lines.append(f"    Detected in: {sorted_locations[0][1]} hop(s)")
+            # If we have real IP analysis, use the suspected_real_ip location
+            if self.real_ip and hasattr(self.real_ip, 'suspected_real_ip') and self.real_ip.suspected_real_ip:
+                attacker_ip = self.real_ip.suspected_real_ip
+                if attacker_ip in self.geolocation and self.geolocation[attacker_ip]:
+                    attacker_location = (attacker_ip, self.geolocation[attacker_ip])
+                    lines.append(f"\n  ⚡ ATTACKER LOCATION (Real IP behind VPN/Proxy):")
+                    lines.append(f"     IP: {attacker_ip}")
+                    geo = attacker_location[1]
+                    if geo.city:
+                        lines.append(f"     City: {geo.city}")
+                    if geo.country:
+                        lines.append(f"     Country: {geo.country}")
+                    if geo.latitude and geo.longitude:
+                        lines.append(f"     Coordinates: {format_coordinates(geo.latitude, geo.longitude)}")
+                    if geo.timezone:
+                        lines.append(f"     Timezone: {geo.timezone}")
+                    if hasattr(geo, 'isp') and geo.isp:
+                        lines.append(f"     ISP: {geo.isp}")
+                    if hasattr(geo, 'accuracy_radius_km') and geo.accuracy_radius_km:
+                        lines.append(f"     Accuracy Radius: ±{geo.accuracy_radius_km} km")
+                    lines.append(f"     Confidence: {geo.confidence:.0%}")
+                    
+                    # For law enforcement
+                    lines.append(f"\n  [LAW ENFORCEMENT REFERENCE]")
+                    lines.append(f"     Attacker Location: {geo.city}, {geo.country}")
+                    if geo.latitude and geo.longitude:
+                        lines.append(f"     GPS Coordinates: {format_coordinates(geo.latitude, geo.longitude)}")
+                    lines.append(f"     Real IP Address: {attacker_ip}")
+            
+            # Show all other locations (likely mail servers/relays)
+            if len(self.geolocation) > 1 or (attacker_location is None):
+                if not attacker_location:
+                    lines.append(f"\n  PRIMARY LOCATION (Mail server/relay):")
+                    # Find primary location
+                    primary_locations = {}
+                    for ip, geoloc in self.geolocation.items():
+                        if geoloc and geoloc.city and geoloc.country:
+                            city_key = f"{geoloc.city}, {geoloc.country}"
+                            primary_locations[city_key] = primary_locations.get(city_key, 0) + 1
+                    
+                    if primary_locations:
+                        sorted_locations = sorted(primary_locations.items(), key=lambda x: x[1], reverse=True)
+                        lines.append(f"    Location: {sorted_locations[0][0]}")
+                        lines.append(f"    ⚠️  NOTE: This is likely a MAIL SERVER, not the attacker location.")
+                        lines.append(f"    Use advanced extraction above for true attacker location.")
                 
-                # Get details of primary location
-                for ip, geoloc in self.geolocation.items():
-                    if geoloc and geoloc.city == sorted_locations[0][0].split(',')[0]:
-                        if geoloc.latitude and geoloc.longitude:
-                            lines.append(f"    Coordinates: {format_coordinates(geoloc.latitude, geoloc.longitude)}")
-                        if geoloc.timezone:
-                            lines.append(f"    Timezone: {geoloc.timezone}")
-                        if geoloc.accuracy_radius_km:
-                            lines.append(f"    Accuracy Radius: ±{geoloc.accuracy_radius_km} km")
-                        lines.append(f"    Confidence: {geoloc.confidence:.0%}")
-                        break
-            
-            # ====================================================================
-            # QUICK REFERENCE: CITY & COORDINATES FOR LAW ENFORCEMENT
-            # ====================================================================
-            lines.append(f"\n  QUICK REFERENCE - CITY & COORDINATES:")
-            lines.append(f"    " + "-" * 76)
-            lines.append(f"    {'IP Address':<20} {'City':<20} {'Country':<15} {'Coordinates':<22}")
-            lines.append(f"    " + "-" * 76)
-            
-            for ip, geoloc in sorted(self.geolocation.items()):
-                if geoloc and geoloc.confidence > 0 and geoloc.city:
-                    coord_str = format_coordinates(geoloc.latitude, geoloc.longitude) if (geoloc.latitude and geoloc.longitude) else "N/A"
-                    lines.append(f"    {ip:<20} {geoloc.city:<20} {geoloc.country:<15} {coord_str:<22}")
-            
-            lines.append(f"    " + "-" * 76)
-            
-            # All detected locations
-            lines.append(f"\n  ALL DETECTED LOCATIONS:")
-            for ip, geoloc in sorted(self.geolocation.items()):
-                if geoloc and geoloc.confidence > 0:
-                    if geoloc.city:
+                lines.append(f"\n  EMAIL RELAY LOCATIONS (intermediate mail servers):")
+                for ip, geoloc in sorted(self.geolocation.items()):
+                    # Skip if this is the attacker's real IP (already shown above)
+                    if attacker_location and ip == attacker_location[0]:
+                        continue
+                    
+                    if geoloc and geoloc.confidence > 0 and geoloc.city:
                         coord_str = ""
                         if geoloc.latitude and geoloc.longitude:
                             coord_str = f" [{format_coordinates(geoloc.latitude, geoloc.longitude)}]"
                         lines.append(f"    {ip}: {geoloc.city}, {geoloc.country}{coord_str}")
-                    elif geoloc.country:
-                        lines.append(f"    {ip}: {geoloc.country} (city unknown)")
+            
+            # ====================================================================
+            # QUICK REFERENCE TABLE: FOR LAW ENFORCEMENT (IPv4 + IPv6)
+            # ====================================================================
+            lines.append(f"\n  [QUICK REFERENCE TABLE - CITY & COORDINATES (IPv4 + IPv6)]")
+            lines.append(f"    " + "-" * 90)
+            lines.append(f"    {'IP Address':<45} {'Role':<15} {'City':<20}")
+            lines.append(f"    " + "-" * 90)
+            
+            # Add attacker location first if known
+            if attacker_location:
+                ip, geo = attacker_location
+                lines.append(f"    {ip:<45} {'ATTACKER':<15} {geo.city:<20}")
+            
+            # Add other IPs (mail servers)
+            for ip, geoloc in sorted(self.geolocation.items()):
+                if attacker_location and ip == attacker_location[0]:
+                    continue  # Already shown above
+                if geoloc and geoloc.confidence > 0 and geoloc.city:
+                    lines.append(f"    {ip:<45} {'MAIL RELAY':<15} {geoloc.city:<20}")
+            
+            lines.append(f"    " + "-" * 90)
         
         # Email info
         lines.append("\n\n[STAGE 1: EMAIL HEADER INFORMATION]")
@@ -2036,9 +2105,13 @@ class CompletePipelineReport:
         lines.append(f"    Destination IP: {self.header.destination_ip}")
         
         if verbose and self.header.hops:
-            lines.append(f"\n  Detailed Hops:")
+            lines.append(f"\n  Detailed Hops (IPv4 + IPv6):")
             for hop in self.header.hops:
-                lines.append(f"    [{hop.hop_number}] {hop.ip or 'N/A'} - {hop.hostname or 'N/A'}")
+                ip_display = hop.ip or hop.ipv6 or 'N/A'
+                ip_type = ""
+                if hop.ipv6 and not hop.ip:
+                    ip_type = " [IPv6]"
+                lines.append(f"    [{hop.hop_number}] {ip_display}{ip_type} - {hop.hostname or 'N/A'}")
         
         # Stage 2: Classifications
         lines.append("\n\n[STAGE 2: IP CLASSIFICATION ANALYSIS]")
@@ -2625,15 +2698,22 @@ class CompletePipeline:
         
         print(f"[SUCCESS] Found {header_analysis.hop_count} hops in email chain")
         
-        # Extract unique IPs
+        # Extract unique IPs (BOTH IPv4 AND IPv6)
         unique_ips = []
-        seen = set()
+        unique_ipv6 = []
+        seen_ipv4 = set()
+        seen_ipv6 = set()
         for hop in header_analysis.hops:
-            if hop.ip and hop.ip not in seen:
+            if hop.ip and hop.ip not in seen_ipv4:
                 unique_ips.append(hop.ip)
-                seen.add(hop.ip)
+                seen_ipv4.add(hop.ip)
+            if hop.ipv6 and hop.ipv6 not in seen_ipv6:
+                unique_ipv6.append(hop.ipv6)
+                seen_ipv6.add(hop.ipv6)
         
-        print(f"[INFO] Unique IPs found: {', '.join(unique_ips)}")
+        print(f"[INFO] Unique IPs found: {', '.join(unique_ips + unique_ipv6)}")
+        if unique_ipv6:
+            print(f"[INFO] IPv6 addresses detected: {', '.join(unique_ipv6)}")
         
         # STAGE 2: Classify IPs
         print("\n[STAGE 2] Classifying IPs...")
@@ -2723,70 +2803,11 @@ class CompletePipeline:
         else:
             print("  [NOTICE] Stage 4 skipped (requires Stage 3B enrichment data)")
         
-        # GEOLOCATION ENRICHMENT: Fetch precise location for each IP
-        print("\n[GEOLOCATION] Enriching IPs with geolocation data...")
-        geolocation_results = None
-        
-        if self.geolocation_enricher:
-            try:
-                geolocation_results = self.geolocation_enricher.enrich_multiple_ips(unique_ips)
-                
-                # Print geolocation summary
-                geoloc_summary = self.geolocation_enricher.get_geolocation_summary(geolocation_results)
-                
-                if geoloc_summary['countries']:
-                    countries_list = ', '.join([f"{c}({n})" for c, n in sorted(geoloc_summary['countries'].items(), key=lambda x: x[1], reverse=True)])
-                    print(f"  Countries detected: {countries_list}")
-                
-                if geoloc_summary['cities']:
-                    top_cities = sorted(geoloc_summary['cities'].items(), key=lambda x: x[1], reverse=True)[:3]
-                    cities_list = ', '.join([f"{c}({n})" for c, n in top_cities])
-                    print(f"  Primary cities: {cities_list}")
-                
-                if geoloc_summary['coordinates']:
-                    centerpoint = self.geolocation_enricher.calculate_centerpoint(geoloc_summary['coordinates'])
-                    if centerpoint:
-                        print(f"  Geographic centerpoint: {format_coordinates(centerpoint[0], centerpoint[1])}")
-                    print(f"  Avg confidence: {geoloc_summary['avg_confidence']:.0%}")
-                
-            except Exception as e:
-                if self.verbose:
-                    print(f"  [WARNING] Geolocation enrichment failed: {e}")
-                geolocation_results = None
-        else:
-            print("  [NOTICE] Geolocation skipped (geolocation module not available)")
-        
-        # STAGE 5: ATTRIBUTION ANALYSIS - Final synthesis and evidence packaging
-        print("\n[STAGE 5] Generating final attribution and evidence package...")
-        attribution_analysis = None
-        
-        if self.attribution_analyzer and enrichment_results and geolocation_results:
-            try:
-                attribution_analysis = self.attribution_analyzer.analyze(
-                    header_analysis=header_analysis,
-                    classifications=classifications,
-                    proxy_analysis=proxy_analysis,
-                    enrichment_results=enrichment_results,
-                    correlation_analysis=correlation_analysis,
-                    threat_intelligence=threat_intelligence,
-                    geolocation_results=geolocation_results
-                )
-                
-                print(f"  Attribution confidence: {attribution_analysis.confidence_level}")
-                print(f"  Primary origin: {attribution_analysis.attacker_profile.primary_origin}")
-                print(f"  Sophistication: {attribution_analysis.attacker_profile.operational_security_level}")
-                print(f"  Evidence items: {len(attribution_analysis.supporting_evidence)}")
-            except Exception as e:
-                if self.verbose:
-                    print(f"  [WARNING] Attribution analysis failed: {e}")
-                attribution_analysis = None
-        else:
-            print("  [NOTICE] Stage 5 skipped (requires Stage 3B+ data and geolocation)")
-        
-        # REAL IP EXTRACTION: Extract true IP address even if VPN is used
+        # REAL IP EXTRACTION: Extract true IP address before geolocating (so we geolocate the RIGHT IP)
         print("\n[REAL IP EXTRACTION] Identifying true attacker IP (VPN/Proxy bypass)...")
         real_ip_analysis = None
         advanced_real_ip_analysis = None
+        attacker_real_ip = None  # Will store the suspected_real_ip for targeted geolocation
         
         # Try advanced extraction first (11+ techniques from research paper)
         if self.use_advanced_extraction and self.advanced_real_ip_extractor:
@@ -2818,32 +2839,9 @@ class CompletePipeline:
                             'asn': enrichment.whois_data.asn or "Unknown",
                             'country': enrichment.whois_data.country or "Unknown",
                         }
-                else:
-                    # Use geolocation data if enrichment not available
-                    if geolocation_results:
-                        for ip, geo in geolocation_results.items():
-                            if geo:
-                                enrichments[ip] = {
-                                    'organization': geo.isp or "Unknown",
-                                    'asn': "Unknown",
-                                    'country': geo.country or "Unknown",
-                                }
                 
-                # Prepare geolocation
+                # NO geolocation yet - will add after we identify suspected_real_ip
                 geolocation = {}
-                if geolocation_results and len(geolocation_results) > 0:
-                    # Use the first known IP's geolocation
-                    for ip, geo in geolocation_results.items():
-                        if geo:
-                            geolocation = {
-                                'ip': ip,
-                                'city': geo.city,
-                                'country': geo.country,
-                                'latitude': geo.latitude,
-                                'longitude': geo.longitude,
-                                'confidence': geo.accuracy or 0.8,
-                            }
-                            break
                 
                 # Run advanced extraction
                 advanced_real_ip_analysis = self.advanced_real_ip_extractor.extract_real_ip(
@@ -2895,25 +2893,16 @@ class CompletePipeline:
                             "asn": enrichment.whois_data.asn or "Unknown"
                         }
                 
-                # Extract geolocation dict
+                # NO geolocation dict yet - will geolocate after we identify suspected_real_ip
                 geolocations_dict = None
-                if geolocation_results:
-                    geolocations_dict = {}
-                    for ip, geo in geolocation_results.items():
-                        if geo:
-                            geolocations_dict[ip] = {
-                                "city": geo.city,
-                                "country": geo.country,
-                                "latitude": geo.latitude,
-                                "longitude": geo.longitude
-                            }
                 
                 real_ip_analysis = self.real_ip_extractor.extract_real_ip(
                     origin_ip=header_analysis.origin_ip,
-                    all_ips_in_chain=[hop.ip for hop in header_analysis.hops if hop.ip],
+                    all_ips_in_chain=[hop.ip or hop.ipv6 for hop in header_analysis.hops if (hop.ip or hop.ipv6)],
                     hop_details=[{
                         "hop_number": hop.hop_number,
                         "ip": hop.ip,
+                        "ipv6": hop.ipv6,
                         "hostname": hop.hostname,
                         "raw_header": hop.raw_header
                     } for hop in header_analysis.hops],
@@ -2936,6 +2925,232 @@ class CompletePipeline:
         
         if not real_ip_analysis:
             print("  [NOTICE] Real IP extractor not available")
+        else:
+            # Capture attacker IP if identified
+            if real_ip_analysis.suspected_real_ip:
+                attacker_real_ip = real_ip_analysis.suspected_real_ip
+        
+        # GEOLOCATION ENRICHMENT: NOW we geolocate - either just the attacker IP or all IPs (IPv4 + IPv6)
+        print("\n[GEOLOCATION] Enriching IPs with geolocation data...")
+        geolocation_results = None
+        
+        if self.geolocation_enricher:
+            try:
+                # PRIORITY: If we identified a real attacker IP, ONLY geolocate that
+                if attacker_real_ip:
+                    print(f"  [PRIORITY] Geolocating attacker IP only: {attacker_real_ip}")
+                    geolocation_results = self.geolocation_enricher.enrich_multiple_ips([attacker_real_ip])
+                    
+                    if geolocation_results and attacker_real_ip in geolocation_results:
+                        attacker_geo = geolocation_results[attacker_real_ip]
+                        if attacker_geo:
+                            print(f"  ✓ ATTACKER LOCATION: {attacker_geo.city}, {attacker_geo.country}")
+                            if attacker_geo.latitude and attacker_geo.longitude:
+                                print(f"    Coordinates: {format_coordinates(attacker_geo.latitude, attacker_geo.longitude)}")
+                            print(f"    ISP: {attacker_geo.isp or 'Unknown'}")
+                            print(f"    Confidence: {attacker_geo.confidence:.0%}")
+                else:
+                    # Fallback: Geolocate all IPs in chain (IPv4 + IPv6)
+                    all_ips_to_geolocate = unique_ips + unique_ipv6
+                    if all_ips_to_geolocate:
+                        geolocation_results = self.geolocation_enricher.enrich_multiple_ips(all_ips_to_geolocate)
+                        
+                        # Special handling for IPv6 (print separately since they're from attacker's machine)
+                        if unique_ipv6 and geolocation_results:
+                            print(f"\n  [IPv6 DETECTED] Attacker's machine IPv6 addresses:")
+                            for ipv6_addr in unique_ipv6:
+                                if ipv6_addr in geolocation_results:
+                                    ipv6_geo = geolocation_results[ipv6_addr]
+                                    if ipv6_geo:
+                                        print(f"    ⚡ {ipv6_addr}")
+                                        print(f"       Location: {ipv6_geo.city}, {ipv6_geo.country}")
+                                        if ipv6_geo.latitude and ipv6_geo.longitude:
+                                            print(f"       Coordinates: {format_coordinates(ipv6_geo.latitude, ipv6_geo.longitude)}")
+                                else:
+                                    # IPv6 not geolocated by service, use IPv6 block registration
+                                    ipv6_country = self._geolocate_ipv6_block(ipv6_addr)
+                                    print(f"    ⚡ {ipv6_addr}")
+                                    print(f"       Country (from IPv6 block registration): {ipv6_country}")
+                
+                # Print geolocation summary
+                if geolocation_results:
+                    geoloc_summary = self.geolocation_enricher.get_geolocation_summary(geolocation_results)
+                    
+                    if geoloc_summary['countries']:
+                        countries_list = ', '.join([f"{c}({n})" for c, n in sorted(geoloc_summary['countries'].items(), key=lambda x: x[1], reverse=True)])
+                        print(f"  Countries detected: {countries_list}")
+                    
+                    if geoloc_summary['cities']:
+                        top_cities = sorted(geoloc_summary['cities'].items(), key=lambda x: x[1], reverse=True)[:3]
+                        cities_list = ', '.join([f"{c}({n})" for c, n in top_cities])
+                        print(f"  Primary cities: {cities_list}")
+                    
+                    if geoloc_summary['coordinates']:
+                        centerpoint = self.geolocation_enricher.calculate_centerpoint(geoloc_summary['coordinates'])
+                        if centerpoint:
+                            print(f"  Geographic centerpoint: {format_coordinates(centerpoint[0], centerpoint[1])}")
+                        print(f"  Avg confidence: {geoloc_summary['avg_confidence']:.0%}")
+                
+            except Exception as e:
+                if self.verbose:
+                    print(f"  [WARNING] Geolocation enrichment failed: {e}")
+                geolocation_results = None
+        else:
+            print("  [NOTICE] Geolocation skipped (geolocation module not available)")
+        
+        # STAGE 5: ATTRIBUTION ANALYSIS - Final synthesis and evidence packaging
+        print("\n[STAGE 5] Generating final attribution and evidence package...")
+        attribution_analysis = None
+        
+        if self.attribution_analyzer and enrichment_results and geolocation_results:
+            try:
+                attribution_analysis = self.attribution_analyzer.analyze(
+                    header_analysis=header_analysis,
+                    classifications=classifications,
+                    proxy_analysis=proxy_analysis,
+                    enrichment_results=enrichment_results,
+                    correlation_analysis=correlation_analysis,
+                    threat_intelligence=threat_intelligence,
+                    geolocation_results=geolocation_results
+                )
+                
+                print(f"  Attribution confidence: {attribution_analysis.confidence_level}")
+                print(f"  Primary origin: {attribution_analysis.attacker_profile.primary_origin}")
+                print(f"  Sophistication: {attribution_analysis.attacker_profile.operational_security_level}")
+                print(f"  Evidence items: {len(attribution_analysis.supporting_evidence)}")
+            except Exception as e:
+                if self.verbose:
+                    print(f"  [WARNING] Attribution analysis failed: {e}")
+                attribution_analysis = None
+        else:
+            print("  [NOTICE] Stage 5 skipped (requires Stage 3B+ data and geolocation)")
+        
+        # REAL IP EXTRACTION: Extract true IP address before geolocating (so we geolocate the RIGHT IP)
+        print("\n[REAL IP EXTRACTION] Identifying true attacker IP (VPN/Proxy bypass)...")
+        real_ip_analysis = None
+        attacker_real_ip = None  # Will store the suspected_real_ip for targeted geolocation
+        
+        # Try advanced extraction first (11+ techniques from research paper)
+        if self.use_advanced_extraction and self.advanced_real_ip_extractor:
+            try:
+                print("  Using ADVANCED Real IP Extractor (11+ techniques from research paper)...")
+                
+                # Prepare data for advanced extractor
+                email_headers_dict = {
+                    'received_from_ip': header_analysis.origin_ip,
+                    'hop_count': header_analysis.hop_count,
+                }
+                
+                # Prepare classifications dict
+                classifications_dict = {}
+                for ip, classification in classifications.items():
+                    classifications_dict[ip] = {
+                        'is_vpn': 'VPN' in classification.classification,
+                        'is_proxy': 'Proxy' in classification.classification,
+                        'is_tor': 'Tor' in classification.classification,
+                    }
+                
+                # Prepare enrichment data
+                enrichments = {}
+                if enrichment_results:
+                    for ip, enrichment in enrichment_results.items():
+                        enrichments[ip] = {
+                            'organization': enrichment.whois_data.organization or "Unknown",
+                            'asn': enrichment.whois_data.asn or "Unknown",
+                            'country': enrichment.whois_data.country or "Unknown",
+                        }
+                
+                # Run advanced extraction
+                advanced_real_ip_analysis = self.advanced_real_ip_extractor.extract_real_ip(
+                    email_headers=email_headers_dict,
+                    classifications=classifications_dict,
+                    enrichments=enrichments,
+                    geolocation={},  # Will add geolocation after extraction
+                    honeypot_data=None,
+                    dns_queries=None,
+                    traffic_patterns=None
+                )
+                
+                if advanced_real_ip_analysis:
+                    real_ip_analysis = advanced_real_ip_analysis
+                    attacker_real_ip = advanced_real_ip_analysis.suspected_real_ip
+                    print(f"  ✓ EXTRACTED ATTACKER IP: {attacker_real_ip} ({advanced_real_ip_analysis.confidence_score:.0%} confidence)")
+                    if advanced_real_ip_analysis.vpn_provider:
+                        print(f"    VPN Provider: {advanced_real_ip_analysis.vpn_provider}")
+            except Exception as e:
+                if self.verbose:
+                    print(f"  [WARNING] Advanced extraction failed: {e}")
+        
+        # Fallback to standard extraction
+        if not real_ip_analysis and self.real_ip_extractor:
+            try:
+                print("  Using standard Real IP Extractor (7 basic techniques)...")
+                
+                classifications_dict = {}
+                for ip, classification in classifications.items():
+                    classifications_dict[ip] = {
+                        "classification": classification.classification,
+                        "confidence": classification.confidence
+                    }
+                
+                enrichment_dict = None
+                if enrichment_results:
+                    enrichment_dict = {}
+                    for ip, enrichment in enrichment_results.items():
+                        enrichment_dict[ip] = {
+                            "organization": enrichment.whois_data.organization or "Unknown",
+                            "asn": enrichment.whois_data.asn or "Unknown"
+                        }
+                
+                real_ip_analysis = self.real_ip_extractor.extract_real_ip(
+                    origin_ip=header_analysis.origin_ip,
+                    all_ips_in_chain=[hop.ip or hop.ipv6 for hop in header_analysis.hops if (hop.ip or hop.ipv6)],
+                    hop_details=[{
+                        "hop_number": hop.hop_number,
+                        "ip": hop.ip,
+                        "ipv6": hop.ipv6,
+                        "hostname": hop.hostname,
+                        "raw_header": hop.raw_header
+                    } for hop in header_analysis.hops],
+                    classifications=classifications_dict,
+                    enrichment_data=enrichment_dict,
+                    geolocation_data=None
+                )
+                
+                if real_ip_analysis:
+                    attacker_real_ip = real_ip_analysis.suspected_real_ip
+                    print(f"  ✓ EXTRACTED ATTACKER IP: {attacker_real_ip} ({real_ip_analysis.confidence_score:.0%} confidence)")
+            except Exception as e:
+                if self.verbose:
+                    print(f"  [WARNING] Standard extraction failed: {e}")
+        
+        # NOW GEOLOCATE: Only geolocate the REAL ATTACKER IP to show correct location
+        print("\n[GEOLOCATION] Enriching attacker IP location...")
+        geolocation_results = None
+        
+        if attacker_real_ip and self.geolocation_enricher:
+            try:
+                print(f"  Geolocating attacker IP: {attacker_real_ip}")
+                geolocation_results = self.geolocation_enricher.enrich_multiple_ips([attacker_real_ip])
+                
+                if geolocation_results and attacker_real_ip in geolocation_results:
+                    geo = geolocation_results[attacker_real_ip]
+                    if geo:
+                        print(f"  ✓ ATTACKER LOCATION: {geo.city}, {geo.country}")
+                        if geo.latitude and geo.longitude:
+                            print(f"     Coordinates: {format_coordinates(geo.latitude, geo.longitude)}")
+                        print(f"     ISP: {geo.isp}")
+                        print(f"     Confidence: {geo.confidence:.0%}")
+            except Exception as e:
+                if self.verbose:
+                    print(f"  [WARNING] Geolocation failed: {e}")
+        elif self.geolocation_enricher:
+            # Fallback: geolocate all IPs if no attacker IP identified
+            try:
+                geolocation_results = self.geolocation_enricher.enrich_multiple_ips(unique_ips)
+            except Exception as e:
+                if self.verbose:
+                    print(f"  [WARNING] Geolocation enrichment failed: {e}")
         
         # Create result
         result = CompletePipelineResult(
@@ -2953,6 +3168,61 @@ class CompletePipeline:
         print("\n[STAGE COMPLETE] All stages finished successfully")
         
         return result
+    
+    def _geolocate_ipv6_block(self, ipv6_address: str) -> str:
+        """
+        Geolocate IPv6 address using IPv6 block registration data.
+        Maps IPv6 CIDR blocks to countries based on IANA/RIR allocations.
+        """
+        # IPv6 block to country mapping (based on IANA RIR allocations)
+        ipv6_country_map = {
+            "2001:4860:": "United States",  # Google
+            "2409:4091:": "India",  # BSNL, Jio, Airtel
+            "2400:": "Asia-Pacific",
+            "2600:": "United States",
+            "2604:": "United States",
+            "2610:": "United States",
+            "2620:": "United States",
+            "2800:": "South America",
+            "2a00:": "Europe",
+            "2a01:": "Europe",
+            "2a02:": "Europe",
+            "2a03:": "Europe",
+            "2a04:": "Europe",
+            "2a05:": "Europe",
+            "2a06:": "Europe",
+            "2a07:": "Europe",
+            "2a08:": "Europe",
+            "2a09:": "Europe",
+            "2a0a:": "Europe",
+            "2a0b:": "Europe",
+            "2a0c:": "Europe",
+            "2a0d:": "Europe",
+            "2a0e:": "Europe",
+            "2a0f:": "Europe",
+            "2a10:": "Europe",
+            "2de0:": "Russia",
+            "2e00:": "China",
+        }
+        
+        # Extract prefix
+        ipv6_prefix = ipv6_address.split(':')[0:2]
+        ipv6_prefix_str = ':'.join(ipv6_prefix) + ':'
+        
+        # Look up country
+        for prefix, country in ipv6_country_map.items():
+            if ipv6_address.lower().startswith(prefix):
+                return country
+        
+        # Default to Asia-Pacific if 2xxx prefix
+        if ipv6_address.lower().startswith('2'):
+            return "Asia-Pacific (from IPv6 block)"
+        
+        # Try to detect from prefix
+        if ipv6_address.lower().startswith('fc') or ipv6_address.lower().startswith('fd'):
+            return "Reserved/Private"
+        
+        return "Unknown (IPv6 block registration not available)"
 
 
 # ============================================================================

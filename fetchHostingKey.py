@@ -66,10 +66,10 @@ class HostingKeywordsFetcher:
                                 if len(word) > 3 and word.isalpha():
                                     self.datacenter_keywords.add(word)
                 
-                self.log(f"  ✓ PeeringDB Organizations: Found {len(data['data'])} providers")
+                self.log(f"  PeeringDB Organizations: Found {len(data['data'])} providers")
         
         except Exception as e:
-            self.log(f"  ✗ PeeringDB error: {e}")
+            self.log(f"  PeeringDB error: {e}")
     
     def fetch_from_peeringdb_networks(self) -> None:
         """Fetch network organization info from PeeringDB"""
@@ -113,9 +113,9 @@ class HostingKeywordsFetcher:
             headers = {"User-Agent": "Mozilla/5.0"}
             
             # This approach won't work without parsing HTML - skip
-            self.log("  ℹ Shodan requires authentication, skipping")
+            self.log("  Shodan requires authentication, skipping")
         except Exception as e:
-            self.log(f"  ✗ Shodan error: {e}")
+            self.log(f"  Shodan error: {e}")
     
     # ========================================================================
     # SOURCE 3: Public GitHub repositories with ASN/ISP lists
@@ -143,9 +143,9 @@ class HostingKeywordsFetcher:
                     if line.strip():
                         self.datacenter_asns.add(line.strip())
                 
-                self.log(f"  ✓ GitHub {repo}: Found {len(lines)} entries")
+                self.log(f"  GitHub {repo}: Found {len(lines)} entries")
             except Exception as e:
-                self.log(f"  ✗ GitHub {repo}: {e}")
+                self.log(f"  GitHub {repo}: {e}")
     
     # ========================================================================
     # SOURCE 4: ARIN/RIPE ASN Database
@@ -179,9 +179,9 @@ class HostingKeywordsFetcher:
                         # This is limited without full WHOIS, but helpful
                         pass
             
-            self.log(f"  ✓ ARIN data processed")
+            self.log(f"  ARIN data processed")
         except Exception as e:
-            self.log(f"  ✗ ARIN error: {e}")
+            self.log(f"  ARIN error: {e}")
     
     # ========================================================================
     # SOURCE 5: MaxMind GeoLite2 ISP Database (free alternative)
@@ -214,9 +214,9 @@ class HostingKeywordsFetcher:
                             elif any(word in name for word in ["comcast", "verizon", "at&t", "charter", "spectrum"]):
                                 self.residential_asns.add(name)
                     
-                    self.log(f"  ✓ CAIDA AS-RANK: Found {len(as_data['asns'])} ASNs")
+                    self.log(f"  CAIDA AS-RANK: Found {len(as_data['asns'])} ASNs")
         except Exception as e:
-            self.log(f"  ✗ MaxMind/CAIDA error: {e}")
+            self.log(f"  MaxMind/CAIDA error: {e}")
     
     # ========================================================================
     # SOURCE 6: Abuse.ch & Known Bad List Services
@@ -240,9 +240,9 @@ class HostingKeywordsFetcher:
                 except:
                     pass
             
-            self.log(f"  ℹ Abuse.ch lists require HTML parsing, skipping")
+            self.log(f"  Abuse.ch lists require HTML parsing, skipping")
         except Exception as e:
-            self.log(f"  ✗ Abuse lists error: {e}")
+            self.log(f"  Abuse lists error: {e}")
     
     # ========================================================================
     # SOURCE 7: IP2Location & Similar Services
@@ -256,9 +256,9 @@ class HostingKeywordsFetcher:
             url = "https://www.ip2location.com/download?token=demo"
             
             # Most require registration/token - skip for now
-            self.log("  ℹ IP2Location requires authentication, skipping")
+            self.log("  IP2Location requires authentication, skipping")
         except Exception as e:
-            self.log(f"  ✗ IP2Location error: {e}")
+            self.log(f"  IP2Location error: {e}")
     
     # ========================================================================
     # SOURCE 8: WhoisXML API Public Data
@@ -323,9 +323,9 @@ class HostingKeywordsFetcher:
                 for variant in variants:
                     self.residential_keywords.add(variant)
             
-            self.log(f"  ✓ Added {len(known_datacenters)} datacenter and {len(known_residential)} ISP providers")
+            self.log(f"  Added {len(known_datacenters)} datacenter and {len(known_residential)} ISP providers")
         except Exception as e:
-            self.log(f"  ✗ WhoisXML error: {e}")
+            self.log(f"  WhoisXML error: {e}")
     
     # ========================================================================
     # SOURCE 9: BGP datasets & RIB data
@@ -345,9 +345,9 @@ class HostingKeywordsFetcher:
             response = self.session.get(url, timeout=10)
             response.raise_for_status()
             
-            self.log(f"  ✓ BGP data query completed")
+            self.log(f"  BGP data query completed")
         except Exception as e:
-            self.log(f"  ✗ BGP error: {e}")
+            self.log(f"  BGP error: {e}")
     
     # ========================================================================
     # SOURCE 10: DShield API
@@ -372,9 +372,9 @@ class HostingKeywordsFetcher:
                         if any(kw in name for kw in ["datacenter", "hosting", "aws", "azure", "google"]):
                             self.datacenter_asns.add(name)
                 
-                self.log(f"  ✓ DShield: Processed {len(data['asns'])} ASN records")
+                self.log(f"  DShield: Processed {len(data['asns'])} ASN records")
         except Exception as e:
-            self.log(f"  ✗ DShield error: {e}")
+            self.log(f"  DShield error: {e}")
     
     # ========================================================================
     # SOURCE 11: Shadowserver Foundation - Accessible Intelligence
@@ -388,9 +388,9 @@ class HostingKeywordsFetcher:
             url = "https://www.shadowserver.org/what-we-do/threat-feeds/"
             
             # Mostly requires HTML parsing - offers data for registered users
-            self.log("  ℹ Shadowserver data requires registration, skipping")
+            self.log("  Shadowserver data requires registration, skipping")
         except Exception as e:
-            self.log(f"  ✗ Shadowserver error: {e}")
+            self.log(f"  Shadowserver error: {e}")
     
     # ========================================================================
     # SOURCE 12: OpenDNS Security Graph
@@ -408,9 +408,9 @@ class HostingKeywordsFetcher:
             response.raise_for_status()
             
             # This is suffix list, not directly hosting info
-            self.log(f"  ✓ OpenDNS suffix list retrieved")
+            self.log(f"  OpenDNS suffix list retrieved")
         except Exception as e:
-            self.log(f"  ✗ OpenDNS error: {e}")
+            self.log(f"  OpenDNS error: {e}")
     
     # ========================================================================
     # Run all sources
@@ -448,7 +448,7 @@ class HostingKeywordsFetcher:
         """Save results to JSON file"""
         with open(output_file, 'w') as f:
             json.dump(results, f, indent=2)
-        print(f"\n✓ Results saved to {output_file}")
+        print(f"\n Results saved to {output_file}")
     
     def print_summary(self, results: Dict) -> None:
         """Print summary statistics"""
