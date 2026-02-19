@@ -2000,96 +2000,6 @@ class CompletePipelineReport:
         lines.append("[ATTACKER IP IDENTIFICATION SYSTEM - COMPLETE ANALYSIS]")
         lines.append("=" * 80)
         
-        # ========================================================================
-        # PRIMARY FOCUS: ATTACKER GEOLOCATION
-        # ========================================================================
-        if self.geolocation:
-            lines.append("\n[PRIMARY: ATTACKER GEOLOCATION ANALYSIS]")
-            lines.append("=" * 80)
-            
-            # Identify which IP is likely the ATTACKER vs MAIL SERVER
-            attacker_location = None
-            
-            # If we have real IP analysis, use the suspected_real_ip location
-            if self.real_ip and hasattr(self.real_ip, 'suspected_real_ip') and self.real_ip.suspected_real_ip:
-                attacker_ip = self.real_ip.suspected_real_ip
-                if attacker_ip in self.geolocation and self.geolocation[attacker_ip]:
-                    attacker_location = (attacker_ip, self.geolocation[attacker_ip])
-                    lines.append(f"\n  ⚡ ATTACKER LOCATION (Real IP behind VPN/Proxy):")
-                    lines.append(f"     IP: {attacker_ip}")
-                    geo = attacker_location[1]
-                    if geo.city:
-                        lines.append(f"     City: {geo.city}")
-                    if geo.country:
-                        lines.append(f"     Country: {geo.country}")
-                    if geo.latitude and geo.longitude:
-                        lines.append(f"     Coordinates: {format_coordinates(geo.latitude, geo.longitude)}")
-                    if geo.timezone:
-                        lines.append(f"     Timezone: {geo.timezone}")
-                    if hasattr(geo, 'isp') and geo.isp:
-                        lines.append(f"     ISP: {geo.isp}")
-                    if hasattr(geo, 'accuracy_radius_km') and geo.accuracy_radius_km:
-                        lines.append(f"     Accuracy Radius: ±{geo.accuracy_radius_km} km")
-                    lines.append(f"     Confidence: {geo.confidence:.0%}")
-                    
-                    # For law enforcement
-                    lines.append(f"\n  [LAW ENFORCEMENT REFERENCE]")
-                    lines.append(f"     Attacker Location: {geo.city}, {geo.country}")
-                    if geo.latitude and geo.longitude:
-                        lines.append(f"     GPS Coordinates: {format_coordinates(geo.latitude, geo.longitude)}")
-                    lines.append(f"     Real IP Address: {attacker_ip}")
-            
-            # Show all other locations (likely mail servers/relays)
-            if len(self.geolocation) > 1 or (attacker_location is None):
-                if not attacker_location:
-                    lines.append(f"\n  PRIMARY LOCATION (Mail server/relay):")
-                    # Find primary location
-                    primary_locations = {}
-                    for ip, geoloc in self.geolocation.items():
-                        if geoloc and geoloc.city and geoloc.country:
-                            city_key = f"{geoloc.city}, {geoloc.country}"
-                            primary_locations[city_key] = primary_locations.get(city_key, 0) + 1
-                    
-                    if primary_locations:
-                        sorted_locations = sorted(primary_locations.items(), key=lambda x: x[1], reverse=True)
-                        lines.append(f"    Location: {sorted_locations[0][0]}")
-                        lines.append(f"    ⚠️  NOTE: This is likely a MAIL SERVER, not the attacker location.")
-                        lines.append(f"    Use advanced extraction above for true attacker location.")
-                
-                lines.append(f"\n  EMAIL RELAY LOCATIONS (intermediate mail servers):")
-                for ip, geoloc in sorted(self.geolocation.items()):
-                    # Skip if this is the attacker's real IP (already shown above)
-                    if attacker_location and ip == attacker_location[0]:
-                        continue
-                    
-                    if geoloc and geoloc.confidence > 0 and geoloc.city:
-                        coord_str = ""
-                        if geoloc.latitude and geoloc.longitude:
-                            coord_str = f" [{format_coordinates(geoloc.latitude, geoloc.longitude)}]"
-                        lines.append(f"    {ip}: {geoloc.city}, {geoloc.country}{coord_str}")
-            
-            # ====================================================================
-            # QUICK REFERENCE TABLE: FOR LAW ENFORCEMENT (IPv4 + IPv6)
-            # ====================================================================
-            lines.append(f"\n  [QUICK REFERENCE TABLE - CITY & COORDINATES (IPv4 + IPv6)]")
-            lines.append(f"    " + "-" * 90)
-            lines.append(f"    {'IP Address':<45} {'Role':<15} {'City':<20}")
-            lines.append(f"    " + "-" * 90)
-            
-            # Add attacker location first if known
-            if attacker_location:
-                ip, geo = attacker_location
-                lines.append(f"    {ip:<45} {'ATTACKER':<15} {geo.city:<20}")
-            
-            # Add other IPs (mail servers)
-            for ip, geoloc in sorted(self.geolocation.items()):
-                if attacker_location and ip == attacker_location[0]:
-                    continue  # Already shown above
-                if geoloc and geoloc.confidence > 0 and geoloc.city:
-                    lines.append(f"    {ip:<45} {'MAIL RELAY':<15} {geoloc.city:<20}")
-            
-            lines.append(f"    " + "-" * 90)
-        
         # Email info
         lines.append("\n\n[STAGE 1: EMAIL HEADER INFORMATION]")
         lines.append("-" * 80)
@@ -2412,6 +2322,101 @@ class CompletePipelineReport:
                 lines.append(f"\n  STAGE 5 RECOMMENDATIONS:")
                 for i, action in enumerate(self.attribution.recommended_actions[:5], 1):
                     lines.append(f"    {i}. {action}")
+        
+        # ========================================================================
+        # FINAL SECTION: PRIMARY FOCUS - ATTACKER GEOLOCATION ANALYSIS
+        # ========================================================================
+        lines.append("\n\n" + "=" * 80)
+        lines.append("[PRIMARY: ATTACKER GEOLOCATION ANALYSIS - FINAL RESULT]")
+        lines.append("=" * 80)
+        
+        if self.geolocation:
+            # Identify which IP is likely the ATTACKER vs MAIL SERVER
+            attacker_location = None
+            
+            # If we have real IP analysis, use the suspected_real_ip location
+            if self.real_ip and hasattr(self.real_ip, 'suspected_real_ip') and self.real_ip.suspected_real_ip:
+                attacker_ip = self.real_ip.suspected_real_ip
+                if attacker_ip in self.geolocation and self.geolocation[attacker_ip]:
+                    attacker_location = (attacker_ip, self.geolocation[attacker_ip])
+                    lines.append(f"\n  ⚡ ATTACKER IDENTIFIED - LOCATION DETERMINED:")
+                    lines.append(f"\n     Real IP Address: {attacker_ip}")
+                    geo = attacker_location[1]
+                    if geo.city:
+                        lines.append(f"     City: {geo.city}")
+                    if geo.country:
+                        lines.append(f"     Country: {geo.country}")
+                    if geo.latitude and geo.longitude:
+                        lines.append(f"     GPS Coordinates: {format_coordinates(geo.latitude, geo.longitude)}")
+                    if geo.timezone:
+                        lines.append(f"     Timezone: {geo.timezone}")
+                    if hasattr(geo, 'isp') and geo.isp:
+                        lines.append(f"     ISP: {geo.isp}")
+                    if hasattr(geo, 'accuracy_radius_km') and geo.accuracy_radius_km:
+                        lines.append(f"     Accuracy Radius: ±{geo.accuracy_radius_km} km")
+                    lines.append(f"     Confidence Level: {geo.confidence:.0%}")
+                    
+                    # For law enforcement
+                    lines.append(f"\n  [LAW ENFORCEMENT REFERENCE SUMMARY]")
+                    lines.append(f"     Attacker Location: {geo.city}, {geo.country}")
+                    if geo.latitude and geo.longitude:
+                        lines.append(f"     GPS Coordinates: {format_coordinates(geo.latitude, geo.longitude)}")
+                    lines.append(f"     Real IP Address: {attacker_ip}")
+            
+            # Show all other locations (likely mail servers/relays)
+            if len(self.geolocation) > 1 or (attacker_location is None):
+                if not attacker_location:
+                    lines.append(f"\n  ⚠️  PRIMARY LOCATION (Mail server/relay):")
+                    # Find primary location
+                    primary_locations = {}
+                    for ip, geoloc in self.geolocation.items():
+                        if geoloc and geoloc.city and geoloc.country:
+                            city_key = f"{geoloc.city}, {geoloc.country}"
+                            primary_locations[city_key] = primary_locations.get(city_key, 0) + 1
+                    
+                    if primary_locations:
+                        sorted_locations = sorted(primary_locations.items(), key=lambda x: x[1], reverse=True)
+                        lines.append(f"     Location: {sorted_locations[0][0]}")
+                        lines.append(f"     NOTE: This appears to be a MAIL SERVER, not the attacker's location.")
+                        lines.append(f"           The attacker identity was extracted using advanced header analysis.")
+                else:
+                    lines.append(f"\n  [EMAIL INTERMEDIARY SERVERS] (For Reference):")
+                
+                lines.append(f"")
+                for ip, geoloc in sorted(self.geolocation.items()):
+                    # Skip if this is the attacker's real IP (already shown above)
+                    if attacker_location and ip == attacker_location[0]:
+                        continue
+                    
+                    if geoloc and geoloc.confidence > 0 and geoloc.city:
+                        coord_str = ""
+                        if geoloc.latitude and geoloc.longitude:
+                            coord_str = f" - {format_coordinates(geoloc.latitude, geo.longitude)}"
+                        lines.append(f"     {ip}: {geoloc.city}, {geoloc.country}{coord_str}")
+            
+            # ====================================================================
+            # QUICK REFERENCE TABLE: FOR LAW ENFORCEMENT (IPv4 + IPv6)
+            # ====================================================================
+            lines.append(f"\n  [QUICK REFERENCE TABLE - CITY & COORDINATES]")
+            lines.append(f"  " + "-" * 90)
+            lines.append(f"  {'IP Address':<45} {'Role':<15} {'City':<20}")
+            lines.append(f"  " + "-" * 90)
+            
+            # Add attacker location first if known
+            if attacker_location:
+                ip, geo = attacker_location
+                lines.append(f"  {ip:<45} {'ATTACKER':<15} {geo.city:<20}")
+            
+            # Add other IPs (mail servers)
+            for ip, geoloc in sorted(self.geolocation.items()):
+                if attacker_location and ip == attacker_location[0]:
+                    continue  # Already shown above
+                if geoloc and geoloc.confidence > 0 and geoloc.city:
+                    lines.append(f"  {ip:<45} {'MAIL RELAY':<15} {geoloc.city:<20}")
+            
+            lines.append(f"  " + "-" * 90)
+        else:
+            lines.append("  [NO GEOLOCATION DATA AVAILABLE]")
         
         lines.append("\n" + "=" * 80 + "\n")
         
