@@ -167,6 +167,11 @@ class RealIPBacktracker:
         if behavior_signal:
             signals.append(behavior_signal)
         
+        # Technique 6b: OS fingerprinting consistency check
+        os_signal = self._analyze_os_fingerprint_consistency(email_headers, vpn_endpoint_ip, vpn_country)
+        if os_signal:
+            signals.append(os_signal)
+        
         # Technique 7: Geolocation inference (VPN vs real location mismatch)
         geo_signal = self._infer_real_location_mismatch(signals, vpn_endpoint_ip, vpn_country)
         if geo_signal:
@@ -299,7 +304,7 @@ class RealIPBacktracker:
             if not self._is_private_ip(first_hop_ip) and first_hop_ip != "127.0.0.1":
                 evidence = [
                     f"First hop IP (sender's direct ISP): {first_hop_ip}",
-                    "✅ Email headers are IMMUTABLE at send time",
+                    "[CHECK] Email headers are IMMUTABLE at send time",
                     "First hop = attacker's actual ISP before any proxying",
                 ]
                 
@@ -318,7 +323,7 @@ class RealIPBacktracker:
                 
                 # Analyze the full header for anomalies
                 if 'unknown' in first_hop.lower():
-                    evidence.append("⚠️  Unknown/obfuscated hostname in first hop")
+                    evidence.append("[WARNING] Unknown/obfuscated hostname in first hop")
                 
                 # NOTE: Don't return country from first-hop geolocation
                 # First hop is often mail relay, not attacker's location
@@ -412,12 +417,12 @@ class RealIPBacktracker:
                     
                     if received_tz == tz_offset:
                         server_tz_matches = True
-                        evidence.append(f"✓ VALIDATED: Received header has matching timezone: {received_tz}")
+                        evidence.append(f"[CHECK] VALIDATED: Received header has matching timezone: {received_tz}")
                         break
                     else:
                         # Mismatch between Date and Received headers
                         spoofing_detected = True
-                        evidence.append(f"⚠️  SPOOFING DETECTED: Date claims {tz_offset}, server shows {received_tz}")
+                        evidence.append(f"[WARNING] SPOOFING DETECTED: Date claims {tz_offset}, server shows {received_tz}")
                         evidence.append(f"     This suggests the attacker falsified the Date header timezone!")
 
         
@@ -428,10 +433,10 @@ class RealIPBacktracker:
             # Adjust confidence based on spoofing detection
             if spoofing_detected:
                 confidence = 0.50  # LOW - timezone likely spoofed
-                evidence.append("⚠️  WARNING: Timezone mismatch suggests potential spoofing. Confidence reduced.")
+                evidence.append("[WARNING] WARNING: Timezone mismatch suggests potential spoofing. Confidence reduced.")
             elif server_tz_matches:
                 confidence = 0.95  # VERY HIGH - server validates timezone
-                evidence.append("✓ HIGH CONFIDENCE: Server timestamps corroborate timezone")
+                evidence.append("[CHECK] HIGH CONFIDENCE: Server timestamps corroborate timezone")
             else:
                 confidence = 0.90  # HIGH - timezone not explicitly spoofed, but unvalidated
         else:
@@ -531,7 +536,7 @@ class RealIPBacktracker:
             
             # Check SPF result
             if 'pass' in str(spf_header).lower():
-                evidence.append("✓ SPF verification: PASS (sender domain authenticated)")
+                evidence.append("[CHECK] SPF verification: PASS (sender domain authenticated)")
             elif 'fail' in str(spf_header).lower():
                 evidence.append("✗ SPF verification: FAIL (spoofed domain likely)")
         
@@ -540,11 +545,11 @@ class RealIPBacktracker:
         if auth_results:
             auth_str = str(auth_results).lower()
             if "spf=pass" in auth_str:
-                evidence.append("✓ SPF passed authentication")
+                evidence.append("[+] SPF passed authentication")
             if "dkim=pass" in auth_str:
-                evidence.append("✓ DKIM signature verified (email not tampered)")
+                evidence.append("[+] DKIM signature verified (email not tampered)")
             if "dmarc=pass" in auth_str:
-                evidence.append("✓ DMARC passed (domain alignment confirmed)")
+                evidence.append("[+] DMARC passed (domain alignment confirmed)")
         
         # Check DKIM signature for domain info
         dkim_header = email_headers.get("DKIM-Signature", "")
@@ -612,10 +617,10 @@ class RealIPBacktracker:
             evidence.append(f"Email client: {x_mailer}")
             # Detect suspicious clients like gophish, phishing frameworks
             if 'gophish' in str(x_mailer).lower():
-                evidence.append("⚠️  CRITICAL: GoPhish phishing framework detected!")
+                evidence.append("[!]  CRITICAL: GoPhish phishing framework detected!")
                 confidence += 0.20
             if 'phish' in str(x_mailer).lower():
-                evidence.append("⚠️  WARNING: Phishing-related tool detected")
+                evidence.append("[!]  WARNING: Phishing-related tool detected")
                 confidence += 0.15
         
         # Check X-Priority for behavior pattern
@@ -677,7 +682,7 @@ class RealIPBacktracker:
             
             # Behavioral classification
             if 0 <= hour < 6:
-                evidence.append("⚠️  Night/early morning send (0:00-6:00) - unusual for business")
+                evidence.append("[WARNING] Night/early morning send (0:00-6:00) - unusual for business")
                 evidence.append("Suggests attacker in different timezone (not typical 9-5)")
                 confidence = 0.55
             elif 6 <= hour < 9:
@@ -705,10 +710,10 @@ class RealIPBacktracker:
                 try:
                     tz_hours = int(tz_offset.split(':')[0])
                     if hour >= 9 and hour < 17 and abs(tz_hours) < 5:
-                        evidence.append("✓ Time pattern matches timestamp timezone (consistent)")
+                        evidence.append("[CHECK] Time pattern matches timestamp timezone (consistent)")
                         confidence += 0.10
                     elif hour >= 14 and hour < 21 and tz_hours > 3:
-                        evidence.append("✓ Evening time pattern matches Asian timezone (consistent)")
+                        evidence.append("[CHECK] Evening time pattern matches Asian timezone (consistent)")
                         confidence += 0.15
                 except:
                     pass
@@ -721,6 +726,64 @@ class RealIPBacktracker:
                 real_ip=None,
                 real_country=None,
                 confidence=min(confidence, 0.70),
+                evidence=evidence
+            )
+        
+        return None
+    
+    def _analyze_os_fingerprint_consistency(self, email_headers: Dict, vpn_ip: str, vpn_country: str) -> Optional[RealIPSignal]:
+        """
+        TECHNIQUE 6b: Detect OS fingerprinting spoofing
+        Checks if X-Mailer/User-Agent matches expected OS for location
+        Example: Apple Mail from China IP is suspicious
+        """
+        
+        x_mailer = email_headers.get("X-Mailer", "").lower()
+        user_agent = email_headers.get("User-Agent", "").lower()
+        hostname = email_headers.get("Received", [""])[0].lower() if email_headers.get("Received") else ""
+        
+        # VPN country detection (from geoIP)
+        country_lower = vpn_country.lower() if vpn_country else ""
+        
+        evidence = []
+        confidence = 0.0
+        spoofing_detected = False
+        
+        # OS mappings
+        apple_clients = ['apple mail', 'macintosh', 'mac os', 'darwin', 'macos', 'iphone', 'ipad']
+        windows_clients = ['outlook', 'windows', 'microsoft', 'thunderbird']
+        android_clients = ['android', 'gmail app']
+        
+        # Check for Apple Mail
+        if any(client in x_mailer or client in user_agent for client in apple_clients):
+            evidence.append(f"Client: Apple Mail/macOS detected")
+            # Apple Mail from China/Russia = suspicious
+            if any(c in country_lower for c in ['china', 'russia', 'iran']):
+                spoofing_detected = True
+                confidence = 0.65
+                evidence.append(f"[!] SUSPICIOUS: Apple Mail from {vpn_country} (unlikely distribution)")
+        
+        # Check for Windows/Outlook
+        elif any(client in x_mailer or client in user_agent for client in windows_clients):
+            evidence.append(f"Client: Windows/Outlook detected")
+            # Less suspicious but still check timezone
+        
+        # Check for Android
+        elif any(client in x_mailer or client in user_agent for client in android_clients):
+            evidence.append(f"Client: Android device detected")
+        
+        # Check for GoPhish/Evilginx/phishing frameworks
+        if 'gophish' in x_mailer or 'evilginx' in x_mailer:
+            evidence.append("[!] PHISHING FRAMEWORK DETECTED: GoPhish/Evilginx")
+            spoofing_detected = True
+            confidence = 0.95
+        
+        if spoofing_detected or evidence:
+            return RealIPSignal(
+                method=BacktrackMethod.BEHAVIORAL_TIME,  # Reuse for OS check
+                real_ip=None,
+                real_country=None,
+                confidence=confidence if spoofing_detected else 0.0,
                 evidence=evidence
             )
         
@@ -852,13 +915,13 @@ class RealIPBacktracker:
         
         # Check for domain mismatch
         if from_domain != dkim_domain:
-            evidence.append(f"⚠️ DOMAIN MISMATCH: From: {from_domain} != DKIM: {dkim_domain}")
+            evidence.append(f"[WARNING] DOMAIN MISMATCH: From: {from_domain} != DKIM: {dkim_domain}")
             evidence.append("   This could indicate compromised server spoofing!")
             risk_score += 0.3
         
         # Check for unusual relay chains
         if len(received_headers) > 5:
-            evidence.append(f"⚠️ UNUSUAL RELAY CHAIN: {len(received_headers)} hops detected")
+            evidence.append(f"[WARNING] UNUSUAL RELAY CHAIN: {len(received_headers)} hops detected")
             evidence.append("   Longer chains indicate possible mail server compromise")
             risk_score += 0.2
         
@@ -870,7 +933,7 @@ class RealIPBacktracker:
                 timezones.append(tz_match.group(1))
         
         if timezones and len(set(timezones)) > 1:
-            evidence.append(f"⚠️ TIMEZONE VARIANCE: {set(timezones)}")
+            evidence.append(f"[WARNING] TIMEZONE VARIANCE: {set(timezones)}")
             evidence.append("   Different servers have conflicting timezones - possible compromise")
             risk_score += 0.25
         
@@ -904,7 +967,7 @@ class RealIPBacktracker:
         
         # Check for geographic inconsistency (decoy attack)
         if len(countries) > 1 and 'Unknown' not in countries:
-            evidence.append("⚠️ GEOGRAPHIC MISMATCH: IPs from different countries")
+            evidence.append("[WARNING] GEOGRAPHIC MISMATCH: IPs from different countries")
             evidence.append("   Possible decoy VPN with hidden real connection!")
             return {"consistency_ok": False, "evidence": evidence, "all_ips": all_ips}
         
@@ -929,20 +992,20 @@ class RealIPBacktracker:
         # Check if IP is known Tor exit node
         for tor_range in tor_exit_ranges:
             if first_hop_ip.startswith(tor_range):
-                evidence.append(f"⚠️ TOR EXIT NODE DETECTED: {first_hop_ip}")
+                evidence.append(f"[WARNING] TOR EXIT NODE DETECTED: {first_hop_ip}")
                 evidence.append("   Attacker using Tor hidden service for anonymity")
                 tor_confidence = 0.8
                 break
         
         # Check for .onion domain (Tor hidden service)
         if '.onion' in headers.lower():
-            evidence.append("⚠️ .ONION DOMAIN DETECTED")
+            evidence.append("[WARNING] .ONION DOMAIN DETECTED")
             evidence.append("   Email references Tor hidden service")
             tor_confidence = max(tor_confidence, 0.7)
         
         # Check for Tor browser fingerprints in User-Agent
         if 'Mozilla' in headers and 'Firefox' in headers and 'Windows NT' not in headers:
-            evidence.append("⚠️ TOR BROWSER DETECTED: Unusual User-Agent signature")
+            evidence.append("[!] TOR BROWSER DETECTED: Unusual User-Agent signature")
             tor_confidence = max(tor_confidence, 0.5)
         
         return {
@@ -973,19 +1036,19 @@ class RealIPBacktracker:
         # Check if time matches timezone expectations
         if sending_hour >= 9 and sending_hour <= 17:
             # Business hours
-            evidence.append(f"✓ Normal business hours ({sending_hour}:00)")
+            evidence.append(f"[+] Normal business hours ({sending_hour}:00)")
             anomaly_score += 0.0
         elif sending_hour >= 19 and sending_hour <= 22:
             # Evening (common for India timezone +05:30)
             if tz_offset == 5.5:
-                evidence.append(f"✓ Evening send at {sending_hour}:00 matches +05:30 timezone")
+                evidence.append(f"[+] Evening send at {sending_hour}:00 matches +05:30 timezone")
                 anomaly_score += 0.1  # Slightly suspicious - too perfect
             else:
-                evidence.append(f"⚠️ Evening send {sending_hour}:00 but timezone is {tz_offset}")
+                evidence.append(f"[!] Evening send {sending_hour}:00 but timezone is {tz_offset}")
                 anomaly_score += 0.3
         else:
             # Unusual hours (0-6 AM)
-            evidence.append(f"⚠️ UNUSUAL HOUR: {sending_hour}:00 (night send)")
+            evidence.append(f"[!] UNUSUAL HOUR: {sending_hour}:00 (night send)")
             evidence.append(f"   Inconsistent with stated timezone {timezone_offset}")
             anomaly_score += 0.4
         
@@ -997,11 +1060,11 @@ class RealIPBacktracker:
             
             if variance < 0.5:
                 # ZERO variance = suspicious (perfect spoofing)
-                evidence.append(f"⚠️ ZERO VARIANCE: All {len(previous_emails)} emails at same hour")
+                evidence.append(f"[!] ZERO VARIANCE: All {len(previous_emails)} emails at same hour")
                 evidence.append("   Real users have natural variance in sending time!")
                 anomaly_score += 0.5
             else:
-                evidence.append(f"✓ Natural variance in sending times (σ={variance:.2f})")
+                evidence.append(f"[+] Natural variance in sending times (σ={variance:.2f})")
                 anomaly_score -= 0.2  # Reduce suspicion
         
         return {
