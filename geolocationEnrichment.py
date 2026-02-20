@@ -95,9 +95,46 @@ class GeolocationEnricher:
     
     def _try_ipv6_geolocation(self, ipv6: str, geoloc_data: GeolocationData) -> bool:
         """
-        Dedicated IPv6 geolocation using specialized services and IPv6 block data
+        Dedicated IPv6 geolocation using multiple specialized services and IPv6 block data
+        Tries 6+ different providers for maximum reliability
         """
-        # Try db-ip.com IPv6 API (good IPv6 support)
+        # BACKEND 1: db-ip.com IPv6 API (BEST for IPv6 - ±10km accuracy)
+        if self._try_dbip_ipv6(ipv6, geoloc_data):
+            return True
+        
+        # BACKEND 2: ipwho.is IPv6 API (Good IPv6 support)
+        if self._try_ipwho_ipv6(ipv6, geoloc_data):
+            return True
+        
+        # BACKEND 3: ip-api.com IPv6 (Generic but supports IPv6)
+        if self._try_ipapi_ipv6(ipv6, geoloc_data):
+            return True
+        
+        # BACKEND 4: ipstack.com IPv6 API
+        if self._try_ipstack_ipv6(ipv6, geoloc_data):
+            return True
+        
+        # BACKEND 5: geoip.com IPv6
+        if self._try_geoip_ipv6(ipv6, geoloc_data):
+            return True
+        
+        # BACKEND 6: IPv6 block registration lookup (Fallback - country only)
+        ipv6_country = self._get_ipv6_block_country(ipv6)
+        if ipv6_country:
+            geoloc_data.country = ipv6_country
+            geoloc_data.accuracy_radius_km = 1000  # IPv6 block accuracy (country-level)
+            geoloc_data.confidence = 0.70
+            geoloc_data.sources = ['ipv6-block-registration']
+            
+            if self.verbose:
+                print(f"[✓] IPv6 Block Registry: {ipv6} → {ipv6_country}")
+            
+            return True
+        
+        return False
+    
+    def _try_dbip_ipv6(self, ipv6: str, geoloc_data: GeolocationData) -> bool:
+        """Try db-ip.com IPv6 API (BEST for IPv6)"""
         try:
             time.sleep(self.rate_limit_wait)
             url = f"https://api.db-ip.com/v2/free/{ipv6}"
@@ -106,25 +143,28 @@ class GeolocationEnricher:
             if response.status_code == 200:
                 data = response.json()
                 
-                geoloc_data.country = data.get('countryName')
-                geoloc_data.country_code = data.get('countryCode')
-                geoloc_data.city = data.get('city')
-                geoloc_data.latitude = data.get('latitude')
-                geoloc_data.longitude = data.get('longitude')
-                geoloc_data.provider = data.get('organization')
-                geoloc_data.accuracy_radius_km = 10  # db-ip typical accuracy for IPv6
-                geoloc_data.confidence = 0.92
-                geoloc_data.sources = ['db-ip.com']
-                
-                if self.verbose:
-                    print(f"db-ip.com IPv6: {ipv6} → {geoloc_data.city}, {geoloc_data.country}")
-                
-                return True
+                if data.get('countryName'):
+                    geoloc_data.country = data.get('countryName')
+                    geoloc_data.country_code = data.get('countryCode')
+                    geoloc_data.city = data.get('city')
+                    geoloc_data.latitude = data.get('latitude')
+                    geoloc_data.longitude = data.get('longitude')
+                    geoloc_data.provider = data.get('organization')
+                    geoloc_data.accuracy_radius_km = 10  # db-ip typical accuracy for IPv6
+                    geoloc_data.confidence = 0.92
+                    geoloc_data.sources = ['db-ip.com']
+                    
+                    if self.verbose:
+                        print(f"[✓] db-ip.com IPv6: {ipv6} → {geoloc_data.city}, {geoloc_data.country}")
+                    
+                    return True
         except Exception as e:
             if self.verbose:
-                print(f"db-ip.com IPv6 failed: {e}")
-        
-        # Try ipwhois.io IPv6 API
+                print(f"[!] db-ip.com failed: {str(e)[:50]}")
+        return False
+    
+    def _try_ipwho_ipv6(self, ipv6: str, geoloc_data: GeolocationData) -> bool:
+        """Try ipwho.is IPv6 API"""
         try:
             time.sleep(self.rate_limit_wait)
             url = f"https://ipwho.is/{ipv6}"
@@ -133,7 +173,7 @@ class GeolocationEnricher:
             if response.status_code == 200:
                 data = response.json()
                 
-                if data.get('success'):
+                if data.get('success') and data.get('country'):
                     geoloc_data.country = data.get('country')
                     geoloc_data.country_code = data.get('country_code')
                     geoloc_data.city = data.get('city')
@@ -151,21 +191,101 @@ class GeolocationEnricher:
                     return True
         except Exception as e:
             if self.verbose:
-                print(f"[!] ipwho.is IPv6 failed: {e}")
-        
-        # Try IPv6 block registration lookup
-        ipv6_country = self._get_ipv6_block_country(ipv6)
-        if ipv6_country:
-            geoloc_data.country = ipv6_country
-            geoloc_data.accuracy_radius_km = 1000  # IPv6 block accuracy (country-level)
-            geoloc_data.confidence = 0.70
-            geoloc_data.sources = ['ipv6-block-registration']
+                print(f"[!] ipwho.is failed: {str(e)[:50]}")
+        return False
+    
+    def _try_ipapi_ipv6(self, ipv6: str, geoloc_data: GeolocationData) -> bool:
+        """Try IP-API.com for IPv6"""
+        try:
+            time.sleep(self.rate_limit_wait)
+            url = f"http://ip-api.com/json/{ipv6}?fields=country,countryCode,city,lat,lon,timezone,isp,query"
+            response = requests.get(url, timeout=5)
             
+            if response.status_code == 200:
+                data = response.json()
+                
+                if data.get('status') == 'success' and data.get('country'):
+                    geoloc_data.country = data.get('country')
+                    geoloc_data.country_code = data.get('countryCode')
+                    geoloc_data.city = data.get('city')
+                    geoloc_data.latitude = data.get('lat')
+                    geoloc_data.longitude = data.get('lon')
+                    geoloc_data.timezone = data.get('timezone')
+                    geoloc_data.provider = data.get('isp')
+                    geoloc_data.accuracy_radius_km = 25
+                    geoloc_data.confidence = 0.85
+                    geoloc_data.sources = ['ip-api.com']
+                    
+                    if self.verbose:
+                        print(f"[✓] IP-API.com IPv6: {ipv6} → {geoloc_data.city}, {geoloc_data.country}")
+                    
+                    return True
+        except Exception as e:
             if self.verbose:
-                print(f"[✓] IPv6 Block: {ipv6} → {ipv6_country} (from IANA registration)")
+                print(f"[!] IP-API.com failed: {str(e)[:50]}")
+        return False
+    
+    def _try_ipstack_ipv6(self, ipv6: str, geoloc_data: GeolocationData) -> bool:
+        """Try ipstack.com IPv6 (free APIs available)"""
+        try:
+            time.sleep(self.rate_limit_wait)
+            # ipstack free tier - no API key required for basic queries
+            url = f"http://api.ipstack.com/{ipv6}?access_key=free&output=json"
+            response = requests.get(url, timeout=5)
             
-            return True
-        
+            if response.status_code == 200:
+                data = response.json()
+                
+                if data.get('country_name'):
+                    geoloc_data.country = data.get('country_name')
+                    geoloc_data.country_code = data.get('country_code')
+                    geoloc_data.city = data.get('city')
+                    geoloc_data.latitude = data.get('latitude')
+                    geoloc_data.longitude = data.get('longitude')
+                    geoloc_data.timezone = data.get('time_zone', {}).get('id')
+                    geoloc_data.provider = data.get('isp') or data.get('connection', {}).get('isp_name')
+                    geoloc_data.accuracy_radius_km = 50
+                    geoloc_data.confidence = 0.80
+                    geoloc_data.sources = ['ipstack.com']
+                    
+                    if self.verbose:
+                        print(f"[✓] ipstack.com IPv6: {ipv6} → {geoloc_data.city}, {geoloc_data.country}")
+                    
+                    return True
+        except Exception as e:
+            if self.verbose:
+                print(f"[!] ipstack.com failed: {str(e)[:50]}")
+        return False
+    
+    def _try_geoip_ipv6(self, ipv6: str, geoloc_data: GeolocationData) -> bool:
+        """Try geoip.io or similar IPv6 services"""
+        try:
+            time.sleep(self.rate_limit_wait)
+            url = f"https://geoip.io/api/geoip/{ipv6}"
+            response = requests.get(url, timeout=5)
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                if data.get('country_name'):
+                    geoloc_data.country = data.get('country_name')
+                    geoloc_data.country_code = data.get('country_code')
+                    geoloc_data.city = data.get('city')
+                    geoloc_data.latitude = data.get('latitude')
+                    geoloc_data.longitude = data.get('longitude')
+                    geoloc_data.timezone = data.get('time_zone')
+                    geoloc_data.provider = data.get('isp')
+                    geoloc_data.accuracy_radius_km = 50
+                    geoloc_data.confidence = 0.82
+                    geoloc_data.sources = ['geoip.io']
+                    
+                    if self.verbose:
+                        print(f"[✓] geoip.io IPv6: {ipv6} → {geoloc_data.city}, {geoloc_data.country}")
+                    
+                    return True
+        except Exception as e:
+            if self.verbose:
+                print(f"[!] geoip.io failed: {str(e)[:50]}")
         return False
     
     def _get_ipv6_block_country(self, ipv6: str) -> Optional[str]:
@@ -321,12 +441,12 @@ class GeolocationEnricher:
                 is_ipv6 = ':' in ip
                 ip_type = "IPv6" if is_ipv6 else "IPv4"
                 if self.verbose:
-                    print(f" IP-API ({ip_type}): {ip} → {geoloc_data.city}, {geoloc_data.country}")
+                    print(f"[✓] IP-API ({ip_type}): {ip} → {geoloc_data.city}, {geoloc_data.country}")
                 
                 return True
         except Exception as e:
             if self.verbose:
-                print(f" IP-API failed for {ip}: {e}")
+                print(f"[!] IP-API failed for {ip}: {e}")
         
         return False
     
