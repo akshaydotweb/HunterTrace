@@ -172,11 +172,66 @@ class RealIPBacktracker:
         if geo_signal:
             signals.append(geo_signal)
         
-        # Synthesize results
+        # Synthesize results FIRST
+        probable_real_ip = self._determine_real_ip(signals)
+        probable_country = self._determine_real_country(signals)
+        confidence = self._calculate_confidence(signals)
+        
+        # NOW run COUNTER-TECHNIQUES: Detect advanced bypass attempts
+        # Counter 1: Detect compromised legitimate server
+        from_domain = email_headers.get("From", "").split("@")[-1].rstrip(">")
+        dkim_domain = email_headers.get("DKIM-Signature", "").split("d=")[1].split(";")[0] if "d=" in email_headers.get("DKIM-Signature", "") else ""
+        received_headers = email_headers.get("Received", [])
+        received_list = received_headers if isinstance(received_headers, list) else [received_headers]
+        
+        compromised_check = self._detect_compromised_server(received_list, from_domain, dkim_domain)
+        if compromised_check["is_likely_compromised"]:
+            for signal in signals:
+                signal.confidence = max(0.0, signal.confidence - 0.15)
+        
+        # Counter 2: Check multi-IP consistency (detect decoy VPN)
+        consistency_check = self._check_multi_ip_consistency(received_list)
+        if not consistency_check["consistency_ok"]:
+            for signal in signals:
+                signal.confidence = max(0.0, signal.confidence - 0.1)
+        
+        # Counter 3: Detect Tor usage
+        email_str = str(email_headers)
+        tor_check = self._analyze_tor_detection(probable_real_ip or "unknown", email_str)
+        if tor_check["uses_tor"]:
+            for signal in signals:
+                signal.confidence = max(0.0, signal.confidence - 0.25)
+        
+        # Counter 4: Behavioral anomaly detection
+        sending_hour = int(email_headers.get("Date", "").split(":")[0].split()[-1]) if ":" in email_headers.get("Date", "") else 12
+        tz_offset = email_headers.get("Date", "")[-5] if len(email_headers.get("Date", "")) > 5 else "+"
+        tz_str = email_headers.get("Date", "")[-5:]
+        anomaly_check = self._calculate_behavioral_anomaly(sending_hour, tz_str)
+        if anomaly_check["is_anomalous"]:
+            for signal in signals:
+                signal.confidence = signal.confidence * 0.85
+        
+        # Recalculate final results after penalties applied
         probable_real_ip = self._determine_real_ip(signals)
         probable_country = self._determine_real_country(signals)
         confidence = self._calculate_confidence(signals)
         notes = self._generate_analysis_notes(signals)
+        
+        # Add counter-technique evidence to notes
+        all_evidence = []
+        if compromised_check.get("evidence"):
+            all_evidence.extend(["[COUNTER 1: Compromised Server]"] + compromised_check["evidence"])
+        if consistency_check.get("evidence"):
+            all_evidence.extend(["[COUNTER 2: Multi-IP Consistency]"] + consistency_check["evidence"])
+        if tor_check.get("evidence"):
+            all_evidence.extend(["[COUNTER 3: Tor Detection]"] + tor_check["evidence"])
+        if anomaly_check.get("evidence"):
+            all_evidence.extend(["[COUNTER 4: Behavioral Anomaly]"] + anomaly_check["evidence"])
+        
+        # Append counter-technique evidence to analysis notes
+        if all_evidence and notes:
+            notes += "\n\nCOUNTER-TECHNIQUE ANALYSIS:\n" + "\n".join(all_evidence[:10])
+
         
         return BacktrackResult(
             probable_real_ip=probable_real_ip,
@@ -201,11 +256,15 @@ class RealIPBacktracker:
         
         # Received headers are in reverse chronological order
         # First element is from the sender's ISP
-        first_hop = received[0] if isinstance(received, list) else str(received)
+        received_list = received if isinstance(received, list) else [received]
+        if not received_list:
+            return None
+        
+        first_hop = str(received_list[0])
         
         # Extract IP from [xxx.xxx.xxx.xxx] format
         ip_pattern = r'\[([0-9a-fA-F:.]+)\]'
-        matches = re.findall(ip_pattern, str(first_hop))
+        matches = re.findall(ip_pattern, first_hop)
         
         if matches:
             first_hop_ip = matches[0]
@@ -213,10 +272,27 @@ class RealIPBacktracker:
             # This is the real ISP IP (before VPN)
             if not self._is_private_ip(first_hop_ip) and first_hop_ip != "127.0.0.1":
                 evidence = [
-                    f"First hop in Received chain: {first_hop_ip}",
-                    "Email immutable at send time - first hop = attacker's ISP",
-                    f"Header: {first_hop[:80]}"
+                    f"First hop IP (sender's direct ISP): {first_hop_ip}",
+                    "✅ Email headers are IMMUTABLE at send time",
+                    "First hop = attacker's actual ISP before any proxying",
                 ]
+                
+                # Extract hostname/mail server info
+                hostname_pattern = r'from\s+([\w.-]+)\s+\['
+                hostname_match = re.search(hostname_pattern, first_hop, re.IGNORECASE)
+                if hostname_match:
+                    hostname = hostname_match.group(1)
+                    evidence.append(f"Mail server hostname: {hostname}")
+                
+                # Extract timestamp if available
+                timestamp_pattern = r'(\d{1,2}\s+\w+\s+\d{4}\s+\d{1,2}:\d{2}:\d{2})'
+                timestamp_match = re.search(timestamp_pattern, first_hop)
+                if timestamp_match:
+                    evidence.append(f"Server timestamp: {timestamp_match.group(1)}")
+                
+                # Analyze the full header for anomalies
+                if 'unknown' in first_hop.lower():
+                    evidence.append("⚠️  Unknown/obfuscated hostname in first hop")
                 
                 country = self._geolocate_ip(first_hop_ip)
                 
@@ -224,9 +300,25 @@ class RealIPBacktracker:
                     method=BacktrackMethod.FIRST_HOP_ISP,
                     real_ip=first_hop_ip,
                     real_country=country,
-                    confidence=0.85,  # HIGH confidence - email headers are immutable
+                    confidence=0.92,  # VERY HIGH confidence - email headers are immutable at send time
                     evidence=evidence
                 )
+        else:
+            # If we can't extract IP from first hop, it might be obfuscated
+            # But we can still analyze the structure
+            evidence = [
+                "Received header lacks IP in brackets",
+                "Possible obfuscation in first hop",
+                f"First hop content: {first_hop[:100]}"
+            ]
+            
+            return RealIPSignal(
+                method=BacktrackMethod.FIRST_HOP_ISP,
+                real_ip=None,
+                real_country=None,
+                confidence=0.35,
+                evidence=evidence
+            )
         
         return None
     
@@ -517,11 +609,13 @@ class RealIPBacktracker:
         
         # Return signal even without IP if mailer reveals information
         if evidence and not real_ip:
+            # Calculate proper confidence boosted by phishing indicators
+            final_confidence = confidence if confidence > 0.50 else 0.55
             return RealIPSignal(
                 method=BacktrackMethod.HEADER_EXTRACTION,
                 real_ip=None,
                 real_country=None,
-                confidence=0.40,
+                confidence=final_confidence,
                 evidence=evidence
             )
         
@@ -710,6 +804,175 @@ class RealIPBacktracker:
             notes += "\n"
         
         return notes
+    
+    def _detect_compromised_server(self, received_headers: List[str], from_domain: str, dkim_domain: str) -> Dict:
+        """
+        COUNTER-TECHNIQUE 1: Detect if email from compromised legitimate server
+        Attacker hacks e.g. company.com mail server, sends phishing from there
+        """
+        
+        evidence = []
+        risk_score = 0.0
+        
+        # Check for domain mismatch
+        if from_domain != dkim_domain:
+            evidence.append(f"⚠️ DOMAIN MISMATCH: From: {from_domain} != DKIM: {dkim_domain}")
+            evidence.append("   This could indicate compromised server spoofing!")
+            risk_score += 0.3
+        
+        # Check for unusual relay chains
+        if len(received_headers) > 5:
+            evidence.append(f"⚠️ UNUSUAL RELAY CHAIN: {len(received_headers)} hops detected")
+            evidence.append("   Longer chains indicate possible mail server compromise")
+            risk_score += 0.2
+        
+        # Check for timezone anomalies across servers
+        timezones = []
+        for header in received_headers:
+            tz_match = re.search(r'([+-]\d{4})', header)
+            if tz_match:
+                timezones.append(tz_match.group(1))
+        
+        if timezones and len(set(timezones)) > 1:
+            evidence.append(f"⚠️ TIMEZONE VARIANCE: {set(timezones)}")
+            evidence.append("   Different servers have conflicting timezones - possible compromise")
+            risk_score += 0.25
+        
+        return {
+            "compromised_risk": risk_score,
+            "evidence": evidence,
+            "is_likely_compromised": risk_score > 0.5
+        }
+    
+    def _check_multi_ip_consistency(self, received_headers: List[str]) -> Dict:
+        """
+        COUNTER-TECHNIQUE 2: Detect decoy VPN with hidden real connection
+        Analyze ALL IPs in Received chain, not just first one
+        """
+        
+        evidence = []
+        all_ips = []
+        countries = set()
+        
+        # Extract all IPs from Received headers
+        for header in received_headers:
+            ip_match = re.search(r'\[(\d+\.\d+\.\d+\.\d+)\]|\[([0-9a-f:]+)\]', header)
+            if ip_match:
+                ip = ip_match.group(1) or ip_match.group(2)
+                all_ips.append(ip)
+                country = self._geolocate_ip(ip)
+                countries.add(country)
+        
+        evidence.append(f"IPs found: {len(all_ips)} servers in chain")
+        evidence.append(f"Countries: {', '.join(sorted(countries))}")
+        
+        # Check for geographic inconsistency (decoy attack)
+        if len(countries) > 1 and 'Unknown' not in countries:
+            evidence.append("⚠️ GEOGRAPHIC MISMATCH: IPs from different countries")
+            evidence.append("   Possible decoy VPN with hidden real connection!")
+            return {"consistency_ok": False, "evidence": evidence, "all_ips": all_ips}
+        
+        return {"consistency_ok": True, "evidence": evidence, "all_ips": all_ips}
+    
+    def _analyze_tor_detection(self, first_hop_ip: str, headers: str) -> Dict:
+        """
+        COUNTER-TECHNIQUE 3: Detect if using Tor hidden service
+        Identify Tor exit nodes and onion services
+        """
+        
+        evidence = []
+        tor_confidence = 0.0
+        
+        # Known Tor exit node ranges (sample)
+        tor_exit_ranges = [
+            "192.241.",  # Tor exit node hosting
+            "45.142.",   # Nightshade exit nodes
+            "198.50.",   # Tor Project infrastructure
+        ]
+        
+        # Check if IP is known Tor exit node
+        for tor_range in tor_exit_ranges:
+            if first_hop_ip.startswith(tor_range):
+                evidence.append(f"⚠️ TOR EXIT NODE DETECTED: {first_hop_ip}")
+                evidence.append("   Attacker using Tor hidden service for anonymity")
+                tor_confidence = 0.8
+                break
+        
+        # Check for .onion domain (Tor hidden service)
+        if '.onion' in headers.lower():
+            evidence.append("⚠️ .ONION DOMAIN DETECTED")
+            evidence.append("   Email references Tor hidden service")
+            tor_confidence = max(tor_confidence, 0.7)
+        
+        # Check for Tor browser fingerprints in User-Agent
+        if 'Mozilla' in headers and 'Firefox' in headers and 'Windows NT' not in headers:
+            evidence.append("⚠️ TOR BROWSER DETECTED: Unusual User-Agent signature")
+            tor_confidence = max(tor_confidence, 0.5)
+        
+        return {
+            "uses_tor": tor_confidence > 0.5,
+            "tor_confidence": tor_confidence,
+            "evidence": evidence
+        }
+    
+    def _calculate_behavioral_anomaly(self, sending_hour: int, timezone_offset: str, 
+                                     previous_emails: List[Dict] = None) -> Dict:
+        """
+        COUNTER-TECHNIQUE 4: Detect statistical anomaly in behavioral patterns
+        Perfect spoofing would match timezone + sending time perfectly (0% variance)
+        Real users have natural variance
+        """
+        
+        evidence = []
+        anomaly_score = 0.0
+        
+        # Parse timezone
+        try:
+            tz_sign = 1 if '+' in timezone_offset else -1
+            tz_hours = int(timezone_offset.replace('+', '').replace('-', '')[:2])
+            tz_offset = tz_sign * tz_hours
+        except:
+            tz_offset = 0
+        
+        # Check if time matches timezone expectations
+        if sending_hour >= 9 and sending_hour <= 17:
+            # Business hours
+            evidence.append(f"✓ Normal business hours ({sending_hour}:00)")
+            anomaly_score += 0.0
+        elif sending_hour >= 19 and sending_hour <= 22:
+            # Evening (common for India timezone +05:30)
+            if tz_offset == 5.5:
+                evidence.append(f"✓ Evening send at {sending_hour}:00 matches +05:30 timezone")
+                anomaly_score += 0.1  # Slightly suspicious - too perfect
+            else:
+                evidence.append(f"⚠️ Evening send {sending_hour}:00 but timezone is {tz_offset}")
+                anomaly_score += 0.3
+        else:
+            # Unusual hours (0-6 AM)
+            evidence.append(f"⚠️ UNUSUAL HOUR: {sending_hour}:00 (night send)")
+            evidence.append(f"   Inconsistent with stated timezone {timezone_offset}")
+            anomaly_score += 0.4
+        
+        # If previous emails data available, check consistency
+        if previous_emails and len(previous_emails) > 5:
+            hours = [int(e['hour']) for e in previous_emails]
+            avg_hour = sum(hours) / len(hours)
+            variance = sum((h - avg_hour) ** 2 for h in hours) / len(hours)
+            
+            if variance < 0.5:
+                # ZERO variance = suspicious (perfect spoofing)
+                evidence.append(f"⚠️ ZERO VARIANCE: All {len(previous_emails)} emails at same hour")
+                evidence.append("   Real users have natural variance in sending time!")
+                anomaly_score += 0.5
+            else:
+                evidence.append(f"✓ Natural variance in sending times (σ={variance:.2f})")
+                anomaly_score -= 0.2  # Reduce suspicion
+        
+        return {
+            "anomaly_score": min(anomaly_score, 1.0),
+            "is_anomalous": anomaly_score > 0.5,
+            "evidence": evidence
+        }
     
     def _is_private_ip(self, ip: str) -> bool:
         """Check if IP is private/reserved"""

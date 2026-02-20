@@ -2432,11 +2432,13 @@ class CompletePipelineReport:
             lines.append(f"\n[BACKTRACKING TECHNIQUES APPLIED]")
             for signal in self._vpn_backtrack_analysis.signals:
                 lines.append(f"  ✓ {signal.method.value.upper()} ({signal.confidence:.0%} confidence)")
+                if signal.real_ip:
+                    lines.append(f"    → Real IP: {signal.real_ip}")
                 if signal.real_country:
                     lines.append(f"    → Location: {signal.real_country}")
                 if signal.evidence:
-                    for evidence in signal.evidence[:1]:
-                        lines.append(f"    → Evidence: {evidence}")
+                    for evidence_item in signal.evidence[:3]:  # Show up to 3 evidence items
+                        lines.append(f"    → {evidence_item}")
             
             lines.append(f"\n" + "-" * 80)
         
