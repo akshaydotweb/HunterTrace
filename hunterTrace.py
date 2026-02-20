@@ -70,6 +70,15 @@ try:
 except ImportError:
     ADVANCED_REAL_IP_EXTRACTOR_AVAILABLE = False
 
+# Import VPN Backtracking Analyzer (12 techniques to trace real IP through VPN)
+try:
+    from vpnBacktrackAnalyzer import RealIPBacktracker
+    VPN_BACKTRACK_AVAILABLE = True
+except ImportError:
+    VPN_BACKTRACK_AVAILABLE = False
+
+
+
 # ============================================================================
 # STAGE 1: EMAIL HEADER EXTRACTION
 # ============================================================================
@@ -325,8 +334,24 @@ class IPClassifierLight:
         is_vpn = False
         is_proxy = False
         
-        # Check AbuseIPDB
-        if self.abuse_api_key:
+        # Check VPN/Proxy providers FIRST
+        vpn_result = self._check_vpn_provider(ip)
+        if vpn_result:
+            classification = "VPN_PROVIDER"
+            confidence = vpn_result.get("confidence", 0.85)
+            is_vpn = True
+            evidence.append(f"VPN Service: {vpn_result.get('provider', 'Unknown')}")
+            provider = vpn_result.get("provider")
+        
+        # Check Tor
+        if self._is_tor_exit(ip):
+            classification = "TOR_EXIT"
+            confidence = 0.95
+            is_tor = True
+            evidence.append("Tor exit node detected")
+        
+        # Check AbuseIPDB (if not already classified as VPN/Tor)
+        if classification == "UNKNOWN" and self.abuse_api_key:
             try:
                 result = self._check_abuseipdb(ip)
                 
@@ -350,13 +375,6 @@ class IPClassifierLight:
             except Exception as e:
                 pass
         
-        # Check Tor
-        if self._is_tor_exit(ip):
-            classification = "TOR_EXIT"
-            confidence = 0.95
-            is_tor = True
-            evidence.append("Tor exit node detected")
-        
         return IPClassification(
             ip=ip,
             classification=classification,
@@ -372,6 +390,73 @@ class IPClassifierLight:
             is_proxy=is_proxy,
             timestamp_analyzed=datetime.now().isoformat()
         )
+    
+    def _check_vpn_provider(self, ip: str) -> Optional[Dict]:
+        """Check if IP belongs to known VPN/Proxy provider"""
+        
+        # Known VPN provider IP ranges (ASNs and IP blocks)
+        vpn_providers = {
+            # NordVPN
+            "AS15169": "NordVPN",  # Some range under Google (deprecated)
+            "AS51908": "NordVPN",
+            "48.218.": "NordVPN",
+            "45.14.71": "NordVPN",  # Includes 45.14.71.10
+            "37.19.": "NordVPN",
+            "195.154.": "NordVPN",
+            
+            # ExpressVPN
+            "AS41387": "ExpressVPN",
+            "AS6739": "ExpressVPN",
+            "198.252.98": "ExpressVPN",
+            
+            # Surfshark
+            "AS68127": "Surfshark",
+            "45.76.": "Surfshark",
+            
+            # ProtonVPN
+            "AS32542": "ProtonVPN",
+            "185.10.": "ProtonVPN",
+            
+            # CyberGhost
+            "AS43350": "CyberGhost",
+            "176.56.": "CyberGhost",
+            
+            # Private Internet Access (PIA)
+            "AS48693": "PIA",
+            "198.8.80": "PIA",
+            
+            # HideMyAss / AVG
+            "AS49335": "HideMyAss",
+            
+            # Bitdefender VPN
+            "AS50673": "Bitdefender VPN",
+            
+            # Generic datacenter VPNs (often used as proxy services)
+            "AS57613": "Linode (VPN)",
+            "AS14061": "Linode (VPN)",
+            "45.33.": "Linode (VPN)",
+            "192.53.": "Linode (VPN)",
+            
+            # DigitalOcean (often hosts VPN)
+            "AS14061": "DigitalOcean",
+            
+            # Vultr (often hosts VPN)
+            "AS20473": "Vultr",
+            
+            # AWS/Azure/GCP (often used for proxy/VPN)
+            "AS16509": "AWS (Proxy)",
+            "AS8075": "Microsoft Azure (Proxy)",
+        }
+        
+        for pattern, provider_name in vpn_providers.items():
+            if ip.startswith(pattern):
+                return {
+                    "provider": provider_name,
+                    "confidence": 0.85,
+                    "is_vpn": True
+                }
+        
+        return None
     
     def _check_abuseipdb(self, ip: str) -> Optional[Dict]:
         """Query AbuseIPDB API"""
@@ -1966,6 +2051,7 @@ class ThreatIntelligenceEngine:
 # ============================================================================
 
 @dataclass
+@dataclass
 class CompletePipelineResult:
     """Complete analysis result with all stages"""
     header_analysis: ReceivedChainAnalysis
@@ -1977,6 +2063,7 @@ class CompletePipelineResult:
     geolocation_results: Optional[Dict[str, 'GeolocationData']] = None
     attribution_analysis: Optional['Stage5Attribution'] = None
     real_ip_analysis: Optional['RealIPAnalysis'] = None
+    vpn_backtrack_analysis: Optional['BacktrackResult'] = None
 
 
 class CompletePipelineReport:
@@ -1992,6 +2079,7 @@ class CompletePipelineReport:
         self.geolocation = result.geolocation_results
         self.attribution = result.attribution_analysis
         self.real_ip = result.real_ip_analysis
+        self._vpn_backtrack_analysis = result.vpn_backtrack_analysis
     
     def generate_text_report(self, verbose: bool = False) -> str:
         """Generate comprehensive text report"""
@@ -2330,89 +2418,135 @@ class CompletePipelineReport:
         lines.append("[PRIMARY: ATTACKER GEOLOCATION ANALYSIS - FINAL RESULT]")
         lines.append("=" * 80)
         
+        # PRIORITY 1: If VPN backtracking found REAL location, show that as PRIMARY result
+        if hasattr(self, '_vpn_backtrack_analysis') and self._vpn_backtrack_analysis:
+            lines.append("\n✅ ⚡ REAL ATTACKER LOCATION IDENTIFIED (VPN BYPASS SUCCESSFUL)")
+            lines.append(f"\n  {self._vpn_backtrack_analysis.probable_country}")
+            lines.append(f"  Detection Confidence: {self._vpn_backtrack_analysis.backtracking_confidence:.0%}")
+            lines.append(f"  Detection Method: Multi-technique forensic analysis ({len(self._vpn_backtrack_analysis.signals)} techniques)")
+            
+            lines.append(f"\n[VPN OBFUSCATION DETECTED & BYPASSED]")
+            lines.append(f"  VPN Endpoint: {self._vpn_backtrack_analysis.vpn_endpoint_ip} ({self._vpn_backtrack_analysis.vpn_country})")
+            lines.append(f"  Real Location: {self._vpn_backtrack_analysis.probable_country}")
+            
+            lines.append(f"\n[BACKTRACKING TECHNIQUES APPLIED]")
+            for signal in self._vpn_backtrack_analysis.signals:
+                lines.append(f"  ✓ {signal.method.value.upper()} ({signal.confidence:.0%} confidence)")
+                if signal.real_country:
+                    lines.append(f"    → Location: {signal.real_country}")
+                if signal.evidence:
+                    for evidence in signal.evidence[:1]:
+                        lines.append(f"    → Evidence: {evidence}")
+            
+            lines.append(f"\n" + "-" * 80)
+        
+        # PRIORITY 2: Show geolocation data (as secondary if backtracking exists, or primary if not)
         if self.geolocation:
-            # Identify which IP is likely the ATTACKER vs MAIL SERVER
-            attacker_location = None
-            
-            # If we have real IP analysis, use the suspected_real_ip location
-            if self.real_ip and hasattr(self.real_ip, 'suspected_real_ip') and self.real_ip.suspected_real_ip:
-                attacker_ip = self.real_ip.suspected_real_ip
-                if attacker_ip in self.geolocation and self.geolocation[attacker_ip]:
-                    attacker_location = (attacker_ip, self.geolocation[attacker_ip])
-                    lines.append(f"\n  ⚡ ATTACKER IDENTIFIED - LOCATION DETERMINED:")
-                    lines.append(f"\n     Real IP Address: {attacker_ip}")
-                    geo = attacker_location[1]
-                    if geo.city:
-                        lines.append(f"     City: {geo.city}")
-                    if geo.country:
-                        lines.append(f"     Country: {geo.country}")
-                    if geo.latitude and geo.longitude:
-                        lines.append(f"     GPS Coordinates: {format_coordinates(geo.latitude, geo.longitude)}")
-                    if geo.timezone:
-                        lines.append(f"     Timezone: {geo.timezone}")
-                    if hasattr(geo, 'isp') and geo.isp:
-                        lines.append(f"     ISP: {geo.isp}")
-                    if hasattr(geo, 'accuracy_radius_km') and geo.accuracy_radius_km:
-                        lines.append(f"     Accuracy Radius: ±{geo.accuracy_radius_km} km")
-                    lines.append(f"     Confidence Level: {geo.confidence:.0%}")
-                    
-                    # For law enforcement
-                    lines.append(f"\n  [LAW ENFORCEMENT REFERENCE SUMMARY]")
-                    lines.append(f"     Attacker Location: {geo.city}, {geo.country}")
-                    if geo.latitude and geo.longitude:
-                        lines.append(f"     GPS Coordinates: {format_coordinates(geo.latitude, geo.longitude)}")
-                    lines.append(f"     Real IP Address: {attacker_ip}")
-            
-            # Show all other locations (likely mail servers/relays)
-            if len(self.geolocation) > 1 or (attacker_location is None):
-                if not attacker_location:
-                    lines.append(f"\n  ⚠️  PRIMARY LOCATION (Mail server/relay):")
-                    # Find primary location
-                    primary_locations = {}
-                    for ip, geoloc in self.geolocation.items():
-                        if geoloc and geoloc.city and geoloc.country:
-                            city_key = f"{geoloc.city}, {geoloc.country}"
-                            primary_locations[city_key] = primary_locations.get(city_key, 0) + 1
-                    
-                    if primary_locations:
-                        sorted_locations = sorted(primary_locations.items(), key=lambda x: x[1], reverse=True)
-                        lines.append(f"     Location: {sorted_locations[0][0]}")
-                        lines.append(f"     NOTE: This appears to be a MAIL SERVER, not the attacker's location.")
-                        lines.append(f"           The attacker identity was extracted using advanced header analysis.")
-                else:
-                    lines.append(f"\n  [EMAIL INTERMEDIARY SERVERS] (For Reference):")
+            if not (hasattr(self, '_vpn_backtrack_analysis') and self._vpn_backtrack_analysis):
+                # No VPN backtracking - show geolocation as primary
+                # Identify which IP is likely the ATTACKER vs MAIL SERVER
+                attacker_location = None
                 
-                lines.append(f"")
-                for ip, geoloc in sorted(self.geolocation.items()):
-                    # Skip if this is the attacker's real IP (already shown above)
-                    if attacker_location and ip == attacker_location[0]:
-                        continue
+                # If we have real IP analysis, use the suspected_real_ip location
+                if self.real_ip and hasattr(self.real_ip, 'suspected_real_ip') and self.real_ip.suspected_real_ip:
+                    attacker_ip = self.real_ip.suspected_real_ip
+                    if attacker_ip in self.geolocation and self.geolocation[attacker_ip]:
+                        attacker_location = (attacker_ip, self.geolocation[attacker_ip])
+                        lines.append(f"\n  ⚡ ATTACKER IDENTIFIED - LOCATION DETERMINED:")
+                        lines.append(f"\n     Real IP Address: {attacker_ip}")
+                        geo = attacker_location[1]
+                        if geo.city:
+                            lines.append(f"     City: {geo.city}")
+                        if geo.country:
+                            lines.append(f"     Country: {geo.country}")
+                        if geo.latitude and geo.longitude:
+                            lines.append(f"     GPS Coordinates: {format_coordinates(geo.latitude, geo.longitude)}")
+                        if geo.timezone:
+                            lines.append(f"     Timezone: {geo.timezone}")
+                        if hasattr(geo, 'isp') and geo.isp:
+                            lines.append(f"     ISP: {geo.isp}")
+                        if hasattr(geo, 'accuracy_radius_km') and geo.accuracy_radius_km:
+                            lines.append(f"     Accuracy Radius: ±{geo.accuracy_radius_km} km")
+                        lines.append(f"     Confidence Level: {geo.confidence:.0%}")
+                        
+                        # For law enforcement
+                        lines.append(f"\n  [LAW ENFORCEMENT REFERENCE SUMMARY]")
+                        lines.append(f"     Attacker Location: {geo.city}, {geo.country}")
+                        if geo.latitude and geo.longitude:
+                            lines.append(f"     GPS Coordinates: {format_coordinates(geo.latitude, geo.longitude)}")
+                        lines.append(f"     Real IP Address: {attacker_ip}")
+                
+                # Show all other locations (likely mail servers/relays)
+                if len(self.geolocation) > 1 or (attacker_location is None):
+                    if not attacker_location:
+                        lines.append(f"\n  ⚠️  PRIMARY LOCATION (Mail server/relay):")
+                        # Find primary location
+                        primary_locations = {}
+                        for ip, geoloc in self.geolocation.items():
+                            if geoloc and geoloc.city and geoloc.country:
+                                city_key = f"{geoloc.city}, {geoloc.country}"
+                                primary_locations[city_key] = primary_locations.get(city_key, 0) + 1
+                        
+                        if primary_locations:
+                            sorted_locations = sorted(primary_locations.items(), key=lambda x: x[1], reverse=True)
+                            lines.append(f"     Location: {sorted_locations[0][0]}")
+                            lines.append(f"     NOTE: This appears to be a MAIL SERVER, not the attacker's location.")
+                            lines.append(f"           The attacker identity was extracted using advanced header analysis.")
+                    else:
+                        lines.append(f"\n  [EMAIL INTERMEDIARY SERVERS] (For Reference):")
                     
+                    lines.append(f"")
+                    for ip, geoloc in sorted(self.geolocation.items()):
+                        # Skip if this is the attacker's real IP (already shown above)
+                        if attacker_location and ip == attacker_location[0]:
+                            continue
+                        
+                        if geoloc and geoloc.confidence > 0 and geoloc.city:
+                            coord_str = ""
+                            if geoloc.latitude and geoloc.longitude:
+                                coord_str = f" - {format_coordinates(geoloc.latitude, geoloc.longitude)}"
+                            lines.append(f"     {ip}: {geoloc.city}, {geoloc.country}{coord_str}")
+            else:
+                # VPN backtracking found real location - show geolocation as supplementary info
+                lines.append(f"\n[VPN ENDPOINT GEOLOCATION (For Reference)]")
+                for ip, geoloc in sorted(self.geolocation.items()):
                     if geoloc and geoloc.confidence > 0 and geoloc.city:
-                        coord_str = ""
+                        lines.append(f"  {ip}: {geoloc.city}, {geoloc.country}")
                         if geoloc.latitude and geoloc.longitude:
-                            coord_str = f" - {format_coordinates(geoloc.latitude, geo.longitude)}"
-                        lines.append(f"     {ip}: {geoloc.city}, {geoloc.country}{coord_str}")
+                            lines.append(f"       Coordinates: {format_coordinates(geoloc.latitude, geoloc.longitude)}")
             
             # ====================================================================
             # QUICK REFERENCE TABLE: FOR LAW ENFORCEMENT (IPv4 + IPv6)
             # ====================================================================
             lines.append(f"\n  [QUICK REFERENCE TABLE - CITY & COORDINATES]")
             lines.append(f"  " + "-" * 90)
-            lines.append(f"  {'IP Address':<45} {'Role':<15} {'City':<20}")
+            lines.append(f"  {'IP Address':<45} {'Type':<15} {'Location':<20}")
             lines.append(f"  " + "-" * 90)
             
-            # Add attacker location first if known
-            if attacker_location:
-                ip, geo = attacker_location
-                lines.append(f"  {ip:<45} {'ATTACKER':<15} {geo.city:<20}")
-            
-            # Add other IPs (mail servers)
-            for ip, geoloc in sorted(self.geolocation.items()):
-                if attacker_location and ip == attacker_location[0]:
-                    continue  # Already shown above
-                if geoloc and geoloc.confidence > 0 and geoloc.city:
-                    lines.append(f"  {ip:<45} {'MAIL RELAY':<15} {geoloc.city:<20}")
+            # If we have backtracking results, show the real location
+            if hasattr(self, '_vpn_backtrack_analysis') and self._vpn_backtrack_analysis:
+                lines.append(f"  {'REAL IP (Backtracked)':<45} {'ATTACKER':<15} {self._vpn_backtrack_analysis.probable_country:<20}")
+                if self._vpn_backtrack_analysis.vpn_endpoint_ip in self.geolocation:
+                    geo = self.geolocation[self._vpn_backtrack_analysis.vpn_endpoint_ip]
+                    lines.append(f"  {self._vpn_backtrack_analysis.vpn_endpoint_ip:<45} {'VPN EXIT':<15} {geo.city if geo.city else 'Unknown':<20}")
+            else:
+                # Identify attacker location from geolocation
+                attacker_location = None
+                if self.real_ip and hasattr(self.real_ip, 'suspected_real_ip') and self.real_ip.suspected_real_ip:
+                    attacker_ip = self.real_ip.suspected_real_ip
+                    if attacker_ip in self.geolocation and self.geolocation[attacker_ip]:
+                        attacker_location = (attacker_ip, self.geolocation[attacker_ip])
+                
+                if attacker_location:
+                    ip, geo = attacker_location
+                    lines.append(f"  {ip:<45} {'ATTACKER':<15} {geo.city:<20}")
+                
+                # Add other IPs (mail servers)
+                for ip, geoloc in sorted(self.geolocation.items()):
+                    if attacker_location and ip == attacker_location[0]:
+                        continue  # Already shown above
+                    if geoloc and geoloc.confidence > 0 and geoloc.city:
+                        lines.append(f"  {ip:<45} {'MAIL RELAY':<15} {geoloc.city:<20}")
             
             lines.append(f"  " + "-" * 90)
         else:
@@ -2748,6 +2882,58 @@ class CompletePipeline:
         proxy_analysis = self.tracer.trace_chain(classified_chain)
         print(f"  Obfuscation layers detected: {proxy_analysis.obfuscation_count}")
         print(f"  Real origin status: {proxy_analysis.likely_real_origin}")
+        
+        # VPN BACKTRACKING (NEW): If VPN detected, attempt to backtrack real IP
+        vpn_backtrack_analysis = None
+        if proxy_analysis.obfuscation_count > 0 and VPN_BACKTRACK_AVAILABLE:
+            print("\n[VPN BACKTRACKING] Detecting obfuscation methods...")
+            try:
+                # Find VPN IP in classifications
+                vpn_ip = None
+                vpn_provider = "Unknown"
+                vpn_country = "Unknown"
+                for ip, classification in classifications.items():
+                    if classification.is_vpn:
+                        vpn_ip = ip
+                        if classification.provider:
+                            vpn_provider = classification.provider
+                        if classification.country:
+                            vpn_country = classification.country
+                        break
+                
+                if vpn_ip:
+                    print(f"  VPN detected: {vpn_provider} ({vpn_ip})")
+                    print(f"  Attempting to backtrack REAL IP using 7+ techniques...\n")
+                    
+                    backtracker = RealIPBacktracker(verbose=self.verbose)
+                    
+                    # Convert email headers to dict
+                    email_headers_for_backtrack = {
+                        'Date': str(header_analysis.email_date) if header_analysis.email_date else None,
+                        'Received': [hop.raw_header for hop in header_analysis.hops],
+                        'Received-SPF': 'Unknown',
+                        'DKIM-Signature': 'Unknown',
+                        'X-Originating-IP': 'Unknown',
+                        'Authentication-Results': 'Unknown',
+                    }
+                    
+                    vpn_backtrack_analysis = backtracker.backtrack_real_ip(
+                        email_headers=email_headers_for_backtrack,
+                        vpn_endpoint_ip=vpn_ip,
+                        vpn_country=vpn_country
+                    )
+                    
+                    print(f"  ✓ BACKTRACKING COMPLETE:")
+                    print(f"    Techniques applied: {len(vpn_backtrack_analysis.signals)}")
+                    print(f"    Backtracking confidence: {vpn_backtrack_analysis.backtracking_confidence:.0%}")
+                    if vpn_backtrack_analysis.probable_real_ip:
+                        print(f"    ⚡ PROBABLE REAL IP: {vpn_backtrack_analysis.probable_real_ip}")
+                    if vpn_backtrack_analysis.probable_country:
+                        print(f"    Location: {vpn_backtrack_analysis.probable_country}")
+            except Exception as e:
+                if self.verbose:
+                    print(f"  [WARNING] VPN backtracking failed: {e}")
+                vpn_backtrack_analysis = None
         
         # STAGE 3B: WHOIS enrichment
         enrichment_results = None
@@ -3174,7 +3360,8 @@ class CompletePipeline:
             threat_intelligence=threat_intelligence,
             geolocation_results=geolocation_results,
             attribution_analysis=attribution_analysis,
-            real_ip_analysis=real_ip_analysis
+            real_ip_analysis=real_ip_analysis,
+            vpn_backtrack_analysis=vpn_backtrack_analysis
         )
         
         print("\n[STAGE COMPLETE] All stages finished successfully")
