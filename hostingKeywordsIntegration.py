@@ -45,7 +45,7 @@ def _fetch_peeringdb_keywords() -> Dict[str, set]:
                             if len(word) > 3 and word.isalpha():
                                 result["datacenter"].add(word)
         
-        print(f"[✓] PeeringDB: Fetched {len(data.get('data', []))} organizations")
+        print(f"[[+]] PeeringDB: Fetched {len(data.get('data', []))} organizations")
     
     except Exception as e:
         print(f"[!] PeeringDB fetch failed: {e}")
@@ -77,7 +77,7 @@ def _fetch_peeringdb_networks() -> Dict[str, set]:
                         elif any(kw in name for kw in ["residential", "comcast", "verizon", "cox", "charter"]):
                             result["residential"].add(name)
             
-            print(f"[✓] PeeringDB Networks: Classified {count} providers")
+            print(f"[[+]] PeeringDB Networks: Classified {count} providers")
     
     except Exception as e:
         print(f"[!] PeeringDB Networks fetch failed (continuing): {e}")
@@ -179,7 +179,7 @@ def get_hosting_keywords(fetch_online: bool = True) -> dict:
             result["datacenter"].update(pdb_nets["datacenter"])
             result["residential"].update(pdb_nets["residential"])
             
-            print("[✓] Online keywords fetched successfully")
+            print("[[+]] Online keywords fetched successfully")
         
         except Exception as e:
             print(f"[!] Online fetch failed, using hardcoded keywords: {e}")
@@ -241,13 +241,13 @@ if __name__ == "__main__":
     
     keywords = get_hosting_keywords(fetch_online=True)
     
-    print(f"\n✓ Datacenter keywords: {len(keywords['datacenter'])}")
+    print(f"\n[+] Datacenter keywords: {len(keywords['datacenter'])}")
     print(f"  Sample: {', '.join(keywords['datacenter'][:10])}")
     
-    print(f"\n✓ Residential keywords: {len(keywords['residential'])}")
+    print(f"\n[+] Residential keywords: {len(keywords['residential'])}")
     print(f"  Sample: {', '.join(keywords['residential'][:10])}")
     
-    print(f"\n✓ Hosting keywords: {len(keywords['hosting'])}")
+    print(f"\n[+] Hosting keywords: {len(keywords['hosting'])}")
     print(f"  Sample: {', '.join(keywords['hosting'][:5])}")
     
     # Test classification

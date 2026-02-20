@@ -9,7 +9,7 @@ Authors: Manikandakumar M, Nuthan KV
 Enhanced with 12 VPN/Proxy bypass techniques + CRITICAL mail provider detection:
 
 1. Email Header Origin Analysis (immutable first hop)
-2. CRITICAL - Mail Provider Detection (prevents Gmail/Outlook false positives) ⚡ NEW
+2. CRITICAL - Mail Provider Detection (prevents Gmail/Outlook false positives) [ALERT] NEW
 3. VPN/Proxy Detection Filtering (classification-based)
 4. Infrastructure Correlation (ISP vs datacenter analysis)
 5. IP Geolocation Analysis (real location vs VPN location)
@@ -280,7 +280,7 @@ class AdvancedRealIPExtractor:
         
         # ===== TECHNIQUE 2.5: CRITICAL - Mail Provider Detection =====
         # Check if origin IP is a known mail provider (Gmail, Outlook, Yahoo, etc.)
-        # If YES: attacker used legitimate mail service → must analyze previous hop
+        # If YES: attacker used legitimate mail service => must analyze previous hop
         mail_provider_result = self._technique_mail_provider_detection(
             origin_ip, email_headers, evidence, techniques
         )
