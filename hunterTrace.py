@@ -77,8 +77,6 @@ try:
 except ImportError:
     VPN_BACKTRACK_AVAILABLE = False
 
-
-
 # ============================================================================
 # STAGE 1: EMAIL HEADER EXTRACTION
 # ============================================================================
@@ -2051,7 +2049,6 @@ class ThreatIntelligenceEngine:
 # ============================================================================
 
 @dataclass
-@dataclass
 class CompletePipelineResult:
     """Complete analysis result with all stages"""
     header_analysis: ReceivedChainAnalysis
@@ -3324,17 +3321,25 @@ class CompletePipeline:
                 if self.verbose:
                     print(f"  [WARNING] Standard extraction failed: {e}")
         
-        # NOW GEOLOCATE: Only geolocate the REAL ATTACKER IP to show correct location
+        # NOW GEOLOCATE: Use VPN backtracking result if available (it has real IP), otherwise use real_ip_analysis
         print("\n[GEOLOCATION] Enriching attacker IP location...")
         geolocation_results = None
         
-        if attacker_real_ip and self.geolocation_enricher:
+        # PRIORITY: If VPN backtracking found real IP, use that for geolocation
+        ip_to_geolocate = None
+        if vpn_backtrack_analysis and vpn_backtrack_analysis.probable_real_ip:
+            ip_to_geolocate = vpn_backtrack_analysis.probable_real_ip
+            print(f"  Using VPN backtracking result: {ip_to_geolocate}")
+        elif attacker_real_ip:
+            ip_to_geolocate = attacker_real_ip
+            print(f"  Using real IP extraction result: {ip_to_geolocate}")
+        
+        if ip_to_geolocate and self.geolocation_enricher:
             try:
-                print(f"  Geolocating attacker IP: {attacker_real_ip}")
-                geolocation_results = self.geolocation_enricher.enrich_multiple_ips([attacker_real_ip])
+                geolocation_results = self.geolocation_enricher.enrich_multiple_ips([ip_to_geolocate])
                 
-                if geolocation_results and attacker_real_ip in geolocation_results:
-                    geo = geolocation_results[attacker_real_ip]
+                if geolocation_results and ip_to_geolocate in geolocation_results:
+                    geo = geolocation_results[ip_to_geolocate]
                     if geo:
                         print(f"  ✓ ATTACKER LOCATION: {geo.city}, {geo.country}")
                         if geo.latitude and geo.longitude:
