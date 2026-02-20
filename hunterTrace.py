@@ -1675,7 +1675,7 @@ class ThreatIntelligenceEngine:
             threat_score=int(threat_score),
             confidence=(shodan_result.confidence + virustotal_result.confidence + threat_history.confidence) / 3,
             detected_threat_types=threat_types,
-            detected_malware_families=threat_history.c2_server_likelihood > 0.5 and ["Potential C2"] or threat_history.malware_associations,
+            detected_malware_families=threat_history.c2_server_likelihood > 0.5 and ["Potential C2"] or threat_history.known_malware_associations,
             c2_confidence=c2_confidence,
             is_known_c2=is_known_c2,
             intelligence_notes=notes,
@@ -2192,7 +2192,7 @@ class CompletePipelineReport:
             lines.append("\n\n[REAL IP EXTRACTION - VPN/PROXY BYPASS ANALYSIS]")
             lines.append("=" * 80)
             
-            lines.append(f"\n  ⚠️  IDENTIFIED REAL ATTACKER IP: {self.real_ip.suspected_real_ip or 'UNKNOWN'}")
+            lines.append(f"\n  [!]  IDENTIFIED REAL ATTACKER IP: {self.real_ip.suspected_real_ip or 'UNKNOWN'}")
             lines.append(f"  Confidence: {self.real_ip.confidence_score:.0%}")
             lines.append(f"  Obfuscation Level: {self.real_ip.obfuscation_level.value.upper()}")
             
@@ -2417,7 +2417,7 @@ class CompletePipelineReport:
         
         # PRIORITY 1: If VPN backtracking found REAL location, show that as PRIMARY result
         if hasattr(self, '_vpn_backtrack_analysis') and self._vpn_backtrack_analysis:
-            lines.append("\n✅ ⚡ REAL ATTACKER LOCATION IDENTIFIED (VPN BYPASS SUCCESSFUL)")
+            lines.append("\n[OK] [ALERT] REAL ATTACKER LOCATION IDENTIFIED (VPN BYPASS SUCCESSFUL)")
             lines.append(f"\n  {self._vpn_backtrack_analysis.probable_country}")
             lines.append(f"  Detection Confidence: {self._vpn_backtrack_analysis.backtracking_confidence:.0%}")
             lines.append(f"  Detection Method: Multi-technique forensic analysis ({len(self._vpn_backtrack_analysis.signals)} techniques)")
@@ -2428,14 +2428,14 @@ class CompletePipelineReport:
             
             lines.append(f"\n[BACKTRACKING TECHNIQUES APPLIED]")
             for signal in self._vpn_backtrack_analysis.signals:
-                lines.append(f"  ✓ {signal.method.value.upper()} ({signal.confidence:.0%} confidence)")
+                lines.append(f"  [+] {signal.method.value.upper()} ({signal.confidence:.0%} confidence)")
                 if signal.real_ip:
-                    lines.append(f"    → Real IP: {signal.real_ip}")
+                    lines.append(f"    => Real IP: {signal.real_ip}")
                 if signal.real_country:
-                    lines.append(f"    → Location: {signal.real_country}")
+                    lines.append(f"    => Location: {signal.real_country}")
                 if signal.evidence:
                     for evidence_item in signal.evidence[:3]:  # Show up to 3 evidence items
-                        lines.append(f"    → {evidence_item}")
+                        lines.append(f"    => {evidence_item}")
             
             lines.append(f"\n" + "-" * 80)
         
@@ -2451,7 +2451,7 @@ class CompletePipelineReport:
                     attacker_ip = self.real_ip.suspected_real_ip
                     if attacker_ip in self.geolocation and self.geolocation[attacker_ip]:
                         attacker_location = (attacker_ip, self.geolocation[attacker_ip])
-                        lines.append(f"\n  ⚡ ATTACKER IDENTIFIED - LOCATION DETERMINED:")
+                        lines.append(f"\n  [ALERT] ATTACKER IDENTIFIED - LOCATION DETERMINED:")
                         lines.append(f"\n     Real IP Address: {attacker_ip}")
                         geo = attacker_location[1]
                         if geo.city:
@@ -2478,7 +2478,7 @@ class CompletePipelineReport:
                 # Show all other locations (likely mail servers/relays)
                 if len(self.geolocation) > 1 or (attacker_location is None):
                     if not attacker_location:
-                        lines.append(f"\n  ⚠️  PRIMARY LOCATION (Mail server/relay):")
+                        lines.append(f"\n  [!]  PRIMARY LOCATION (Mail server/relay):")
                         # Find primary location
                         primary_locations = {}
                         for ip, geoloc in self.geolocation.items():
@@ -2661,32 +2661,37 @@ class CompletePipelineReport:
         for ip, geoloc in self.geolocation.items():
             if geoloc:
                 geolocations_dict[ip] = {
-                    "country": geoloc.country,
-                    "country_code": geoloc.country_code,
-                    "city": geoloc.city,
-                    "latitude": geoloc.latitude,
-                    "longitude": geoloc.longitude,
-                    "timezone": geoloc.timezone,
-                    "asn": geoloc.asn,
-                    "provider": geoloc.provider,
-                    "accuracy_radius_km": geoloc.accuracy_radius_km,
-                    "confidence": geoloc.confidence,
-                    "sources": geoloc.sources
+                    "country": getattr(geoloc, 'country', None),
+                    "country_code": getattr(geoloc, 'country_code', 'UNKNOWN'),
+                    "city": getattr(geoloc, 'city', None),
+                    "latitude": getattr(geoloc, 'latitude', None),
+                    "longitude": getattr(geoloc, 'longitude', None),
+                    "timezone": getattr(geoloc, 'timezone', None),
+                    "asn": getattr(geoloc, 'asn', None),
+                    "provider": getattr(geoloc, 'provider', None),
+                    "accuracy_radius_km": getattr(geoloc, 'accuracy_radius_km', None),
+                    "confidence": getattr(geoloc, 'confidence', 0.0),
+                    "sources": getattr(geoloc, 'sources', [])
                 }
                 
                 # Build city & coordinates summary for law enforcement
-                if geoloc.city and geoloc.country and geoloc.latitude and geoloc.longitude:
+                city = getattr(geoloc, 'city', None)
+                country = getattr(geoloc, 'country', None)
+                lat = getattr(geoloc, 'latitude', None)
+                lon = getattr(geoloc, 'longitude', None)
+                
+                if city and country and lat and lon:
                     city_coordinates_summary.append({
                         "ip_address": ip,
-                        "city": geoloc.city,
-                        "country": geoloc.country,
-                        "country_code": geoloc.country_code,
-                        "latitude": geoloc.latitude,
-                        "longitude": geoloc.longitude,
-                        "coordinates_decimal": f"({geoloc.latitude}, {geoloc.longitude})",
-                        "timezone": geoloc.timezone,
-                        "confidence_percentage": f"{geoloc.confidence:.0%}",
-                        "accuracy_radius_km": geoloc.accuracy_radius_km
+                        "city": city,
+                        "country": country,
+                        "country_code": getattr(geoloc, 'country_code', 'UNKNOWN'),
+                        "latitude": lat,
+                        "longitude": lon,
+                        "coordinates_decimal": f"({lat}, {lon})",
+                        "timezone": getattr(geoloc, 'timezone', None),
+                        "confidence_percentage": f"{getattr(geoloc, 'confidence', 0.0):.0%}",
+                        "accuracy_radius_km": getattr(geoloc, 'accuracy_radius_km', None)
                     })
         
         return {
@@ -2694,9 +2699,9 @@ class CompletePipelineReport:
             "city_and_coordinates_summary": city_coordinates_summary,
             "summary": {
                 "total_ips": len(self.geolocation),
-                "ips_with_coordinates": len([g for g in self.geolocation.values() if g and g.latitude and g.longitude]),
-                "unique_countries": len(set(g.country for g in self.geolocation.values() if g and g.country)),
-                "unique_cities": len(set(f"{g.city},{g.country}" for g in self.geolocation.values() if g and g.city and g.country))
+                "ips_with_coordinates": len([g for g in self.geolocation.values() if g and getattr(g, 'latitude', None) and getattr(g, 'longitude', None)]),
+                "unique_countries": len(set(getattr(g, 'country', None) for g in self.geolocation.values() if g and getattr(g, 'country', None))),
+                "unique_cities": len(set(f"{getattr(g, 'city', 'Unknown')},{getattr(g, 'country', 'Unknown')}" for g in self.geolocation.values() if g and getattr(g, 'city', None) and getattr(g, 'country', None)))
             }
         }
     
@@ -2922,11 +2927,11 @@ class CompletePipeline:
                         vpn_country=vpn_country
                     )
                     
-                    print(f"  ✓ BACKTRACKING COMPLETE:")
+                    print(f"  [+] BACKTRACKING COMPLETE:")
                     print(f"    Techniques applied: {len(vpn_backtrack_analysis.signals)}")
                     print(f"    Backtracking confidence: {vpn_backtrack_analysis.backtracking_confidence:.0%}")
                     if vpn_backtrack_analysis.probable_real_ip:
-                        print(f"    ⚡ PROBABLE REAL IP: {vpn_backtrack_analysis.probable_real_ip}")
+                        print(f"    [ALERT] PROBABLE REAL IP: {vpn_backtrack_analysis.probable_real_ip}")
                     if vpn_backtrack_analysis.probable_country:
                         print(f"    Location: {vpn_backtrack_analysis.probable_country}")
             except Exception as e:
@@ -3052,7 +3057,7 @@ class CompletePipeline:
                 )
                 
                 if advanced_real_ip_analysis:
-                    print(f"  ✓ Advanced extraction complete:")
+                    print(f"  [+] Advanced extraction complete:")
                     print(f"    - Real IP: {advanced_real_ip_analysis.suspected_real_ip}")
                     print(f"    - Confidence: {advanced_real_ip_analysis.confidence_score:.0%}")
                     print(f"    - Obfuscation: {advanced_real_ip_analysis.obfuscation_level.value.upper()}")
@@ -3109,7 +3114,7 @@ class CompletePipeline:
                 )
                 
                 if real_ip_analysis:
-                    print(f"  ✓ Standard extraction complete:")
+                    print(f"  [+] Standard extraction complete:")
                     print(f"    - Real IP identified: {real_ip_analysis.suspected_real_ip}")
                     print(f"    - Confidence: {real_ip_analysis.confidence_score:.0%}")
                     print(f"    - Obfuscation level: {real_ip_analysis.obfuscation_level.value.upper()}")
@@ -3128,10 +3133,14 @@ class CompletePipeline:
                 attacker_real_ip = real_ip_analysis.suspected_real_ip
         
         # GEOLOCATION ENRICHMENT: NOW we geolocate - either just the attacker IP or all IPs (IPv4 + IPv6)
+        # SKIP if VPN detected - will handle VPN cases with backtracking later
         print("\n[GEOLOCATION] Enriching IPs with geolocation data...")
         geolocation_results = None
         
-        if self.geolocation_enricher:
+        # SKIP early geolocation if VPN detected - handle it after backtracking
+        if proxy_analysis.obfuscation_count > 0:
+            print("  [VPN] Skipping initial geolocation - VPN backtracking will handle attribution")
+        elif self.geolocation_enricher:
             try:
                 # PRIORITY: If we identified a real attacker IP, ONLY geolocate that
                 if attacker_real_ip:
@@ -3141,7 +3150,7 @@ class CompletePipeline:
                     if geolocation_results and attacker_real_ip in geolocation_results:
                         attacker_geo = geolocation_results[attacker_real_ip]
                         if attacker_geo:
-                            print(f"  ✓ ATTACKER LOCATION: {attacker_geo.city}, {attacker_geo.country}")
+                            print(f"  [+] ATTACKER LOCATION: {attacker_geo.city}, {attacker_geo.country}")
                             if attacker_geo.latitude and attacker_geo.longitude:
                                 print(f"    Coordinates: {format_coordinates(attacker_geo.latitude, attacker_geo.longitude)}")
                             print(f"    ISP: {attacker_geo.isp or 'Unknown'}")
@@ -3159,14 +3168,14 @@ class CompletePipeline:
                                 if ipv6_addr in geolocation_results:
                                     ipv6_geo = geolocation_results[ipv6_addr]
                                     if ipv6_geo:
-                                        print(f"    ⚡ {ipv6_addr}")
+                                        print(f"    [ALERT] {ipv6_addr}")
                                         print(f"       Location: {ipv6_geo.city}, {ipv6_geo.country}")
                                         if ipv6_geo.latitude and ipv6_geo.longitude:
                                             print(f"       Coordinates: {format_coordinates(ipv6_geo.latitude, ipv6_geo.longitude)}")
                                 else:
                                     # IPv6 not geolocated by service, use IPv6 block registration
                                     ipv6_country = self._geolocate_ipv6_block(ipv6_addr)
-                                    print(f"    ⚡ {ipv6_addr}")
+                                    print(f"    [ALERT] {ipv6_addr}")
                                     print(f"       Country (from IPv6 block registration): {ipv6_country}")
                 
                 # Print geolocation summary
@@ -3271,7 +3280,7 @@ class CompletePipeline:
                 if advanced_real_ip_analysis:
                     real_ip_analysis = advanced_real_ip_analysis
                     attacker_real_ip = advanced_real_ip_analysis.suspected_real_ip
-                    print(f"  ✓ EXTRACTED ATTACKER IP: {attacker_real_ip} ({advanced_real_ip_analysis.confidence_score:.0%} confidence)")
+                    print(f"  [+] EXTRACTED ATTACKER IP: {attacker_real_ip} ({advanced_real_ip_analysis.confidence_score:.0%} confidence)")
                     if advanced_real_ip_analysis.vpn_provider:
                         print(f"    VPN Provider: {advanced_real_ip_analysis.vpn_provider}")
             except Exception as e:
@@ -3316,7 +3325,7 @@ class CompletePipeline:
                 
                 if real_ip_analysis:
                     attacker_real_ip = real_ip_analysis.suspected_real_ip
-                    print(f"  ✓ EXTRACTED ATTACKER IP: {attacker_real_ip} ({real_ip_analysis.confidence_score:.0%} confidence)")
+                    print(f"  [+] EXTRACTED ATTACKER IP: {attacker_real_ip} ({real_ip_analysis.confidence_score:.0%} confidence)")
             except Exception as e:
                 if self.verbose:
                     print(f"  [WARNING] Standard extraction failed: {e}")
@@ -3326,22 +3335,59 @@ class CompletePipeline:
         geolocation_results = None
         
         # PRIORITY: If VPN backtracking found real IP, use that for geolocation
+        # BUT: If the probable_real_ip IS the VPN endpoint, use inferred COUNTRY instead
         ip_to_geolocate = None
+        use_backtrack_country = False
+        backtrack_country = None
+        
         if vpn_backtrack_analysis and vpn_backtrack_analysis.probable_real_ip:
-            ip_to_geolocate = vpn_backtrack_analysis.probable_real_ip
-            print(f"  Using VPN backtracking result: {ip_to_geolocate}")
+            # Check if this IP is the same as the VPN endpoint (happens when backtracking can't separate IP)
+            is_same_as_vpn = False
+            if proxy_analysis and proxy_analysis.chain:
+                for chain_item in proxy_analysis.chain:
+                    if chain_item.ip == vpn_backtrack_analysis.probable_real_ip and chain_item.is_obfuscation:
+                        is_same_as_vpn = True
+                        break
+            
+            # If it's the VPN endpoint, use inferred country instead of geolocating the VPN IP
+            if is_same_as_vpn and vpn_backtrack_analysis.probable_country:
+                use_backtrack_country = True
+                backtrack_country = vpn_backtrack_analysis.probable_country
+                print(f"  [VPN BACKTRACK] Using inferred country (VPN endpoint detected): {backtrack_country}")
+                print(f"     Confidence: {vpn_backtrack_analysis.backtracking_confidence:.0%}")
+            else:
+                # Actually different IP, geolocate it
+                ip_to_geolocate = vpn_backtrack_analysis.probable_real_ip
+                print(f"  Using VPN backtracking result: {ip_to_geolocate}")
         elif attacker_real_ip:
             ip_to_geolocate = attacker_real_ip
             print(f"  Using real IP extraction result: {ip_to_geolocate}")
         
-        if ip_to_geolocate and self.geolocation_enricher:
+        if use_backtrack_country:
+            # Use inferred country from backtracking (timezone, behavior analysis, etc.)
+            geolocation_results = {vpn_backtrack_analysis.probable_real_ip: type('obj', (object,), {
+                'country': backtrack_country,
+                'country_code': 'INFERRED',
+                'city': 'Unknown',
+                'latitude': None,
+                'longitude': None,
+                'timezone': 'Unknown',
+                'asn': 'Unknown',
+                'provider': 'Unknown',
+                'isp': 'Unknown',
+                'accuracy_radius_km': None,
+                'confidence': vpn_backtrack_analysis.backtracking_confidence,
+                'sources': ['VPN Backtracking']
+            })()} if vpn_backtrack_analysis.probable_real_ip else None
+            print(f"  [+] ATTACKER LOCATION: {backtrack_country} (Inferred)")
+        elif ip_to_geolocate and self.geolocation_enricher:
             try:
                 geolocation_results = self.geolocation_enricher.enrich_multiple_ips([ip_to_geolocate])
                 
                 if geolocation_results and ip_to_geolocate in geolocation_results:
                     geo = geolocation_results[ip_to_geolocate]
                     if geo:
-                        print(f"  ✓ ATTACKER LOCATION: {geo.city}, {geo.country}")
+                        print(f"  [+] ATTACKER LOCATION: {geo.city}, {geo.country}")
                         if geo.latitude and geo.longitude:
                             print(f"     Coordinates: {format_coordinates(geo.latitude, geo.longitude)}")
                         print(f"     ISP: {geo.isp}")
@@ -3432,45 +3478,216 @@ class CompletePipeline:
 
 
 # ============================================================================
-# CLI ENTRY POINT
+# BATCH PROCESSING & CAMPAIGN CORRELATION 
+# ============================================================================
+
+class BatchProcessor:
+    """Process multiple emails and correlate campaigns"""
+    
+    def __init__(self, mail_dir=None, verbose=False, skip_enrichment=False):
+        self.mail_dir = Path(mail_dir) if mail_dir else Path("/Users/lapac/Documents/PES/SOC/ProjectPhase2/mails")
+        self.pipeline = CompletePipeline(verbose=verbose, skip_enrichment=skip_enrichment)
+        self.results = []
+        self.verbose = verbose
+    
+    def process_all_emails(self):
+        """Batch process all emails in mail directory"""
+        eml_files = list(self.mail_dir.glob('*.eml'))
+        
+        if not eml_files:
+            print(f"[ERROR] No .eml files found in {self.mail_dir}")
+            return False
+        
+        print(f"[BATCH PROCESSING] Found {len(eml_files)} emails")
+        print("=" * 80)
+        
+        for i, eml_file in enumerate(sorted(eml_files), 1):
+            print(f"\n[{i}/{len(eml_files)}] {eml_file.name}")
+            
+            result = self.pipeline.run(str(eml_file))
+            
+            if result:
+                attacker_data = {
+                    'file': eml_file.name,
+                    'from': result.header_analysis.email_from if result.header_analysis else 'UNKNOWN',
+                    'subject': result.header_analysis.email_subject if result.header_analysis else 'UNKNOWN',
+                    'date': result.header_analysis.email_date if result.header_analysis else 'UNKNOWN',
+                    'VPN_detected': result.proxy_analysis.obfuscation_count > 0 if result.proxy_analysis else False,
+                    'full_result': result
+                }
+                
+                # Extract real location
+                if result.vpn_backtrack_analysis:
+                    attacker_data['location'] = result.vpn_backtrack_analysis.probable_country
+                    attacker_data['confidence'] = f"{result.vpn_backtrack_analysis.backtracking_confidence:.0%}"
+                    attacker_data['real_ip'] = result.vpn_backtrack_analysis.probable_real_ip
+                elif result.geolocation_results:
+                    for ip, geo in result.geolocation_results.items():
+                        if geo:
+                            attacker_data['location'] = geo.country
+                            attacker_data['city'] = geo.city
+                            break
+                
+                self.results.append(attacker_data)
+                
+                # Print summary
+                print(f"  From: {attacker_data['from'][:50]}")
+                if 'location' in attacker_data:
+                    print(f"  Location: {attacker_data['location']}")
+                if attacker_data['VPN_detected']:
+                    print(f"  [VPN DETECTED] Confidence: {attacker_data.get('confidence', 'N/A')}")
+            else:
+                print(f"  [ERROR] Failed to process")
+        
+        return len(self.results) > 0
+    
+    def correlate_campaigns(self):
+        """Correlate emails by location and sender"""
+        print("\n[CAMPAIGN CORRELATION ANALYSIS]")
+        print("=" * 80)
+        
+        from collections import defaultdict
+        
+        # Group by location
+        by_location = defaultdict(list)
+        by_from = defaultdict(list)
+        
+        for result in self.results:
+            location = result.get('location', 'UNKNOWN')
+            sender = result.get('from', 'UNKNOWN')
+            
+            by_location[location].append(result)
+            by_from[sender].append(result)
+        
+        # Report locations
+        print("\n[GEOGRAPHIC DISTRIBUTION]")
+        for location in sorted(by_location.keys()):
+            emails = by_location[location]
+            print(f"  {location}: {len(emails)} email(s)")
+            for email in emails:
+                print(f"    - {email['file']}")
+        
+        # Report senders
+        print("\n[SENDER ANALYSIS]")
+        for sender in sorted(by_from.keys())[:10]:
+            emails = by_from[sender]
+            if len(emails) > 1:
+                print(f"  {sender}: {len(emails)} emails")
+        
+        return by_location, by_from
+    
+    def export_json_report(self, output_file):
+        """Export batch results to JSON"""
+        report_data = {
+            'timestamp': datetime.now().isoformat(),
+            'total_emails': len(self.results),
+            'emails_processed': len([r for r in self.results if r.get('full_result')]),
+            'emails': []
+        }
+        
+        # Build email summaries
+        for result in self.results:
+            email_summary = {
+                'filename': result['file'],
+                'from': result['from'],
+                'subject': result['subject'],
+                'date': result['date'],
+                'vpn_detected': result['VPN_detected'],
+                'location': result.get('location'),
+                'confidence': result.get('confidence'),
+                'real_ip': result.get('real_ip')
+            }
+            
+            # Add full analysis if available
+            if result.get('full_result'):
+                full_report = CompletePipelineReport(result['full_result'])
+                email_summary['full_analysis'] = full_report.to_json()
+            
+            report_data['emails'].append(email_summary)
+        
+        # Geographic summary
+        from collections import defaultdict
+        geo_summary = defaultdict(int)
+        for result in self.results:
+            if 'location' in result:
+                geo_summary[result['location']] += 1
+        
+        report_data['geographic_distribution'] = dict(geo_summary)
+        
+        # Save to file
+        with open(output_file, 'w') as f:
+            json.dump(report_data, f, indent=2)
+        
+        print(f"\n[SUCCESS] Batch report exported to: {output_file}")
+
+# ============================================================================
+# CLI ENTRY POINT - UNIFIED INTERFACE
 # ============================================================================
 
 def main():
-    """Command-line interface"""
+    """Command-line interface - unified single file execution"""
     
     parser = argparse.ArgumentParser(
-        description="Complete Attacker IP Identification System (All 5 Stages)",
+        description="Complete Attacker IP Identification System - Single-File All-in-One",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-STAGES:
-  1. Email header extraction (RFC 2822 parsing, IP extraction in order)
-  2. IP classification (Tor/VPN/Proxy detection with real APIs)
-  3A. Proxy chain analysis (obfuscation layers detection)
-  3B. WHOIS/Reverse DNS enrichment (organization & ASN metadata)
-  3C. Infrastructure correlation (attack pattern detection, team size estimation)
-  4. Threat intelligence aggregation (C2 detection, malware analysis, threat scoring)
+USAGE MODES:
+
+  Single email analysis:
+    python complete_attacker_identification_system.py email.eml
+    python complete_attacker_identification_system.py single email.eml
+
+  Batch processing:
+    python complete_attacker_identification_system.py batch /path/to/mails/
+    python complete_attacker_identification_system.py batch
+
+  System information:
+    python complete_attacker_identification_system.py info
 
 EXAMPLES:
-  python3 complete_attacker_identification_system.py ./phishing.eml
-  python3 complete_attacker_identification_system.py email.eml --json report.json
-  python3 complete_attacker_identification_system.py email.eml --verbose
-  python3 complete_attacker_identification_system.py email.eml --skip-enrichment
+
+  Single email with verbose:
+    python complete_attacker_identification_system.py email.eml --verbose
+  
+  Generate JSON report:
+    python complete_attacker_identification_system.py email.eml --json report.json
+  
+  Batch process with campaign correlation:
+    python complete_attacker_identification_system.py batch /Users/emails/ --json batch_report.json
+
+PIPELINE STAGES:
+  Stage 1: Email header extraction (RFC 2822,  IPv4/IPv6)
+  Stage 2: IP classification (Tor/VPN/Proxy)
+  Stage 3A: Proxy chain analysis
+  Stage 3B: WHOIS/Reverse DNS enrichment
+  Stage 3C: Infrastructure correlation
+  Stage 4: Threat intelligence aggregation
+  Real IP Extraction: 11+ techniques for VPN/Proxy bypass
+  VPN Backtracking: 7 forensic methods
+  Stage 5: Final attribution analysis
 
 SETUP:
   pip install requests python-whois dnspython
-  export ABUSEIPDB_API_KEY="your_key_here"
+  export ABUSEIPDB_API_KEY="your_key"
         """
     )
     
     parser.add_argument(
-        "email_file",
-        help="Path to email file (.eml format)"
+        "target",
+        nargs='?',
+        help="Email file / 'batch' for batch mode / 'single' for explicit single mode / 'info' for system info"
+    )
+    
+    parser.add_argument(
+        "path",
+        nargs='?',
+        help="Additional argument for batch mode (mail directory path)"
     )
     
     parser.add_argument(
         "--json",
         metavar="OUTPUT_FILE",
-        help="Export full analysis to JSON file"
+        help="Export analysis to JSON file"
     )
     
     parser.add_argument(
@@ -3487,14 +3704,68 @@ SETUP:
     
     args = parser.parse_args()
     
-    # Validate file
-    if not Path(args.email_file).exists():
-        print(f"[ERROR] File not found: {args.email_file}")
+    # No arguments - print help
+    if not args.target:
+        parser.print_help()
+        sys.exit(1)
+    
+    # INFO MODE
+    if args.target == "info":
+        print("\n[SYSTEM INFORMATION]")
+        print("=" * 80)
+        print("[+] Complete Attacker IP Identification System v2.0")
+        print("[+] Single-File Unified Interface (All Modes in One)")
+        print("\n[MODES]")
+        print("    - Single Email Analysis")
+        print("    - Batch Processing (multi-email)")
+        print("    - Campaign Correlation & Threat Pattern Detection")
+        print("\n[CAPABILITIES]")
+        print("    - Stage 1: Email Header Extraction (IPv4 + IPv6)")
+        print("    - Stage 2: IP Classification (VPN/Tor/Proxy)")
+        print("    - Stage 3A: Proxy Chain Analysis")
+        print("    - Stage 3B: WHOIS/Reverse DNS Enrichment")
+        print("    - Stage 3C: Infrastructure Correlation")
+        print("    - Stage 4: Threat Intelligence Aggregation")
+        print("    - Stage 5: Final Attribution Analysis")
+        print("    - Real IP Extraction: 11+ Techniques")
+        print("    - VPN Backtracking: 7 Forensic Methods")
+        print("    - Geolocation: IPv4 + IPv6 Mapping")
+        print("\n[AVAILABLE MODULES]")
+        print(f"    ✓ Core Pipeline")
+        print(f"    {'✓' if GEOLOCATION_AVAILABLE else '✗'} Geolocation Engine")
+        print(f"    {'✓' if STAGE5_AVAILABLE else '✗'} Attribution Analysis")
+        print(f"    {'✓' if VPN_BACKTRACK_AVAILABLE else '✗'} VPN Backtracking")
+        print(f"    {'✓' if ADVANCED_REAL_IP_EXTRACTOR_AVAILABLE else '✗'} Advanced Real IP Extractor")
+        print("\n")
+        return
+    
+    # BATCH MODE
+    if args.target == "batch" or (args.target and str(args.target).startswith('/') and Path(args.target).is_dir()):
+        mail_dir = args.path if args.path else (args.target if args.target != "batch" else None)
+        
+        processor = BatchProcessor(mail_dir=mail_dir, verbose=args.verbose, skip_enrichment=args.skip_enrichment)
+        
+        if processor.process_all_emails():
+            processor.correlate_campaigns()
+            
+            output_file = args.json if args.json else "soc_report.json"
+            processor.export_json_report(output_file)
+        
+        return
+    
+    # SINGLE EMAIL MODE
+    email_file = args.target
+    if args.target == "single" and args.path:
+        email_file = args.path
+    
+    # Validate file exists
+    if not Path(email_file).exists():
+        print(f"[ERROR] File not found: {email_file}")
         sys.exit(1)
     
     # Run pipeline
     pipeline = CompletePipeline(verbose=args.verbose, skip_enrichment=args.skip_enrichment)
-    result = pipeline.run(args.email_file)
+    result = pipeline.run(email_file)
     
     if not result:
         print("[ERROR] Pipeline execution failed")
