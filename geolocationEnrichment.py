@@ -127,7 +127,7 @@ class GeolocationEnricher:
             geoloc_data.sources = ['ipv6-block-registration']
             
             if self.verbose:
-                print(f"[✓] IPv6 Block Registry: {ipv6} → {ipv6_country}")
+                print(f"[[+]] IPv6 Block Registry: {ipv6} => {ipv6_country}")
             
             return True
         
@@ -155,7 +155,7 @@ class GeolocationEnricher:
                     geoloc_data.sources = ['db-ip.com']
                     
                     if self.verbose:
-                        print(f"[✓] db-ip.com IPv6: {ipv6} → {geoloc_data.city}, {geoloc_data.country}")
+                        print(f"[[+]] db-ip.com IPv6: {ipv6} => {geoloc_data.city}, {geoloc_data.country}")
                     
                     return True
         except Exception as e:
@@ -186,7 +186,7 @@ class GeolocationEnricher:
                     geoloc_data.sources = ['ipwho.is']
                     
                     if self.verbose:
-                        print(f"[✓] ipwho.is IPv6: {ipv6} → {geoloc_data.city}, {geoloc_data.country}")
+                        print(f"[[+]] ipwho.is IPv6: {ipv6} => {geoloc_data.city}, {geoloc_data.country}")
                     
                     return True
         except Exception as e:
@@ -217,7 +217,7 @@ class GeolocationEnricher:
                     geoloc_data.sources = ['ip-api.com']
                     
                     if self.verbose:
-                        print(f"[✓] IP-API.com IPv6: {ipv6} → {geoloc_data.city}, {geoloc_data.country}")
+                        print(f"[[+]] IP-API.com IPv6: {ipv6} => {geoloc_data.city}, {geoloc_data.country}")
                     
                     return True
         except Exception as e:
@@ -249,7 +249,7 @@ class GeolocationEnricher:
                     geoloc_data.sources = ['ipstack.com']
                     
                     if self.verbose:
-                        print(f"[✓] ipstack.com IPv6: {ipv6} → {geoloc_data.city}, {geoloc_data.country}")
+                        print(f"[[+]] ipstack.com IPv6: {ipv6} => {geoloc_data.city}, {geoloc_data.country}")
                     
                     return True
         except Exception as e:
@@ -280,7 +280,7 @@ class GeolocationEnricher:
                     geoloc_data.sources = ['geoip.io']
                     
                     if self.verbose:
-                        print(f"[✓] geoip.io IPv6: {ipv6} → {geoloc_data.city}, {geoloc_data.country}")
+                        print(f"[[+]] geoip.io IPv6: {ipv6} => {geoloc_data.city}, {geoloc_data.country}")
                     
                     return True
         except Exception as e:
@@ -441,7 +441,7 @@ class GeolocationEnricher:
                 is_ipv6 = ':' in ip
                 ip_type = "IPv6" if is_ipv6 else "IPv4"
                 if self.verbose:
-                    print(f"[✓] IP-API ({ip_type}): {ip} → {geoloc_data.city}, {geoloc_data.country}")
+                    print(f"[[+]] IP-API ({ip_type}): {ip} => {geoloc_data.city}, {geoloc_data.country}")
                 
                 return True
         except Exception as e:
@@ -478,7 +478,7 @@ class GeolocationEnricher:
                 geoloc_data.sources = ['ipinfo.io']
                 
                 if self.verbose:
-                    print(f"[✓] IPinfo: {ip} → {geoloc_data.city}, {geoloc_data.country}")
+                    print(f"[[+]] IPinfo: {ip} => {geoloc_data.city}, {geoloc_data.country}")
                 
                 return True
         except Exception as e:
@@ -510,7 +510,7 @@ class GeolocationEnricher:
                 geoloc_data.sources = ['maxmind']
                 
                 if self.verbose:
-                    print(f"[✓] MaxMind: {ip} → {geoloc_data.city}, {geoloc_data.country}")
+                    print(f"[[+]] MaxMind: {ip} => {geoloc_data.city}, {geoloc_data.country}")
                 
                 return True
         except Exception as e:
