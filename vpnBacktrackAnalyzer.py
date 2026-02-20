@@ -203,9 +203,35 @@ class RealIPBacktracker:
                 signal.confidence = max(0.0, signal.confidence - 0.25)
         
         # Counter 4: Behavioral anomaly detection
-        sending_hour = int(email_headers.get("Date", "").split(":")[0].split()[-1]) if ":" in email_headers.get("Date", "") else 12
-        tz_offset = email_headers.get("Date", "")[-5] if len(email_headers.get("Date", "")) > 5 else "+"
-        tz_str = email_headers.get("Date", "")[-5:]
+        date_str = email_headers.get("Date", "")
+        sending_hour = 12
+        tz_str = "+"
+        
+        try:
+            # Handle ISO 8601 format: 2026-02-20T19:51:57+05:30
+            if "T" in date_str and ":" in date_str:
+                time_part = date_str.split("T")[1].split(":")[0]
+                sending_hour = int(time_part)
+            # Handle RFC 2822 format: Thu, 20 Feb 2026 19:51:57 +0530
+            elif ":" in date_str:
+                parts = date_str.split()
+                for i, part in enumerate(parts):
+                    if ":" in part:
+                        try:
+                            sending_hour = int(part.split(":")[0])
+                            break
+                        except:
+                            pass
+            
+            # Extract timezone (usually -05:00 or +05:30 format)
+            if "+" in date_str:
+                tz_str = date_str.split("+")[-1]
+            elif "-" in date_str:
+                tz_str = date_str.split("-")[-1]
+        except:
+            sending_hour = 12
+            tz_str = "+"
+        
         anomaly_check = self._calculate_behavioral_anomaly(sending_hour, tz_str)
         if anomaly_check["is_anomalous"]:
             for signal in signals:
@@ -294,12 +320,14 @@ class RealIPBacktracker:
                 if 'unknown' in first_hop.lower():
                     evidence.append("⚠️  Unknown/obfuscated hostname in first hop")
                 
-                country = self._geolocate_ip(first_hop_ip)
+                # NOTE: Don't return country from first-hop geolocation
+                # First hop is often mail relay, not attacker's location
+                # Use other techniques (timezone, behavioral) for real location
                 
                 return RealIPSignal(
                     method=BacktrackMethod.FIRST_HOP_ISP,
                     real_ip=first_hop_ip,
-                    real_country=country,
+                    real_country=None,  # Don't geolocate first hop - it's usually a mail relay
                     confidence=0.92,  # VERY HIGH confidence - email headers are immutable at send time
                     evidence=evidence
                 )
@@ -338,18 +366,20 @@ class RealIPBacktracker:
         
         # Extract timezone offset from Date header (client-controlled, can be spoofed)
         # Pattern: space followed by +/- and digits:digits at end of string
-        tz_pattern = r'\s([+-]\d{1,2}:\d{2})\s*$'
+        tz_pattern = r'\s([+-]\d{1,2}):?(\d{2})\s*$'
         tz_match = re.search(tz_pattern, str(date_header))
         
         if not tz_match:
-            # Try alternate pattern
-            tz_pattern = r'([+-]\d{2}:\d{2})'
+            # Try alternate pattern without space requirement
+            tz_pattern = r'([+-]\d{1,2}):?(\d{2})'
             tz_match = re.search(tz_pattern, str(date_header))
         
-        if not tz_match:
+        if tz_match:
+            # Normalize to colon format
+            tz_offset = f"{tz_match.group(1)}:{tz_match.group(2)}"
+        else:
             return None
         
-        tz_offset = tz_match.group(1)
         region, country_codes = self.timezone_regions.get(tz_offset, (None, None))
         
         if not region:
@@ -707,23 +737,29 @@ class RealIPBacktracker:
         If timezone/ISP geolocation != VPN endpoint location => real location found
         """
         
-        # Collect all detected locations from other signals
-        detected_countries = set()
-        detected_ips = []
+        # Collect all detected locations from other signals with their confidence
+        location_scores = {}
         
         for signal in signals:
             if signal.real_country:
-                detected_countries.add(signal.real_country)
-            if signal.real_ip:
-                detected_ips.append(signal.real_ip)
+                if signal.real_country not in location_scores:
+                    location_scores[signal.real_country] = 0
+                location_scores[signal.real_country] += signal.confidence
         
         evidence = [
             f"VPN endpoint: {vpn_endpoint_ip} ({vpn_country})",
-            f"Detected real locations: {', '.join(detected_countries) or 'None yet'}"
+            f"Detected real locations: {', '.join(location_scores.keys()) or 'None yet'}"
         ]
         
+        # Pick the location with highest confidence score
+        best_country = None
+        if location_scores:
+            best_country = max(location_scores.items(), key=lambda x: x[1])[0]
+            best_score = location_scores[best_country]
+            evidence.append(f"Highest confidence location: {best_country} ({best_score:.0%})")
+        
         # High confidence if detected location differs from VPN
-        if detected_countries and vpn_country.lower() not in str(detected_countries).lower():
+        if best_country and vpn_country.lower() not in best_country.lower():
             evidence.append("LOCATION MISMATCH: Real location detected outside VPN")
             confidence = 0.85
         else:
@@ -732,7 +768,7 @@ class RealIPBacktracker:
         return RealIPSignal(
             method=BacktrackMethod.GEOLOCATION_INFERENCE,
             real_ip=None,
-            real_country=list(detected_countries)[0] if detected_countries else None,
+            real_country=best_country,  # Return the highest-confidence country
             confidence=confidence,
             evidence=evidence
         )
