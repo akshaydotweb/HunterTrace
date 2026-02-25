@@ -1,3 +1,5 @@
+# <img src="assets/hunterTraceLogo.png" alt="HunterTrace Logo" width="120" style="vertical-align:middle;" />
+#
 # Complete Attacker Identification System
 
 ## Overview
