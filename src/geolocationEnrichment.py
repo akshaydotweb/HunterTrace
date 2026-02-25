@@ -4,12 +4,11 @@ GEOLOCATION ENRICHMENT MODULE
 Fetches precise attacker location data for each IP address
 
 Provides:
-- City-level geolocation (latitude, longitude)
-- Timezone information
-- ASN and provider details
-- Location confidence scoring
-- Fallback mechanisms for reliability
 """
+import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 
 import requests
 import json
