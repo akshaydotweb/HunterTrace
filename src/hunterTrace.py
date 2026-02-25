@@ -77,6 +77,13 @@ try:
 except ImportError:
     VPN_BACKTRACK_AVAILABLE = False
 
+# Import v2: Webmail Real-IP Extraction (Gmail/Yahoo/Outlook header leak detection)
+try:
+    from webMailRealIpExtrator import WebmailRealIPExtractor, WebmailExtractionResult, run_webmail_extraction
+    WEBMAIL_EXTRACTOR_AVAILABLE = True
+except ImportError:
+    WEBMAIL_EXTRACTOR_AVAILABLE = False
+
 # ============================================================================
 # STAGE 1: EMAIL HEADER EXTRACTION
 # ============================================================================
@@ -2061,6 +2068,7 @@ class CompletePipelineResult:
     attribution_analysis: Optional['Stage5Attribution'] = None
     real_ip_analysis: Optional['RealIPAnalysis'] = None
     vpn_backtrack_analysis: Optional['BacktrackResult'] = None
+    webmail_extraction: Optional['WebmailExtractionResult'] = None
 
 
 class CompletePipelineReport:
@@ -2077,6 +2085,7 @@ class CompletePipelineReport:
         self.attribution = result.attribution_analysis
         self.real_ip = result.real_ip_analysis
         self._vpn_backtrack_analysis = result.vpn_backtrack_analysis
+        self._webmail_extraction = result.webmail_extraction
     
     def generate_text_report(self, verbose: bool = False) -> str:
         """Generate comprehensive text report"""
@@ -2187,6 +2196,38 @@ class CompletePipelineReport:
                 lines.append("         |")
                 lines.append("         v")
         
+        # v2: WEBMAIL REAL-IP EXTRACTION SECTION
+        if self._webmail_extraction:
+            we = self._webmail_extraction
+            lines.append("")
+            lines.append("[v2] WEBMAIL REAL-IP EXTRACTION")
+            lines.append("=" * 80)
+            lines.append(f"  Provider Detected:  {we.provider_name}")
+            lines.append(f"  Leak Behaviour:     {we.leak_behaviour.value}")
+
+            if we.real_ip_found:
+                lines.append(f"")
+                lines.append(f"  *** REAL SENDER IP (injected by webmail before VPN) ***")
+                lines.append(f"  IP Address:         {we.real_ip}")
+                lines.append(f"  Leaked via header:  {we.leak_header}")
+                lines.append(f"  Confidence:         {we.confidence:.0%}")
+            else:
+                lines.append(f"  Real IP:            NOT FOUND (provider strips headers)")
+
+            if we.timezone_hint:
+                lines.append(f"  Timezone Offset:    {we.date_header_offset}  →  {we.timezone_hint}")
+
+            if we.all_candidate_ips:
+                lines.append(f"")
+                lines.append(f"  All Candidate IPs:")
+                for c in we.all_candidate_ips:
+                    lines.append(f"    {c['ip']:<20} via {c['header']:<50} conf={c['confidence']:.0%}")
+
+            lines.append(f"")
+            lines.append(f"  Forensic Notes:")
+            for note in we.forensic_notes:
+                lines.append(f"    {note}")
+
         # REAL IP EXTRACTION: Display true IP behind VPN/proxy
         if self.real_ip:
             lines.append("\n\n[REAL IP EXTRACTION - VPN/PROXY BYPASS ANALYSIS]")
@@ -2605,7 +2646,8 @@ class CompletePipelineReport:
             "stage4_threat_intelligence": self._threat_intel_to_dict() if self.threat_intelligence else None,
             "geolocation_analysis": self._geolocation_to_dict() if self.geolocation else None,
             "real_ip_extraction": self._real_ip_to_dict() if self.real_ip else None,
-            "stage5_attribution_analysis": self._attribution_to_dict() if self.attribution else None
+            "stage5_attribution_analysis": self._attribution_to_dict() if self.attribution else None,
+            "webmail_extraction_v2": self._webmail_to_dict() if self._webmail_extraction else None
         }
     
     def _threat_intel_to_dict(self) -> Dict:
@@ -2722,6 +2764,26 @@ class CompletePipelineReport:
             "analysis_notes": self.real_ip.analysis_notes
         }
     
+    def _webmail_to_dict(self) -> Dict:
+        """Convert v2 webmail extraction result to dict for JSON export"""
+        if not self._webmail_extraction:
+            return {}
+        we = self._webmail_extraction
+        return {
+            "provider": we.provider_name,
+            "leak_behaviour": we.leak_behaviour.value,
+            "real_ip_found": we.real_ip_found,
+            "real_ip": we.real_ip,
+            "leak_header": we.leak_header,
+            "confidence": we.confidence,
+            "timezone_hint": we.timezone_hint,
+            "date_header_offset": we.date_header_offset,
+            "all_candidate_ips": we.all_candidate_ips,
+            "forensic_notes": we.forensic_notes,
+            "provider_findings": we.provider_findings,
+            "timestamp": we.timestamp
+        }
+
     def _attribution_to_dict(self) -> Dict:
         """Convert Stage 5 attribution analysis to dictionary for JSON export"""
         if not self.attribution:
@@ -2848,6 +2910,44 @@ class CompletePipeline:
         
         print(f"[SUCCESS] Found {header_analysis.hop_count} hops in email chain")
         
+        # ====================================================================
+        # v2: WEBMAIL REAL-IP EXTRACTION (runs before everything else)
+        # Detects provider-injected headers that reveal the sender's real IP
+        # BEFORE any VPN/proxy layer. Highest-confidence technique available.
+        # ====================================================================
+        webmail_extraction = None
+        webmail_real_ip = None  # Will short-circuit later stages if found
+
+        if WEBMAIL_EXTRACTOR_AVAILABLE:
+            print("\n[v2] Webmail Real-IP Extraction (Gmail / Yahoo / Outlook / Zoho)...")
+            try:
+                with open(email_file, 'r', encoding='utf-8', errors='ignore') as _f:
+                    _raw_email = _f.read()
+                webmail_extraction = run_webmail_extraction(_raw_email, verbose=self.verbose)
+
+                if webmail_extraction.real_ip_found and webmail_extraction.confidence >= 0.80:
+                    webmail_real_ip = webmail_extraction.real_ip
+                    print(f"  [v2] *** WEBMAIL REAL IP FOUND ***")
+                    print(f"       IP:        {webmail_real_ip}")
+                    print(f"       Provider:  {webmail_extraction.provider_name}")
+                    print(f"       Leaked via:{webmail_extraction.leak_header}")
+                    print(f"       Confidence:{webmail_extraction.confidence:.0%}")
+                    if webmail_extraction.timezone_hint:
+                        print(f"       TZ Hint:   {webmail_extraction.timezone_hint} ({webmail_extraction.date_header_offset})")
+                elif webmail_extraction.real_ip_found:
+                    # Found but below threshold — still log it
+                    print(f"  [v2] Low-confidence candidate: {webmail_extraction.real_ip} ({webmail_extraction.confidence:.0%}) — not used as primary")
+                else:
+                    print(f"  [v2] No webmail IP leak — Provider: {webmail_extraction.provider_name}")
+                    if webmail_extraction.timezone_hint:
+                        print(f"       TZ Hint:  {webmail_extraction.timezone_hint} ({webmail_extraction.date_header_offset})")
+            except Exception as _e:
+                if self.verbose:
+                    print(f"  [v2 WARNING] Webmail extraction failed: {_e}")
+                webmail_extraction = None
+        else:
+            print("\n[v2] Webmail extractor not available (place webmailRealIpExtractor.py in src/)")
+
         # Extract unique IPs (BOTH IPv4 AND IPv6)
         unique_ips = []
         unique_ipv6 = []
@@ -3334,31 +3434,38 @@ class CompletePipeline:
         print("\n[GEOLOCATION] Enriching attacker IP location...")
         geolocation_results = None
         
-        # PRIORITY: If VPN backtracking found real IP, use that for geolocation
-        # BUT: If the probable_real_ip IS the VPN endpoint, use inferred COUNTRY instead
+        # PRIORITY ORDER for geolocation target:
+        #   1. v2 Webmail extraction (highest confidence — injected before VPN)
+        #   2. VPN backtracking result
+        #   3. Advanced/standard real IP extraction
+        #   4. Fallback: all IPs in chain
         ip_to_geolocate = None
         use_backtrack_country = False
         backtrack_country = None
-        
-        if vpn_backtrack_analysis and vpn_backtrack_analysis.probable_real_ip:
-            # Check if this IP is the same as the VPN endpoint (happens when backtracking can't separate IP)
+
+        if webmail_real_ip:
+            # PRIORITY 1: v2 webmail extraction found real IP before VPN layer
+            ip_to_geolocate = webmail_real_ip
+            print(f"  [PRIORITY 1 - v2] Geolocating webmail-extracted real IP: {ip_to_geolocate}")
+
+        elif vpn_backtrack_analysis and vpn_backtrack_analysis.probable_real_ip:
+            # PRIORITY 2: VPN backtracking found a probable real IP
             is_same_as_vpn = False
             if proxy_analysis and proxy_analysis.chain:
                 for chain_item in proxy_analysis.chain:
                     if chain_item.ip == vpn_backtrack_analysis.probable_real_ip and chain_item.is_obfuscation:
                         is_same_as_vpn = True
                         break
-            
-            # If it's the VPN endpoint, use inferred country instead of geolocating the VPN IP
+
             if is_same_as_vpn and vpn_backtrack_analysis.probable_country:
                 use_backtrack_country = True
                 backtrack_country = vpn_backtrack_analysis.probable_country
-                print(f"  [VPN BACKTRACK] Using inferred country (VPN endpoint detected): {backtrack_country}")
+                print(f"  [PRIORITY 2 - VPN BACKTRACK] Using inferred country: {backtrack_country}")
                 print(f"     Confidence: {vpn_backtrack_analysis.backtracking_confidence:.0%}")
             else:
-                # Actually different IP, geolocate it
                 ip_to_geolocate = vpn_backtrack_analysis.probable_real_ip
-                print(f"  Using VPN backtracking result: {ip_to_geolocate}")
+                print(f"  [PRIORITY 2 - VPN BACKTRACK] Geolocating: {ip_to_geolocate}")
+
         elif attacker_real_ip:
             ip_to_geolocate = attacker_real_ip
             print(f"  Using real IP extraction result: {ip_to_geolocate}")
@@ -3414,7 +3521,8 @@ class CompletePipeline:
             geolocation_results=geolocation_results,
             attribution_analysis=attribution_analysis,
             real_ip_analysis=real_ip_analysis,
-            vpn_backtrack_analysis=vpn_backtrack_analysis
+            vpn_backtrack_analysis=vpn_backtrack_analysis,
+            webmail_extraction=webmail_extraction
         )
         
         print("\n[STAGE COMPLETE] All stages finished successfully")
