@@ -79,7 +79,7 @@ except ImportError:
 
 # Import v2: Webmail Real-IP Extraction (Gmail/Yahoo/Outlook header leak detection)
 try:
-    from webMailRealIpExtrator import WebmailRealIPExtractor, WebmailExtractionResult, run_webmail_extraction
+    from webmailRealIpExtractor import WebmailRealIPExtractor, WebmailExtractionResult, run_webmail_extraction
     WEBMAIL_EXTRACTOR_AVAILABLE = True
 except ImportError:
     WEBMAIL_EXTRACTOR_AVAILABLE = False
@@ -3237,9 +3237,22 @@ class CompletePipeline:
         print("\n[GEOLOCATION] Enriching IPs with geolocation data...")
         geolocation_results = None
         
-        # SKIP early geolocation if VPN detected - handle it after backtracking
-        if proxy_analysis.obfuscation_count > 0:
-            print("  [VPN] Skipping initial geolocation - VPN backtracking will handle attribution")
+        # Always geolocate — even VPN IPs to get city-level data for report
+        if proxy_analysis.obfuscation_count > 0 and self.geolocation_enricher:
+            try:
+                # Geolocate the VPN endpoint so we have city/coords for the report
+                _vpn_ips = [ip for ip in unique_ips if ip]
+                if _vpn_ips:
+                    _vpn_geo = self.geolocation_enricher.enrich_multiple_ips(_vpn_ips)
+                    if _vpn_geo:
+                        for _ip, _g in _vpn_geo.items():
+                            if _g and _g.city:
+                                print(f"  VPN endpoint geo: {_ip} → {_g.city}, {_g.country}")
+                        # Store as interim so final block can merge
+                        geolocation_results = _vpn_geo
+            except Exception as _eg:
+                if self.verbose:
+                    print(f"  [WARNING] VPN geo lookup failed: {_eg}")
         elif self.geolocation_enricher:
             try:
                 # PRIORITY: If we identified a real attacker IP, ONLY geolocate that
@@ -3471,22 +3484,34 @@ class CompletePipeline:
             print(f"  Using real IP extraction result: {ip_to_geolocate}")
         
         if use_backtrack_country:
-            # Use inferred country from backtracking (timezone, behavior analysis, etc.)
-            geolocation_results = {vpn_backtrack_analysis.probable_real_ip: type('obj', (object,), {
-                'country': backtrack_country,
-                'country_code': 'INFERRED',
-                'city': 'Unknown',
-                'latitude': None,
-                'longitude': None,
-                'timezone': 'Unknown',
-                'asn': 'Unknown',
-                'provider': 'Unknown',
-                'isp': 'Unknown',
-                'accuracy_radius_km': None,
-                'confidence': vpn_backtrack_analysis.backtracking_confidence,
-                'sources': ['VPN Backtracking']
-            })()} if vpn_backtrack_analysis.probable_real_ip else None
-            print(f"  [+] ATTACKER LOCATION: {backtrack_country} (Inferred)")
+            # Backtracking inferred country but not a distinct IP.
+            # Geolocate the VPN endpoint to get city/coords, then override country
+            # with the backtrack-inferred real country.
+            _bt_ip = vpn_backtrack_analysis.probable_real_ip
+            if _bt_ip and self.geolocation_enricher:
+                try:
+                    _bt_geo = self.geolocation_enricher.enrich_multiple_ips([_bt_ip])
+                    if _bt_geo and _bt_ip in _bt_geo and _bt_geo[_bt_ip]:
+                        _g = _bt_geo[_bt_ip]
+                        # Inject the inferred real country (override VPN exit country)
+                        try:
+                            _g.country = backtrack_country
+                            _g.confidence = max(_g.confidence,
+                                                vpn_backtrack_analysis.backtracking_confidence)
+                        except AttributeError:
+                            pass  # read-only dataclass — use as-is
+                        geolocation_results = {_bt_ip: _g}
+                        print(f"  [+] VPN endpoint: {_g.city}, {_g.country} "
+                              f"(real country inferred: {backtrack_country})")
+                        if hasattr(_g, 'latitude') and _g.latitude:
+                            print(f"     Coordinates: {format_coordinates(_g.latitude, _g.longitude)}")
+                        print(f"     Backtrack confidence: {vpn_backtrack_analysis.backtracking_confidence:.0%}")
+                    else:
+                        geolocation_results = {}
+                except Exception as _eg2:
+                    if self.verbose:
+                        print(f"  [WARNING] Backtrack geo failed: {_eg2}")
+            print(f"  [+] REAL ATTACKER COUNTRY (inferred): {backtrack_country}")
         elif ip_to_geolocate and self.geolocation_enricher:
             try:
                 geolocation_results = self.geolocation_enricher.enrich_multiple_ips([ip_to_geolocate])
