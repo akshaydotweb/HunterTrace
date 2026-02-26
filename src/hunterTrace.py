@@ -3875,15 +3875,45 @@ SETUP:
     # BATCH MODE
     if args.target == "batch" or (args.target and str(args.target).startswith('/') and Path(args.target).is_dir()):
         mail_dir = args.path if args.path else (args.target if args.target != "batch" else None)
-        
+
+        # ── v3: Campaign intelligence layer ──────────────────────────────
+        # If hunterTraceV3.py is available, run the full v3 pipeline
+        # which adds: campaign correlation, actor profiling, attack graph,
+        # MITRE mapping.  Falls back to v1 BatchProcessor if not present.
+        if WEBMAIL_EXTRACTOR_AVAILABLE:
+            try:
+                from hunterTraceV3 import HunterTraceV3
+                print("[v3] Campaign Intelligence Mode — using HunterTraceV3")
+
+                # Determine output directory
+                if args.json:
+                    out_dir = str(Path(args.json).parent)
+                elif mail_dir:
+                    out_dir = str(Path(mail_dir) / "v3_output")
+                else:
+                    out_dir = "./v3_output"
+
+                v3 = HunterTraceV3(
+                    verbose          = args.verbose,
+                    skip_enrichment  = args.skip_enrichment,
+                    output_dir       = out_dir,
+                )
+                v3_report = v3.run_batch(mail_dir)
+                if v3_report:
+                    v3_report.print_executive_summary()
+                return
+            except ImportError:
+                print("[v3] hunterTraceV3.py not found — falling back to v1 batch mode")
+
+        # v1 fallback
         processor = BatchProcessor(mail_dir=mail_dir, verbose=args.verbose, skip_enrichment=args.skip_enrichment)
-        
+
         if processor.process_all_emails():
             processor.correlate_campaigns()
-            
+
             output_file = args.json if args.json else "soc_report.json"
             processor.export_json_report(output_file)
-        
+
         return
     
     # SINGLE EMAIL MODE
