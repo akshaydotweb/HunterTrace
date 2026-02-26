@@ -299,316 +299,57 @@ class AttackGraphBuilder:
     # ─────────────────────────────────────────────────────────────────────
     # EXPORT: Self-contained HTML / D3.js
     # ─────────────────────────────────────────────────────────────────────
-
     def export_html(self, graph: AttackGraph, output_path: str) -> str:
-        """
-        Export self-contained HTML with D3.js force-directed graph.
-        No server, no dependencies — open directly in browser.
-        """
-        nodes_json = json.dumps([
-            {
-                "id":    n.id,
-                "label": n.label,
-                "type":  n.type,
-                "color": n.color,
-                "size":  n.size,
-                "meta":  {k: str(v) for k, v in n.metadata.items()},
-            }
-            for n in graph.nodes
-        ], indent=2)
 
-        edges_json = json.dumps([
-            {
-                "source": e.source,
-                "target": e.target,
-                "rel":    e.relationship,
-                "color":  e.color,
-                "weight": e.weight,
-                "label":  e.label,
-            }
-            for e in graph.edges
-        ], indent=2)
+      nodes_json = json.dumps([
+          {
+              "id": n.id,
+              "label": n.label,
+              "type": n.type,
+              "color": n.color,
+              "size": n.size,
+              "meta": {k: str(v) for k, v in n.metadata.items()},
+          }
+          for n in graph.nodes
+      ], indent=2)
 
-        meta = graph.metadata
-        html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>HunterTrace v3 — Attack Infrastructure Graph</title>
-<script src="https://d3js.org/d3.v7.min.js"></script>
-<style>
-  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{ background: #0d1117; color: #c9d1d9; font-family: 'Segoe UI', monospace; }}
+      edges_json = json.dumps([
+          {
+              "source": e.source,
+              "target": e.target,
+              "rel": e.relationship,
+              "color": e.color,
+              "weight": e.weight,
+              "label": e.label,
+          }
+          for e in graph.edges
+      ], indent=2)
 
-  #header {{
-    padding: 14px 24px;
-    background: #161b22;
-    border-bottom: 1px solid #30363d;
-    display: flex; align-items: center; gap: 16px;
-  }}
-  #header h1 {{ font-size: 16px; color: #58a6ff; font-weight: 600; }}
-  #header .stats {{ font-size: 12px; color: #8b949e; }}
-  #header .badge {{
-    background: #21262d; border: 1px solid #30363d;
-    border-radius: 4px; padding: 2px 8px; font-size: 11px; color: #c9d1d9;
-  }}
+      meta = graph.metadata
 
-  #main {{ display: flex; height: calc(100vh - 50px); }}
+      legend_html = "".join(
+          f'<div class="legend-item">'
+          f'<div class="legend-dot" style="background:{color}"></div>'
+          f'<span class="legend-label">{ntype}</span>'
+          f'</div>'
+          for ntype, color in NODE_COLORS.items()
+      )
 
-  #sidebar {{
-    width: 280px; min-width: 220px;
-    background: #161b22; border-right: 1px solid #30363d;
-    padding: 16px; overflow-y: auto; font-size: 12px;
-  }}
-  #sidebar h3 {{ color: #58a6ff; font-size: 12px; text-transform: uppercase;
-                 letter-spacing: 0.08em; margin-bottom: 10px; }}
-  .legend-item {{ display: flex; align-items: center; gap: 8px; margin: 5px 0; }}
-  .legend-dot {{ width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }}
-  #node-info {{
-    margin-top: 20px; padding: 12px;
-    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
-    min-height: 100px;
-  }}
-  #node-info h4 {{ color: #f0f6fc; font-size: 12px; margin-bottom: 8px; }}
-  #node-info .attr {{ color: #8b949e; font-size: 11px; margin: 3px 0; }}
-  #node-info .attr span {{ color: #c9d1d9; }}
-
-  #graph-area {{ flex: 1; position: relative; overflow: hidden; }}
-  svg {{ width: 100%; height: 100%; }}
-
-  .node circle, .node rect, .node polygon {{
-    stroke: #30363d; stroke-width: 1.5px; cursor: pointer;
-    transition: opacity 0.15s;
-  }}
-  .node:hover circle, .node:hover rect, .node:hover polygon {{ stroke: #fff; stroke-width: 2.5px; }}
-  .node text {{
-    font-size: 10px; fill: #c9d1d9; text-anchor: middle;
-    pointer-events: none; dominant-baseline: middle;
-  }}
-  .node.highlighted circle, .node.highlighted rect {{ stroke: #f0f6fc; stroke-width: 3px; }}
-
-  .link {{ fill: none; stroke-opacity: 0.55; }}
-  .link:hover {{ stroke-opacity: 1; }}
-  .link-label {{ font-size: 9px; fill: #8b949e; pointer-events: none; }}
-
-  #controls {{
-    position: absolute; bottom: 16px; right: 16px;
-    display: flex; gap: 8px;
-  }}
-  .ctrl-btn {{
-    background: #21262d; border: 1px solid #30363d; border-radius: 6px;
-    color: #c9d1d9; padding: 6px 12px; cursor: pointer; font-size: 12px;
-  }}
-  .ctrl-btn:hover {{ background: #30363d; }}
-
-  #search-box {{
-    position: absolute; top: 12px; right: 16px;
-    background: #21262d; border: 1px solid #30363d; border-radius: 6px;
-    color: #c9d1d9; padding: 6px 10px; font-size: 12px; width: 200px;
-    outline: none;
-  }}
-</style>
-</head>
-<body>
-
-<div id="header">
-  <h1>⚡ HunterTrace v3 — Attack Infrastructure Graph</h1>
-  <span class="badge">{meta.get('total_actors', 0)} actor(s)</span>
-  <span class="badge">{meta.get('total_emails', 0)} email(s)</span>
-  <span class="badge">{meta.get('node_count', 0)} nodes</span>
-  <span class="badge">{meta.get('edge_count', 0)} edges</span>
-  <span class="stats">Generated: {meta.get('generated_at', '')[:19]}</span>
-</div>
-
-<div id="main">
-  <div id="sidebar">
-    <h3>Node Types</h3>
-    {''.join(f'<div class="legend-item"><div class="legend-dot" style="background:{color}"></div>{ntype}</div>'
-             for ntype, color in NODE_COLORS.items())}
-
-    <div id="node-info">
-      <h4>Click a node for details</h4>
-    </div>
-  </div>
-
-  <div id="graph-area">
-    <svg id="svg"></svg>
-    <input id="search-box" placeholder="Search nodes…" autocomplete="off">
-    <div id="controls">
-      <button class="ctrl-btn" onclick="resetZoom()">⟳ Reset</button>
-      <button class="ctrl-btn" onclick="toggleLabels()">🏷 Labels</button>
-    </div>
-  </div>
-</div>
-
-<script>
-const RAW_NODES = {nodes_json};
-const RAW_EDGES = {edges_json};
-
-// ── D3 setup ──────────────────────────────────────────────────────────
-const svg    = d3.select('#svg');
-const width  = () => document.getElementById('graph-area').clientWidth;
-const height = () => document.getElementById('graph-area').clientHeight;
-
-const zoom = d3.zoom()
-  .scaleExtent([0.15, 4])
-  .on('zoom', e => container.attr('transform', e.transform));
-svg.call(zoom);
-
-const container = svg.append('g');
-let showLabels  = true;
-
-// Arrow markers
-svg.append('defs').selectAll('marker')
-  .data(['default', 'real'])
-  .enter().append('marker')
-    .attr('id', d => `arrow-${{d}}`)
-    .attr('viewBox', '0 -4 8 8')
-    .attr('refX', 18).attr('refY', 0)
-    .attr('markerWidth', 6).attr('markerHeight', 6)
-    .attr('orient', 'auto')
-  .append('path')
-    .attr('d', 'M0,-4L8,0L0,4')
-    .attr('fill', d => d === 'real' ? '#E63946' : '#555');
-
-// ── Simulation ────────────────────────────────────────────────────────
-const sim = d3.forceSimulation(RAW_NODES)
-  .force('link', d3.forceLink(RAW_EDGES)
-    .id(d => d.id)
-    .distance(d => d.rel === 'sent_via' ? 80 : d.rel === 'leaked_real_ip' ? 60 : 120)
-    .strength(0.4))
-  .force('charge', d3.forceManyBody().strength(d => d.type === 'actor' ? -400 : -180))
-  .force('center', d3.forceCenter(width() / 2, height() / 2))
-  .force('collision', d3.forceCollide(d => d.size + 8));
-
-// ── Edges ─────────────────────────────────────────────────────────────
-const link = container.append('g').attr('class', 'links')
-  .selectAll('line')
-  .data(RAW_EDGES).enter().append('line')
-    .attr('class', 'link')
-    .attr('stroke', d => d.color)
-    .attr('stroke-width', d => Math.max(1, d.weight * 2.5))
-    .attr('marker-end', d => `url(#arrow-${{d.rel === 'leaked_real_ip' ? 'real' : 'default'}})`);
-
-// Edge labels
-const linkLabel = container.append('g')
-  .selectAll('text')
-  .data(RAW_EDGES.filter(e => e.label)).enter().append('text')
-    .attr('class', 'link-label')
-    .text(d => d.label);
-
-// ── Nodes ─────────────────────────────────────────────────────────────
-const node = container.append('g').attr('class', 'nodes')
-  .selectAll('.node')
-  .data(RAW_NODES).enter().append('g')
-    .attr('class', 'node')
-    .call(d3.drag()
-      .on('start', (e, d) => {{ if (!e.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; }})
-      .on('drag',  (e, d) => {{ d.fx = e.x; d.fy = e.y; }})
-      .on('end',   (e, d) => {{ if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }}))
-    .on('click', showNodeInfo);
-
-// Shapes per type
-node.each(function(d) {{
-  const g = d3.select(this);
-  const r = d.size / 2;
-  if (d.type === 'actor') {{
-    // Diamond
-    g.append('polygon')
-      .attr('points', `0,${{-r*1.2}} ${{r}},0 0,${{r*1.2}} ${{-r}},0`)
-      .attr('fill', d.color);
-  }} else if (d.type === 'email') {{
-    g.append('rect')
-      .attr('x', -r).attr('y', -r/1.5).attr('width', r*2).attr('height', r*1.3)
-      .attr('rx', 3).attr('fill', d.color);
-  }} else if (d.type === 'asn') {{
-    const pts = [0, -r*1.1, r*0.95, r*0.55, -r*0.95, r*0.55];
-    g.append('polygon')
-      .attr('points', `${{pts[0]}},${{pts[1]}} ${{pts[2]}},${{pts[3]}} ${{pts[4]}},${{pts[5]}}`)
-      .attr('fill', d.color);
-  }} else {{
-    g.append('circle').attr('r', r).attr('fill', d.color);
-  }}
-}});
-
-// Labels
-const labels = node.append('text')
-  .each(function(d) {{
-    const lines = d.label.split('\\n');
-    const el    = d3.select(this);
-    lines.forEach((line, i) => {{
-      el.append('tspan')
-        .attr('x', 0)
-        .attr('dy', i === 0 ? `${{-(lines.length - 1) * 0.55}}em` : '1.1em')
-        .text(line);
-    }});
-  }});
-
-// ── Tick ──────────────────────────────────────────────────────────────
-sim.on('tick', () => {{
-  link
-    .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
-    .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
-
-  linkLabel
-    .attr('x', d => (d.source.x + d.target.x) / 2)
-    .attr('y', d => (d.source.y + d.target.y) / 2);
-
-  node.attr('transform', d => `translate(${{d.x}},${{d.y}})`);
-}});
-
-// ── Node info panel ───────────────────────────────────────────────────
-function showNodeInfo(e, d) {{
-  const panel = document.getElementById('node-info');
-  let html = `<h4>${{d.label.replace('\\n', ' ')}}</h4>`;
-  html += `<div class="attr">Type: <span>${{d.type}}</span></div>`;
-  Object.entries(d.meta || {{}}).forEach(([k, v]) => {{
-    if (v) html += `<div class="attr">${{k}}: <span>${{v}}</span></div>`;
-  }});
-  panel.innerHTML = html;
-
-  // Highlight connected
-  const connectedIds = new Set([d.id]);
-  RAW_EDGES.forEach(e => {{
-    if (e.source.id === d.id || e.source === d.id) connectedIds.add(e.target.id || e.target);
-    if (e.target.id === d.id || e.target === d.id) connectedIds.add(e.source.id || e.source);
-  }});
-  node.classed('highlighted', n => connectedIds.has(n.id));
-  link.style('stroke-opacity', l =>
-    (l.source.id === d.id || l.target.id === d.id ||
-     l.source === d.id    || l.target === d.id) ? 1.0 : 0.15);
-}}
-
-// ── Controls ──────────────────────────────────────────────────────────
-function resetZoom() {{
-  svg.transition().duration(400)
-    .call(zoom.transform, d3.zoomIdentity.translate(width()/2, height()/2).scale(0.8));
-}}
-
-function toggleLabels() {{
-  showLabels = !showLabels;
-  labels.style('display', showLabels ? null : 'none');
-}}
-
-// ── Search ────────────────────────────────────────────────────────────
-document.getElementById('search-box').addEventListener('input', function() {{
-  const q = this.value.toLowerCase();
-  node.style('opacity', d =>
-    !q || d.label.toLowerCase().includes(q) || d.id.toLowerCase().includes(q) ? 1 : 0.15);
-}});
-
-// Initial zoom
-setTimeout(() => svg.call(zoom.transform,
-  d3.zoomIdentity.translate(width()*0.5, height()*0.5).scale(0.75)), 200);
-</script>
-</body>
-</html>"""
-
-        path = Path(output_path)
-        path.write_text(html, encoding='utf-8')
-        return str(path.resolve())
-
+      template = Path("./src/html/attackerGraph.html").read_text(encoding="utf-8")
+      html = (
+          template
+          .replace("__NODES_JSON__", nodes_json)
+          .replace("__EDGES_JSON__", edges_json)
+          .replace("{{TOTAL_ACTORS}}", str(meta.get("total_actors", 0)))
+          .replace("{{TOTAL_EMAILS}}", str(meta.get("total_emails", 0)))
+          .replace("{{TOTAL_NODES}}", str(meta.get("node_count", 0)))
+          .replace("{{TOTAL_EDGES}}", str(meta.get("edge_count", 0)))
+          .replace("{{GENERATED_AT}}", meta.get("generated_at", "")[:16])
+          .replace("{{LEGEND_ITEMS}}", legend_html)
+      )
+      
+      Path(output_path).write_text(html, encoding="utf-8")
+      return str(Path(output_path).resolve())
     # ─────────────────────────────────────────────────────────────────────
     # EXPORT: GraphML (Gephi / Maltego compatible)
     # ─────────────────────────────────────────────────────────────────────
