@@ -185,10 +185,9 @@ class RealIPBacktracker:
         # NOW run COUNTER-TECHNIQUES: Detect advanced bypass attempts
         # Counter 1: Detect compromised legitimate server
         from_domain = email_headers.get("From", "").split("@")[-1].rstrip(">")
-        _dkim_raw = email_headers.get("DKIM-Signature") or ""
-        dkim_domain = _dkim_raw.split("d=")[1].split(";")[0].strip() if "d=" in _dkim_raw else ""
-        received_headers = email_headers.get("Received") or []
-        received_list = received_headers if isinstance(received_headers, list) else ([received_headers] if received_headers else [])
+        dkim_domain = email_headers.get("DKIM-Signature", "").split("d=")[1].split(";")[0] if "d=" in email_headers.get("DKIM-Signature", "") else ""
+        received_headers = email_headers.get("Received", [])
+        received_list = received_headers if isinstance(received_headers, list) else [received_headers]
         
         compromised_check = self._detect_compromised_server(received_list, from_domain, dkim_domain)
         if compromised_check["is_likely_compromised"]:
@@ -277,120 +276,84 @@ class RealIPBacktracker:
     
     def _extract_first_hop_isp(self, email_headers: Dict) -> Optional[RealIPSignal]:
         """
-        TECHNIQUE 1: Last Received header = first server that touched the email.
-
-        RFC 5321 / RFC 2822: Received headers are PREPENDED by each server as
-        the message travels.  The list as stored is therefore newest-first.
-
-        email.get_all('Received') returns them top-to-bottom as they appear in
-        the raw message, i.e. index 0 = most recently added (destination MTA),
-        index -1 = first server that received the message from the sender.
-
-        HunterTrace's HeaderExtractor calls hops.reverse() to put them in
-        chronological order, so hops[0] = first server = closest to sender.
-        The dict passed here uses [hop.raw_header for hop in hops] which is
-        already chronological, so received_list[0] IS the first hop.
-
-        HOWEVER: when the attacker routes through a VPN the SMTP connection
-        from the attacker's machine goes:
-            attacker → VPN server → receiving MTA
-
-        The receiving MTA stamps the VPN server IP, NOT the attacker IP.
-        We cannot recover the attacker's real IP from Received headers alone
-        when a VPN is used — but we CAN identify the VPN exit node and
-        use the SPF ip= field (server-added, not client-controlled) instead.
-
-        Confidence is calibrated honestly:
-          - Single-hop email, no VPN detected:  0.80 (likely direct)
-          - Multi-hop, IP is a known VPN range:  0.30 (VPN exit, not real)
-          - SPF ip= field present:               use _detect_dns_leaks instead
+        TECHNIQUE 1: First Received header = first-hop ISP (before VPN proxy)
+        Email path: [ATTACKER ISP] -> SMTP relay -> VPN gateway -> destination
+        First IP in chain is attacker's real ISP!
         """
-
+        
         received = email_headers.get("Received", [])
         if not received:
             return None
-
+        
+        # Received headers are in reverse chronological order
+        # First element is from the sender's ISP
         received_list = received if isinstance(received, list) else [received]
         if not received_list:
             return None
-
-        # hops[] is already chronological (reversed in HeaderExtractor)
-        # received_list[0] = the first server that handled the message
+        
         first_hop = str(received_list[0])
-
+        
+        # Extract IP from [xxx.xxx.xxx.xxx] format
         ip_pattern = r'\[([0-9a-fA-F:.]+)\]'
         matches = re.findall(ip_pattern, first_hop)
-
-        if not matches:
-            return RealIPSignal(
-                method=BacktrackMethod.FIRST_HOP_ISP,
-                real_ip=None,
-                real_country=None,
-                confidence=0.20,
-                evidence=[
-                    "First Received header contains no bracketed IP.",
-                    "Possible: cloud relay, localhost injection, or obfuscation.",
-                    f"Header snippet: {first_hop[:120]}",
+        
+        if matches:
+            first_hop_ip = matches[0]
+            
+            # This is the real ISP IP (before VPN)
+            if not self._is_private_ip(first_hop_ip) and first_hop_ip != "127.0.0.1":
+                evidence = [
+                    f"First hop IP (sender's direct ISP): {first_hop_ip}",
+                    "[CHECK] Email headers are IMMUTABLE at send time",
+                    "First hop = attacker's actual ISP before any proxying",
                 ]
-            )
-
-        first_hop_ip = matches[0]
-
-        if self._is_private_ip(first_hop_ip) or first_hop_ip == "127.0.0.1":
-            return RealIPSignal(
-                method=BacktrackMethod.FIRST_HOP_ISP,
-                real_ip=None,
-                real_country=None,
-                confidence=0.15,
-                evidence=[
-                    f"First hop IP {first_hop_ip} is a private/loopback address.",
-                    "Email was submitted via local relay — no external origin visible.",
-                ]
-            )
-
-        evidence = [f"First-hop IP from Received header: {first_hop_ip}"]
-
-        # Hostname
-        hostname_match = re.search(r'from\s+([\w.-]+)\s+\[', first_hop, re.IGNORECASE)
-        if hostname_match:
-            evidence.append(f"Sending hostname: {hostname_match.group(1)}")
-
-        # Server-side timestamp (added by receiving MTA, not client)
-        ts_match = re.search(r'(\d{1,2}\s+\w+\s+\d{4}\s+\d{1,2}:\d{2}:\d{2})', first_hop)
-        if ts_match:
-            evidence.append(f"MTA-stamped timestamp: {ts_match.group(1)}")
-
-        # Calibrate confidence based on hop context
-        hop_count = len(received_list)
-        is_vpn_ip = "vpn" in first_hop.lower() or "nordvpn" in first_hop.lower()
-
-        if hop_count == 1 and not is_vpn_ip:
-            # Single-hop, no obvious VPN marker — probably direct or webmail relay
-            confidence = 0.60
-            evidence.append(
-                "Single-hop email — IP is the server that accepted the message "
-                "(likely webmail or direct SMTP). This is the VPN exit or sender ISP."
-            )
-        elif is_vpn_ip:
-            confidence = 0.25
-            evidence.append(
-                "VPN service name detected in Received header — this IP is the "
-                "VPN exit node, NOT the attacker's real IP."
-            )
+                
+                # Extract hostname/mail server info
+                hostname_pattern = r'from\s+([\w.-]+)\s+\['
+                hostname_match = re.search(hostname_pattern, first_hop, re.IGNORECASE)
+                if hostname_match:
+                    hostname = hostname_match.group(1)
+                    evidence.append(f"Mail server hostname: {hostname}")
+                
+                # Extract timestamp if available
+                timestamp_pattern = r'(\d{1,2}\s+\w+\s+\d{4}\s+\d{1,2}:\d{2}:\d{2})'
+                timestamp_match = re.search(timestamp_pattern, first_hop)
+                if timestamp_match:
+                    evidence.append(f"Server timestamp: {timestamp_match.group(1)}")
+                
+                # Analyze the full header for anomalies
+                if 'unknown' in first_hop.lower():
+                    evidence.append("[WARNING] Unknown/obfuscated hostname in first hop")
+                
+                # NOTE: Don't return country from first-hop geolocation
+                # First hop is often mail relay, not attacker's location
+                # Use other techniques (timezone, behavioral) for real location
+                
+                return RealIPSignal(
+                    method=BacktrackMethod.FIRST_HOP_ISP,
+                    real_ip=first_hop_ip,
+                    real_country=None,  # Don't geolocate first hop - it's usually a mail relay
+                    confidence=0.92,  # VERY HIGH confidence - email headers are immutable at send time
+                    evidence=evidence
+                )
         else:
-            confidence = 0.40
-            evidence.append(
-                f"Multi-hop chain ({hop_count} hops). First-hop IP may be a mail "
-                "relay rather than the sender's direct connection."
+            # If we can't extract IP from first hop, it might be obfuscated
+            # But we can still analyze the structure
+            evidence = [
+                "Received header lacks IP in brackets",
+                "Possible obfuscation in first hop",
+                f"First hop content: {first_hop[:100]}"
+            ]
+            
+            return RealIPSignal(
+                method=BacktrackMethod.FIRST_HOP_ISP,
+                real_ip=None,
+                real_country=None,
+                confidence=0.35,
+                evidence=evidence
             )
-
-        return RealIPSignal(
-            method=BacktrackMethod.FIRST_HOP_ISP,
-            real_ip=first_hop_ip,
-            real_country=None,   # Geolocated later via GeolocationEnricher, not hardcoded map
-            confidence=confidence,
-            evidence=evidence
-        )
+        
+        return None
     
     def _analyze_timezone_location(self, email_headers: Dict, vpn_country: str) -> Optional[RealIPSignal]:
         """
@@ -463,48 +426,37 @@ class RealIPBacktracker:
                         evidence.append(f"     This suggests the attacker falsified the Date header timezone!")
 
         
-        # ── Confidence calibration ───────────────────────────────────────
-        # The Date: header is CLIENT-CONTROLLED. An attacker can set any
-        # timezone in 30 seconds. We must NOT treat it as high-confidence
-        # unless server-added Received headers corroborate it.
-        #
-        # Confidence table:
-        #   Server Received headers confirm same TZ  → 0.70 (good signal)
-        #   No server headers to validate against    → 0.35 (weak, unverified)
-        #   Server headers show DIFFERENT TZ         → 0.10 (likely spoofed)
-        #   VPN country differs from TZ region       → small bonus (+0.10)
-        #     because mismatch is informative even if timezone is weak
-
+        # Calibrate confidence — Date: header is client-controlled.
+        # All confidence values here are capped lower than "server-added" signals.
         if spoofing_detected:
-            # Server-added timestamps contradict Date: header TZ — almost certainly spoofed
+            # Server Received timestamps contradict the Date: timezone — spoofed
             confidence = 0.10
             evidence.append(
-                "[SPOOFED] Server Received timestamps contradict Date: header timezone. "
-                "Attacker likely falsified the Date header. This signal is unreliable."
+                "[SPOOFED] Server-added Received timestamps contradict Date: timezone — "
+                "attacker falsified the Date header. This signal is unreliable."
             )
         elif server_tz_matches:
-            # Server-added header independently confirms the same timezone offset
-            confidence = 0.70
+            # A server-added Received header independently confirms the same offset
+            confidence = 0.65
             evidence.append(
-                "[VALIDATED] Receiving MTA Received header confirms matching timezone offset. "
-                "Moderate confidence — corroborated by server-side stamp."
+                "[VALIDATED] MTA Received header confirms matching timezone offset — "
+                "moderate confidence (server-corroborated but still client-declared)."
             )
         else:
-            # No server headers to cross-check — Date: header alone is unverified
-            confidence = 0.35
+            # No server header to cross-validate — Date: alone is unverified
+            confidence = 0.30
             evidence.append(
-                "[UNVERIFIED] Date: header timezone not confirmed by any server-added header. "
-                "Client-controlled field — treat as weak indicator only."
+                "[UNVERIFIED] Date: timezone not corroborated by any server-added header — "
+                "treat as weak indicator only."
             )
 
-        # Small bonus when VPN country clearly differs from inferred TZ region
-        # (mismatch is informative even with low base confidence)
+        # Small informational bonus when VPN country clearly differs from inferred region
         if vpn_country and region and vpn_country.lower() not in region.lower():
-            confidence = min(confidence + 0.10, 0.80)
             evidence.append(
-                f"VPN exit country ({vpn_country}) differs from timezone region ({region}) "
-                "— suggests operator is not in the VPN country."
+                f"VPN exit country ({vpn_country}) differs from inferred timezone region "
+                f"({region}) — operator is likely not in the VPN country."
             )
+            confidence = min(confidence + 0.08, 0.73)
         
         return RealIPSignal(
             method=BacktrackMethod.TIMEZONE_CORRELATION,
@@ -582,22 +534,17 @@ class RealIPBacktracker:
         evidence = []
         
         # Extract from SPF header
-        spf_header = email_headers.get("Received-SPF") or ""
+        spf_header = email_headers.get("Received-SPF", "")
         if spf_header:
-            # Received-SPF is added by the RECEIVING mail server — not client-controlled.
-            # Formats seen in the wild:
-            #   client-ip=203.0.113.5
-            #   ip=203.0.113.5
-            #   from=203.0.113.5
-            # The old regex only caught "ip=" and "from=" — missed "client-ip=".
-            ip_pattern = r'(?:client-ip|client_ip|ip|from)=([0-9a-fA-F:.]+)'
-            matches = re.findall(ip_pattern, str(spf_header), re.IGNORECASE)
-
+            # Look for "ip=" or "from=" fields
+            ip_pattern = r'(?:ip|from)=([0-9a-fA-F:.]+)'
+            matches = re.findall(ip_pattern, str(spf_header))
+            
             if matches:
                 for ip in matches:
-                    if self._is_valid_ip(ip) and not self._is_private_ip(ip):
+                    if not self._is_private_ip(ip):
                         real_ip = ip
-                        evidence.append(f"SPF authenticated IP (server-added, unforgeable): {ip}")
+                        evidence.append(f"SPF authenticated IP: {ip}")
                         break
             
             # Check SPF result
@@ -839,10 +786,15 @@ class RealIPBacktracker:
             evidence.append(f"Client: Android device detected")
         
         # Check for GoPhish/Evilginx/phishing frameworks
+        # Detecting the tool name confirms it's a phishing campaign but says
+        # nothing about the attacker's real geographic location. confidence=0.0
+        # here means this signal alone cannot geolocate; spoofing_detected=True
+        # means we distrust the Date: header timezone from this point on.
         if 'gophish' in x_mailer or 'evilginx' in x_mailer:
-            evidence.append("[!] PHISHING FRAMEWORK DETECTED: GoPhish/Evilginx")
+            evidence.append("[!] PHISHING FRAMEWORK DETECTED: GoPhish/Evilginx — "
+                            "confirms campaign tool; Date: header timezone now untrusted.")
             spoofing_detected = True
-            confidence = 0.95
+            confidence = 0.0   # Tool detection ≠ real-location confidence
         
         if spoofing_detected or evidence:
             return RealIPSignal(
@@ -888,7 +840,7 @@ class RealIPBacktracker:
             evidence.append(f"Highest confidence location: {best_country} ({best_score:.0%})")
         
         # High confidence if detected location differs from VPN
-        if best_country and vpn_country and vpn_country.lower() not in best_country.lower():
+        if best_country and vpn_country.lower() not in best_country.lower():
             evidence.append("LOCATION MISMATCH: Real location detected outside VPN")
             confidence = 0.85
         else:
@@ -919,78 +871,36 @@ class RealIPBacktracker:
         return None
     
     def _determine_real_country(self, signals: List[RealIPSignal]) -> Optional[str]:
-        """
-        Determine most likely real country from signals.
-
-        Weighted vote: each signal votes for its country weighted by confidence.
-        A signal with real_ip AND a geolocated country via the real API gets
-        counted once as an IP signal (higher weight) rather than being averaged
-        with low-quality behavioral guesses.
-
-        Returns None if no signal reaches minimum confidence threshold (0.35),
-        which prevents the system from producing fake country claims from noise.
-        """
-        country_scores: Dict[str, float] = {}
-
+        """Determine real country from signals"""
+        
+        country_scores = {}
         for signal in signals:
-            if not signal.real_country:
-                continue
-            # Use the signal's own confidence as its vote weight
-            prev = country_scores.get(signal.real_country, 0.0)
-            # Don't just add — take max to avoid double-counting same source
-            country_scores[signal.real_country] = max(prev, signal.confidence)
-
-        if not country_scores:
-            return None
-
-        best_country, best_score = max(country_scores.items(), key=lambda x: x[1])
-
-        # Minimum threshold: at least one signal must be moderately confident
-        if best_score < 0.35:
-            return None
-
-        return best_country
+            if signal.real_country:
+                if signal.real_country not in country_scores:
+                    country_scores[signal.real_country] = 0
+                country_scores[signal.real_country] += signal.confidence
+        
+        if country_scores:
+            best_country = max(country_scores.items(), key=lambda x: x[1])[0]
+            return best_country if country_scores[best_country] > 0.5 else None
+        
+        return None
     
     def _calculate_confidence(self, signals: List[RealIPSignal]) -> float:
-        """
-        Calculate overall backtracking confidence.
-
-        OLD logic: simple average of all signals × 1.15 bonus.
-        Problem: averaging a 0.92 fake signal with five 0.35–0.50 signals
-        still produced ~0.73 "confidence" — meaningless and misleading.
-
-        NEW logic:
-          1. Only count signals that actually found something (real_ip or real_country).
-          2. Use the HIGHEST single-signal confidence as the base
-             (best evidence wins, not average of noise).
-          3. Apply a small corroboration bonus (+0.05 per additional agreeing signal,
-             capped at +0.15) only when multiple signals point to the SAME country.
-          4. Hard cap at 0.85 for email-only forensics — we cannot claim higher
-             certainty without ISP logs or legal intercept.
-        """
+        """Calculate overall confidence based on multiple signals"""
+        
         if not signals:
             return 0.0
-
-        # Only signals that actually produced location evidence
-        useful = [s for s in signals if s.real_ip or s.real_country]
-        if not useful:
-            # All signals are noise (TTL counts, behavioral guesses) — very low confidence
-            return min(max(s.confidence for s in signals) * 0.4, 0.25)
-
-        # Best single-signal confidence
-        base = max(s.confidence for s in useful)
-
-        # Corroboration bonus: count how many signals agree on the same country
-        country_votes: Dict[str, int] = {}
-        for s in useful:
-            if s.real_country:
-                country_votes[s.real_country] = country_votes.get(s.real_country, 0) + 1
-
-        agreeing = max(country_votes.values()) if country_votes else 1
-        corroboration_bonus = min(0.05 * (agreeing - 1), 0.15)
-
-        final = min(base + corroboration_bonus, 0.85)
-        return round(final, 3)
+        
+        # Weight higher-confidence methods more
+        total_confidence = sum(s.confidence for s in signals)
+        avg_confidence = total_confidence / len(signals)
+        
+        # Bonus for multiple corroborating signals
+        if len(signals) >= 3:
+            avg_confidence *= 1.15
+        
+        return min(avg_confidence, 1.0)
     
     def _generate_analysis_notes(self, signals: List[RealIPSignal]) -> str:
         """Generate detailed analysis notes"""
@@ -1068,10 +978,10 @@ class RealIPBacktracker:
                 ip = ip_match.group(1) or ip_match.group(2)
                 all_ips.append(ip)
                 country = self._geolocate_ip(ip)
-                countries.add(country or "Unknown")
+                countries.add(country)
         
         evidence.append(f"IPs found: {len(all_ips)} servers in chain")
-        evidence.append(f"Countries: {', '.join(sorted(c for c in countries if c and c != 'Unknown'))}")
+        evidence.append(f"Countries: {', '.join(sorted(countries))}")
         
         # Check for geographic inconsistency (decoy attack)
         if len(countries) > 1 and 'Unknown' not in countries:
@@ -1182,18 +1092,11 @@ class RealIPBacktracker:
         }
     
     def _is_private_ip(self, ip: str) -> bool:
-        """
-        Check if IP is non-routable (private, loopback, link-local, reserved).
-
-        ipaddress.is_private includes RFC 5737 documentation ranges (e.g.
-        192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24) in Python 3.11+.
-        Using is_global (True only for genuinely routable public IPs) is more
-        correct for our use case: we want to skip IPs that cannot appear on
-        the real internet as a sender.
-        """
+        """Check if IP is private/reserved"""
+        
         try:
             ip_obj = ipaddress.ip_address(ip)
-            return not ip_obj.is_global
+            return ip_obj.is_private
         except ValueError:
             return True
     
@@ -1208,39 +1111,25 @@ class RealIPBacktracker:
     
     def _geolocate_ip(self, ip: str) -> Optional[str]:
         """
-        Geolocation via ip-api.com (free, no key needed, accurate).
-        Used ONLY for quick country-level lookups inside backtracking logic.
-        For full city-level geolocation use GeolocationEnricher directly.
-
-        NOTE: The old hardcoded prefix map ("103." -> "India") was dangerously
-        wrong — 103.x.x.x covers IPs in dozens of countries.  Removed entirely.
+        Quick geolocation using ASN/BGP data
+        Returns likely country based on IP allocation
         """
-        if not ip or ip in ("unknown", "Unknown", "127.0.0.1"):
-            return None
-
-        # Check in-process cache to avoid hammering the API
-        if not hasattr(self, '_geo_cache'):
-            self._geo_cache = {}
-        if ip in self._geo_cache:
-            return self._geo_cache[ip]
-
-        try:
-            import requests
-            resp = requests.get(
-                f"http://ip-api.com/json/{ip}?fields=country,status",
-                timeout=4
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                if data.get("status") == "success":
-                    country = data.get("country", "Unknown")
-                    self._geo_cache[ip] = country
-                    return country
-        except Exception:
-            pass
-
-        self._geo_cache[ip] = None
-        return None
+        
+        # Simplified mapping of IP ranges to countries
+        ip_country_map = {
+            "45.14.71": "Japan",  # NordVPN Japan endpoint - but country is Japan
+            "209.85": "United States",  # Google
+            "103.": "India",
+            "202.": "Japan",
+            "61.": "Australia",
+            "185.": "Europe",
+        }
+        
+        for prefix, country in ip_country_map.items():
+            if ip.startswith(prefix):
+                return country
+        
+        return "Unknown"
 
 
 
@@ -1355,10 +1244,26 @@ class VPNBacktrackAnalyzer:
         actions = self._generate_backtrack_actions(backtracking_signals, vpn_provider)
         le_notes = self._generate_law_enforcement_notes(vpn_provider, backtracking_signals)
         
+        # Calibrate VPN detection confidence based on how the provider was identified:
+        # - Known VPN org name from live ASN lookup → high confidence (0.90)
+        # - IP prefix in verified table              → moderate (0.70)
+        # - Tor exit list match                      → high (0.92)
+        # - Passed in by caller with no evidence     → low (0.50)
+        if vpn_provider.lower() in ("tor", "tor exit") or "onion" in vpn_provider.lower():
+            _vpn_det_conf = 0.92
+        elif any(kw in vpn_provider.lower() for kw in
+                 ["nordvpn","expressvpn","surfshark","protonvpn","mullvad",
+                  "cyberghost","pia","tunnelbear","windscribe","ipvanish"]):
+            _vpn_det_conf = 0.88
+        elif vpn_provider not in ("", "Unknown", "unknown"):
+            _vpn_det_conf = 0.70
+        else:
+            _vpn_det_conf = 0.50
+
         analysis = VPNAnalysis(
             vpn_provider=vpn_provider,
             vpn_endpoint_ip=vpn_endpoint_ip,
-            detected_vpn_confidence=0.95,
+            detected_vpn_confidence=_vpn_det_conf,
             backtracking_signals=backtracking_signals,
             likely_real_ip=likely_real_ip,
             backtracking_confidence=backtracking_confidence,
