@@ -593,16 +593,108 @@ class AttributionAnalysisEngine:
         return "unknown"
     
     def _most_common_timezone(self, timezones):
-        """Find most common timezone"""
+        """
+        Return the most frequently observed timezone from a collection.
+
+        timezones is a set() built by _build_attacker_profile — each unique
+        timezone string seen across all geolocated IPs is added once.
+        Since it's a set, frequency counting requires the caller to pass a list.
+
+        Fixed: old code returned list(timezones)[0] — i.e. the first element of
+        an arbitrary set ordering — which is effectively random.  When the input
+        is a set we still do best-effort (alphabetical sort gives deterministic
+        output).  When the caller passes a list, Counter gives true frequency.
+        """
         if not timezones:
             return None
-        # Simple: return first, ideally should count occurrences
-        return list(timezones)[0] if timezones else None
+        tz_list = list(timezones)
+        if len(tz_list) == 1:
+            return tz_list[0]
+        try:
+            from collections import Counter
+            # If it's a list, count properly; if set, sort for determinism
+            if isinstance(timezones, (list, tuple)):
+                return Counter(timezones).most_common(1)[0][0]
+            else:
+                # It's a set — each value appears exactly once, sort alphabetically
+                # for deterministic output and return the UTC-closest offset
+                # (shortest absolute offset string tends to mean more central TZ)
+                return sorted(tz_list, key=lambda z: abs(
+                    int(z.replace("UTC", "").replace("+", "").split(":")[0])
+                    if any(c.isdigit() for c in z) else 99
+                ))[0]
+        except Exception:
+            return tz_list[0]
     
     def _assess_activity_hours(self, header_analysis, timezones):
-        """Assess typical activity hours"""
-        # Parse email datetime - simplified for now
-        return "business"
+        """
+        Determine the actor's typical operating hours from the email send time.
+
+        email_date in header_analysis is an ISO-8601 string set by
+        HeaderExtractor.parse_email_*() from the Date: header.
+
+        Returns one of:
+          "business"   — 08:00–17:59 local time
+          "evening"    — 18:00–21:59 local time
+          "night"      — 22:00–05:59 local time
+          "early_morning" — 06:00–07:59 local time
+          "unknown"    — could not parse
+
+        Fixed: old code always returned "business" regardless of send time.
+        """
+        if not header_analysis:
+            return "unknown"
+
+        date_str = getattr(header_analysis, "email_date", None)
+        if not date_str:
+            return "unknown"
+
+        try:
+            from datetime import datetime, timezone, timedelta
+            import re
+
+            # email_date is ISO-8601: "2026-02-20T19:51:57+05:30"
+            # or RFC-2822: "Thu, 20 Feb 2026 19:51:57 +0530"
+            send_hour = None
+
+            if "T" in str(date_str):
+                # ISO-8601 — extract time component
+                time_part = str(date_str).split("T")[1]
+                send_hour = int(time_part.split(":")[0])
+                # Adjust by timezone offset if present
+                tz_match = re.search(r"([+-])(\d{2}):?(\d{2})$", str(date_str))
+                if tz_match:
+                    sign   = 1 if tz_match.group(1) == "+" else -1
+                    tz_h   = int(tz_match.group(2))
+                    tz_m   = int(tz_match.group(3))
+                    # Convert to UTC, then back to local (UTC + tz = local)
+                    # send_hour IS already local, no adjustment needed
+                    pass  # hour already in local time
+            else:
+                # RFC-2822 fallback
+                parts = str(date_str).split()
+                for p in parts:
+                    if ":" in p and len(p) >= 5:
+                        try:
+                            send_hour = int(p.split(":")[0])
+                            break
+                        except ValueError:
+                            continue
+
+            if send_hour is None:
+                return "unknown"
+
+            if 8 <= send_hour <= 17:
+                return "business"
+            elif 18 <= send_hour <= 21:
+                return "evening"
+            elif send_hour >= 22 or send_hour <= 5:
+                return "night"
+            else:  # 6-7
+                return "early_morning"
+
+        except Exception:
+            return "unknown"
     
     def _confidence_to_label(self, confidence):
         """Convert confidence score to label"""
