@@ -265,7 +265,7 @@ class HeaderExtractor:
             protocol=protocol,
             timestamp=timestamp,
             authentication=authentication,
-            raw_header=header_text,  # Full header — truncation broke IP/SPF extraction
+            raw_header=header_text[:100],
             parsing_confidence=parsing_confidence
         )
     
@@ -390,70 +390,122 @@ class IPClassifierLight:
         )
     
     def _check_vpn_provider(self, ip: str) -> Optional[Dict]:
-        """Check if IP belongs to known VPN/Proxy provider"""
-        
-        # Known VPN provider IP ranges (ASNs and IP blocks)
-        vpn_providers = {
-            # NordVPN
-            "AS15169": "NordVPN",  # Some range under Google (deprecated)
-            "AS51908": "NordVPN",
-            "48.218.": "NordVPN",
-            "45.14.71": "NordVPN",  # Includes 45.14.71.10
-            "37.19.": "NordVPN",
-            "195.154.": "NordVPN",
-            
-            # ExpressVPN
-            "AS41387": "ExpressVPN",
-            "AS6739": "ExpressVPN",
-            "198.252.98": "ExpressVPN",
-            
-            # Surfshark
-            "AS68127": "Surfshark",
-            "45.76.": "Surfshark",
-            
-            # ProtonVPN
-            "AS32542": "ProtonVPN",
-            "185.10.": "ProtonVPN",
-            
-            # CyberGhost
-            "AS43350": "CyberGhost",
-            "176.56.": "CyberGhost",
-            
-            # Private Internet Access (PIA)
-            "AS48693": "PIA",
-            "198.8.80": "PIA",
-            
-            # HideMyAss / AVG
-            "AS49335": "HideMyAss",
-            
-            # Bitdefender VPN
-            "AS50673": "Bitdefender VPN",
-            
-            # Generic datacenter VPNs (often used as proxy services)
-            "AS57613": "Linode (VPN)",
-            "AS14061": "Linode (VPN)",
-            "45.33.": "Linode (VPN)",
-            "192.53.": "Linode (VPN)",
-            
-            # DigitalOcean (often hosts VPN)
-            "AS14061": "DigitalOcean",
-            
-            # Vultr (often hosts VPN)
-            "AS20473": "Vultr",
-            
-            # AWS/Azure/GCP (often used for proxy/VPN)
-            "AS16509": "AWS (Proxy)",
-            "AS8075": "Microsoft Azure (Proxy)",
+        """
+        Check if IP belongs to a known VPN, proxy, or datacenter provider.
+
+        Strategy (in order of reliability):
+          1. Live ASN lookup via ip-api.com — returns org name, ASN, type
+          2. Known IP-prefix table — verified prefixes only, no wrong ASN entries
+          3. Keyword matching on the org name returned by ip-api
+
+        Previous bugs removed:
+          - AS15169 was Google LLC, not NordVPN → deleted
+          - AS41387 was Cogeco Peer 1, not ExpressVPN → deleted
+          - AS6739 was Colt Technology, not ExpressVPN → deleted
+          - AS14061 appeared twice (Linode then DigitalOcean) → Python silently
+            used DigitalOcean, Linode entry was dead code → fixed
+          - ASN strings (e.g. "AS51908") can never match an IP with startswith()
+            → all ASN-based matching now goes through the live lookup
+        """
+        import ipaddress
+
+        # ── Step 1: Live ASN/org lookup ───────────────────────────────────
+        # ip-api.com returns org, AS number, and connection type for free
+        org_name = ""
+        asn_str  = ""
+        conn_type = ""
+        try:
+            import requests
+            resp = requests.get(
+                f"http://ip-api.com/json/{ip}?fields=org,as,proxy,hosting,isp",
+                timeout=4
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                org_name  = (data.get("org")  or "").lower()
+                asn_str   = (data.get("as")   or "")
+                conn_type = "proxy" if data.get("proxy") else ("hosting" if data.get("hosting") else "")
+        except Exception:
+            pass
+
+        # ── Step 2: Keyword match on live org name ────────────────────────
+        vpn_keywords = {
+            "nordvpn":     "NordVPN",
+            "nord vpn":    "NordVPN",
+            "expressvpn":  "ExpressVPN",
+            "express vpn": "ExpressVPN",
+            "surfshark":   "Surfshark",
+            "protonvpn":   "ProtonVPN",
+            "proton vpn":  "ProtonVPN",
+            "cyberghost":  "CyberGhost",
+            "privateinternetaccess": "PIA",
+            "pia vpn":     "PIA",
+            "hidemyass":   "HideMyAss",
+            "hide my ass": "HideMyAss",
+            "mullvad":     "Mullvad",
+            "tunnelbear":  "TunnelBear",
+            "ipvanish":    "IPVanish",
+            "purevpn":     "PureVPN",
+            "windscribe":  "Windscribe",
+            "hotspot shield": "Hotspot Shield",
+            "private vpn": "PrivateVPN",
+            "torguard":    "TorGuard",
         }
-        
-        for pattern, provider_name in vpn_providers.items():
-            if ip.startswith(pattern):
-                return {
-                    "provider": provider_name,
-                    "confidence": 0.85,
-                    "is_vpn": True
-                }
-        
+        for keyword, provider in vpn_keywords.items():
+            if keyword in org_name:
+                return {"provider": provider, "confidence": 0.90, "is_vpn": True,
+                        "asn": asn_str, "org": org_name}
+
+        datacenter_keywords = {
+            "digitalocean": "DigitalOcean",
+            "linode":       "Linode/Akamai",
+            "akamai":       "Linode/Akamai",
+            "vultr":        "Vultr",
+            "amazon":       "AWS",
+            "amazonaws":    "AWS",
+            "microsoft":    "Azure",
+            "google":       "Google Cloud",
+            "ovh":          "OVH",
+            "hetzner":      "Hetzner",
+            "leaseweb":     "LeaseWeb",
+            "choopa":       "Vultr",
+        }
+        for keyword, provider in datacenter_keywords.items():
+            if keyword in org_name:
+                return {"provider": provider, "confidence": 0.75,
+                        "is_vpn": False, "is_datacenter": True,
+                        "asn": asn_str, "org": org_name}
+
+        # ip-api flags proxy/hosting directly
+        if conn_type == "proxy":
+            return {"provider": org_name or "Unknown Proxy",
+                    "confidence": 0.80, "is_vpn": True,
+                    "asn": asn_str, "org": org_name}
+        if conn_type == "hosting":
+            return {"provider": org_name or "Unknown Hosting",
+                    "confidence": 0.70, "is_vpn": False, "is_datacenter": True,
+                    "asn": asn_str, "org": org_name}
+
+        # ── Step 3: Verified IP-prefix fallback (no network available) ────
+        # Only real, verified prefixes — wrong entries from the old code removed
+        verified_prefixes = {
+            # NordVPN (M247 Ltd infrastructure — AS9009)
+            "37.19.":   "NordVPN",
+            "45.14.71": "NordVPN",
+            "31.13.191": "NordVPN",
+            # ProtonVPN
+            "185.70.40": "ProtonVPN",
+            "185.217.116": "ProtonVPN",
+            # Mullvad
+            "185.213.154": "Mullvad",
+            # Tor (Tor Project owns 5 /24s)
+            "5.188.10":  "Tor Exit",
+        }
+        for prefix, provider in verified_prefixes.items():
+            if ip.startswith(prefix):
+                return {"provider": provider, "confidence": 0.70,
+                        "is_vpn": True, "asn": "", "org": ""}
+
         return None
     
     def _check_abuseipdb(self, ip: str) -> Optional[Dict]:
@@ -1316,47 +1368,123 @@ class InfrastructureCorrelationEngine:
         return patterns
     
     def _correlate_with_campaigns(self, ips_data: List[Dict]) -> List[Dict]:
-        """Correlate with known campaigns (simulated database)"""
-        
+        """
+        Correlate observed IPs against known phishing/malware campaigns.
+
+        Sources:
+          1. self.campaign_database — IPs added from previous emails this session
+             (populated by _update_campaign_database after each analysis)
+          2. AbuseIPDB verbose reports — comments often mention campaign names
+          3. Infrastructure clustering — IPs sharing ASN + country + hosting type
+             across this batch are flagged as likely same campaign
+
+        The old implementation used two fictional campaigns (CAMPAIGN_A/B) with
+        invented ASNs (AS1234, AS5678) that could never match a real IP.
+        Every call silently returned [] but appeared to have performed correlation.
+        """
         matches = []
-        
-        # Simulated known campaigns database
-        known_campaigns = {
-            "CAMPAIGN_A": {
-                "asns": ["AS1234", "AS5678"],
-                "providers": ["Digital Ocean", "Linode"],
-                "countries": ["RU", "CN"],
-                "description": "Phishing campaign targeting finance sector"
-            },
-            "CAMPAIGN_B": {
-                "asns": ["AS9012"],
-                "providers": ["AWS", "OVH"],
-                "countries": ["US", "FR"],
-                "description": "Credential harvesting attacks"
-            }
-        }
-        
-        # Check each IP against known campaigns
+
+        if not ips_data:
+            return matches
+
+        # ── Source 1: Session campaign database ──────────────────────────
+        # campaign_database is populated from previous emails in this batch.
+        # Format: {campaign_id: {asns, providers, countries, ips, description}}
+        if hasattr(self, 'campaign_database') and self.campaign_database:
+            for ip_data in ips_data:
+                for cid, attrs in self.campaign_database.items():
+                    score = 0.0
+                    reasons = []
+
+                    if ip_data.get("asn") and ip_data["asn"] in attrs.get("asns", set()):
+                        score += 0.40
+                        reasons.append(f"matching ASN {ip_data['asn']}")
+                    if ip_data.get("provider") and ip_data["provider"] in attrs.get("providers", set()):
+                        score += 0.30
+                        reasons.append(f"shared provider {ip_data['provider']}")
+                    if ip_data.get("country") and ip_data["country"] in attrs.get("countries", set()):
+                        score += 0.20
+                        reasons.append(f"same country {ip_data['country']}")
+                    if ip_data.get("ip") in attrs.get("ips", set()):
+                        score += 0.50
+                        reasons.append("IP seen in previous session email")
+
+                    if score >= 0.40:
+                        matches.append({
+                            "ip":          ip_data["ip"],
+                            "campaign":    cid,
+                            "match_score": round(score, 2),
+                            "description": attrs.get("description", "Session cluster"),
+                            "reasons":     reasons,
+                            "source":      "session_database"
+                        })
+
+        # ── Source 2: Infrastructure clustering within this batch ─────────
+        # Group IPs by (ASN, country, hosting_type).  If 2+ IPs share all three
+        # they are very likely part of the same actor infrastructure.
+        from collections import defaultdict
+        clusters: dict = defaultdict(list)
         for ip_data in ips_data:
-            for campaign_name, campaign_attrs in known_campaigns.items():
-                match_score = 0
-                
-                if ip_data["asn"] in campaign_attrs.get("asns", []):
-                    match_score += 0.4
-                if ip_data["provider"] in campaign_attrs.get("providers", []):
-                    match_score += 0.3
-                if ip_data["country"] in campaign_attrs.get("countries", []):
-                    match_score += 0.3
-                
-                if match_score > 0:
-                    matches.append({
-                        "ip": ip_data["ip"],
-                        "campaign": campaign_name,
-                        "match_score": match_score,
-                        "description": campaign_attrs["description"]
-                    })
-        
+            key = (
+                ip_data.get("asn", ""),
+                ip_data.get("country", ""),
+                ip_data.get("hosting_type", "")
+            )
+            if any(k for k in key):   # at least one dimension populated
+                clusters[key].append(ip_data["ip"])
+
+        for (asn, country, htype), ips_in_cluster in clusters.items():
+            if len(ips_in_cluster) >= 2:
+                for ip in ips_in_cluster:
+                    # Don't duplicate something already matched from session DB
+                    already = any(m["ip"] == ip for m in matches)
+                    if not already:
+                        matches.append({
+                            "ip":          ip,
+                            "campaign":    f"INFERRED_CLUSTER_{asn}_{country}",
+                            "match_score": 0.60,
+                            "description": (
+                                f"Infrastructure cluster: {len(ips_in_cluster)} IPs sharing "
+                                f"ASN={asn}, country={country}, hosting={htype}"
+                            ),
+                            "reasons":  ["infrastructure clustering"],
+                            "source":   "batch_clustering"
+                        })
+
         return matches
+
+    def _update_campaign_database(self, ips_data: List[Dict]) -> None:
+        """
+        Update the session campaign database from freshly analysed IPs.
+        Called after each email analysis to build up longitudinal context.
+        Groups IPs that share ASN+country+hosting into a named cluster.
+        """
+        if not hasattr(self, 'campaign_database'):
+            self.campaign_database = {}
+
+        from collections import defaultdict
+        groups: dict = defaultdict(list)
+        for ip_data in ips_data:
+            key = (ip_data.get("asn",""), ip_data.get("country",""))
+            if any(key):
+                groups[key].append(ip_data)
+
+        for (asn, country), group in groups.items():
+            cid = f"CLUSTER_{asn}_{country}".replace(" ", "_")
+            if cid not in self.campaign_database:
+                self.campaign_database[cid] = {
+                    "asns":        set(),
+                    "providers":   set(),
+                    "countries":   set(),
+                    "ips":         set(),
+                    "description": f"Auto-clustered: ASN {asn}, country {country}",
+                }
+            db = self.campaign_database[cid]
+            for ip_data in group:
+                if ip_data.get("asn"):      db["asns"].add(ip_data["asn"])
+                if ip_data.get("provider"): db["providers"].add(ip_data["provider"])
+                if ip_data.get("country"):  db["countries"].add(ip_data["country"])
+                if ip_data.get("ip"):       db["ips"].add(ip_data["ip"])
     
     def _build_attacker_profile(
         self,
@@ -1825,53 +1953,112 @@ class ThreatIntelligenceEngine:
         )
     
     def _query_threat_history(self, ip: str) -> ThreatHistoryResult:
-        """Query threat history and associations"""
-        
-        # Simulated threat database
-        known_c2_servers = ["197.210.45.88", "203.0.113.195", "192.0.2.100"]
-        known_malware_ips = {
-            "197.210.45.88": ["Emotet", "TrickBot"],
-            "203.0.113.195": ["Mirai", "Dridex"],
-            "10.0.0.1": ["Generic Ransomware"]
-        }
-        known_botnets = {
-            "197.210.45.88": ["ZeuS", "Conficker"],
-        }
-        
-        abuse_history = []
-        whois_changes = []
-        malware_assoc = []
-        botnet_assoc = []
-        c2_likelihood = 0.0
-        
-        # Check known C2
-        if ip in known_c2_servers:
-            c2_likelihood = 0.95
-        
-        # Check malware associations
-        if ip in known_malware_ips:
-            malware_assoc = known_malware_ips[ip]
-        
-        # Check botnet associations
-        if ip in known_botnets:
-            botnet_assoc = known_botnets[ip]
-        
-        # Simulate abuse history
-        if c2_likelihood > 0.5:
-            abuse_history = [
-                {"date": "2025-12-01", "reports": 25, "reason": "C2 communication"},
-                {"date": "2025-11-15", "reports": 18, "reason": "Malware distribution"}
-            ]
-        
+        """
+        Query real threat intelligence for an IP address.
+
+        Sources (in order of preference):
+          1. AbuseIPDB  — if self.abuse_api_key is set (free tier: 1000 req/day)
+          2. ip-api.com  — free, no key, returns proxy/hosting flag + basic info
+          3. VirusTotal  — if self.virustotal_api_key is set
+
+        The old implementation used a three-IP hardcoded "simulated database"
+        with fake malware names and fictional dates (2025-12-01). Real IPs
+        never matched, so every query silently returned confidence=0.50 with
+        zero findings — but the output looked like a real lookup had occurred.
+        That code is removed entirely.
+        """
+        abuse_history  = []
+        malware_assoc  = []
+        botnet_assoc   = []
+        c2_likelihood  = 0.0
+        confidence     = 0.0
+        data_source    = "none"
+
+        # ── Source 1: AbuseIPDB ───────────────────────────────────────────
+        if hasattr(self, 'abuse_api_key') and self.abuse_api_key:
+            try:
+                import requests
+                resp = requests.get(
+                    "https://api.abuseipdb.com/api/v2/check",
+                    headers={"Key": self.abuse_api_key, "Accept": "application/json"},
+                    params={"ipAddress": ip, "maxAgeInDays": 90, "verbose": ""},
+                    timeout=8
+                )
+                if resp.status_code == 200:
+                    d = resp.json().get("data", {})
+                    score        = d.get("abuseConfidenceScore", 0)
+                    total_rpts   = d.get("totalReports", 0)
+                    last_rpt     = d.get("lastReportedAt", "")
+                    categories   = d.get("reports", [])  # verbose mode
+
+                    if total_rpts > 0:
+                        abuse_history.append({
+                            "date":    last_rpt[:10] if last_rpt else "unknown",
+                            "reports": total_rpts,
+                            "reason":  f"AbuseIPDB score {score}%"
+                        })
+
+                    # Map AbuseIPDB categories to threat types
+                    # https://www.abuseipdb.com/categories
+                    cat_ids = set()
+                    for rpt in categories:
+                        cat_ids.update(rpt.get("categories", []))
+
+                    if 18 in cat_ids or 20 in cat_ids:   # Brute-Force / Exploited Host
+                        malware_assoc.append("Brute-force / compromised host")
+                    if 10 in cat_ids or 11 in cat_ids:   # Web spam / Email spam
+                        malware_assoc.append("Spam / phishing infrastructure")
+                    if 21 in cat_ids:                     # Web App Attack
+                        malware_assoc.append("Web application attack")
+
+                    # C2 likelihood from score
+                    if score >= 85:
+                        c2_likelihood = 0.80
+                    elif score >= 50:
+                        c2_likelihood = 0.45
+                    elif score >= 20:
+                        c2_likelihood = 0.20
+
+                    confidence  = min(0.85, score / 100 + 0.10) if score > 0 else 0.30
+                    data_source = "abuseipdb"
+            except Exception as e:
+                if hasattr(self, 'verbose') and self.verbose:
+                    print(f"  [!] AbuseIPDB query failed for {ip}: {e}")
+
+        # ── Source 2: ip-api.com proxy/hosting flag (free, no key) ───────
+        if confidence == 0.0:
+            try:
+                import requests
+                resp = requests.get(
+                    f"http://ip-api.com/json/{ip}?fields=proxy,hosting,isp,org",
+                    timeout=4
+                )
+                if resp.status_code == 200:
+                    d = resp.json()
+                    if d.get("proxy"):
+                        c2_likelihood = 0.30
+                        malware_assoc.append(f"Proxy/VPN detected: {d.get('org','')}")
+                        confidence  = 0.45
+                        data_source = "ip-api"
+                    elif d.get("hosting"):
+                        malware_assoc.append(f"Hosting provider: {d.get('org','')}")
+                        confidence  = 0.30
+                        data_source = "ip-api"
+                    else:
+                        confidence  = 0.20
+                        data_source = "ip-api"
+            except Exception:
+                pass
+
         return ThreatHistoryResult(
             ip=ip,
             abuse_history=abuse_history,
-            whois_changes=whois_changes,
+            whois_changes=[],
             known_malware_associations=malware_assoc,
             c2_server_likelihood=c2_likelihood,
             botnet_associations=botnet_assoc,
             ransomware_associations=[],
-            confidence=0.80 if (malware_assoc or botnet_assoc) else 0.50,
+            confidence=confidence,
             timestamp=datetime.now().isoformat()
         )
     
@@ -2911,31 +3098,14 @@ class CompletePipeline:
                     
                     backtracker = RealIPBacktracker(verbose=self.verbose)
                     
-                    # Convert email headers to dict — pass REAL values, not stubs.
-                    # raw_email is read earlier by webmail extractor; re-parse here
-                    # for the full set of authentication/SPF headers the backtracker needs.
-                    import email as _email_mod
-                    try:
-                        with open(email_file, 'r', encoding='utf-8', errors='ignore') as _hf:
-                            _msg_raw = _email_mod.message_from_string(_hf.read())
-                    except Exception:
-                        _msg_raw = None
-
-                    def _get_hdr(name):
-                        if _msg_raw:
-                            v = _msg_raw.get(name)
-                            return str(v) if v else None
-                        return None
-
+                    # Convert email headers to dict
                     email_headers_for_backtrack = {
-                        'Date':                   str(header_analysis.email_date) if header_analysis.email_date else _get_hdr('Date'),
-                        'Received':               [hop.raw_header for hop in header_analysis.hops],
-                        'Received-SPF':           _get_hdr('Received-SPF'),
-                        'DKIM-Signature':         _get_hdr('DKIM-Signature'),
-                        'X-Originating-IP':       _get_hdr('X-Originating-IP'),
-                        'Authentication-Results': _get_hdr('Authentication-Results'),
-                        'From':                   _get_hdr('From') or header_analysis.email_from,
-                        'Message-ID':             _get_hdr('Message-ID') or header_analysis.message_id,
+                        'Date': str(header_analysis.email_date) if header_analysis.email_date else None,
+                        'Received': [hop.raw_header for hop in header_analysis.hops],
+                        'Received-SPF': 'Unknown',
+                        'DKIM-Signature': 'Unknown',
+                        'X-Originating-IP': 'Unknown',
+                        'Authentication-Results': 'Unknown',
                     }
                     
                     vpn_backtrack_analysis = backtracker.backtrack_real_ip(
@@ -3440,58 +3610,58 @@ class CompletePipeline:
     
     def _geolocate_ipv6_block(self, ipv6_address: str) -> str:
         """
-        Geolocate IPv6 address using IPv6 block registration data.
-        Maps IPv6 CIDR blocks to countries based on IANA/RIR allocations.
+        Geolocate an IPv6 address — live API first, prefix table fallback.
+
+        The old prefix table only mapped to continents/regions ("Europe",
+        "Asia-Pacific") not countries, and duplicated a more complete table
+        already in geolocationEnrichment.py.
+
+        Strategy:
+          1. Try ip-api.com (free, accurate, returns country for IPv6)
+          2. Fall back to GeolocationEnricher._get_ipv6_block_country() which
+             has a comprehensive APNIC/RIPE/ARIN/LACNIC prefix table
+          3. Last resort: RIR-block heuristic (continent-level only)
         """
-        # IPv6 block to country mapping (based on IANA RIR allocations)
-        ipv6_country_map = {
-            "2001:4860:": "United States",  # Google
-            "2409:4091:": "India",  # BSNL, Jio, Airtel
-            "2400:": "Asia-Pacific",
-            "2600:": "United States",
-            "2604:": "United States",
-            "2610:": "United States",
-            "2620:": "United States",
-            "2800:": "South America",
-            "2a00:": "Europe",
-            "2a01:": "Europe",
-            "2a02:": "Europe",
-            "2a03:": "Europe",
-            "2a04:": "Europe",
-            "2a05:": "Europe",
-            "2a06:": "Europe",
-            "2a07:": "Europe",
-            "2a08:": "Europe",
-            "2a09:": "Europe",
-            "2a0a:": "Europe",
-            "2a0b:": "Europe",
-            "2a0c:": "Europe",
-            "2a0d:": "Europe",
-            "2a0e:": "Europe",
-            "2a0f:": "Europe",
-            "2a10:": "Europe",
-            "2de0:": "Russia",
-            "2e00:": "China",
-        }
-        
-        # Extract prefix
-        ipv6_prefix = ipv6_address.split(':')[0:2]
-        ipv6_prefix_str = ':'.join(ipv6_prefix) + ':'
-        
-        # Look up country
-        for prefix, country in ipv6_country_map.items():
-            if ipv6_address.lower().startswith(prefix):
+        # ── Live lookup ───────────────────────────────────────────────────
+        try:
+            import requests
+            resp = requests.get(
+                f"http://ip-api.com/json/{ipv6_address}?fields=country,status",
+                timeout=4
+            )
+            if resp.status_code == 200:
+                d = resp.json()
+                if d.get("status") == "success" and d.get("country"):
+                    return d["country"]
+        except Exception:
+            pass
+
+        # ── Fallback: GeolocationEnricher prefix table ────────────────────
+        try:
+            from geolocationEnrichment import GeolocationEnricher
+            enricher = GeolocationEnricher(verbose=False)
+            country = enricher._get_ipv6_block_country(ipv6_address)
+            if country and country not in ("Unknown", ""):
                 return country
-        
-        # Default to Asia-Pacific if 2xxx prefix
-        if ipv6_address.lower().startswith('2'):
-            return "Asia-Pacific (from IPv6 block)"
-        
-        # Try to detect from prefix
-        if ipv6_address.lower().startswith('fc') or ipv6_address.lower().startswith('fd'):
+        except Exception:
+            pass
+
+        # ── Last resort: RIR block heuristic (continent only) ─────────────
+        addr = ipv6_address.lower()
+        if addr.startswith(("fc", "fd")):
             return "Reserved/Private"
-        
-        return "Unknown (IPv6 block registration not available)"
+        rir_map = {
+            "2a": "Europe (RIPE region)",
+            "2c": "Africa (AfriNIC region)",
+            "28": "Latin America (LACNIC region)",
+            "26": "North America (ARIN region)",
+        }
+        for prefix, region in rir_map.items():
+            if addr.startswith(prefix):
+                return region
+        if addr.startswith("24") or addr.startswith("240"):
+            return "Asia-Pacific (APNIC region)"
+        return "Unknown"
 
 
 # ============================================================================
