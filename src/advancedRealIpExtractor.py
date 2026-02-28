@@ -179,21 +179,44 @@ class AdvancedRealIPExtractor:
     }
     
     # Tier-1 ISP Ranges (Technique 3)
+    # ── TIER-1 ISP identification ─────────────────────────────────────────
+    # Static IP ranges are unreliable — ISPs renumber frequently and VPN
+    # providers buy blocks across many providers.
+    #
+    # REMOVED (wrong entries):
+    #   "Verizon":        "4.0.0.0/8"    → 4.x.x.x is Lumen/Level3, not Verizon
+    #   "Deutsche Telekom": "3.0.0.0/8"  → 3.x.x.x is Amazon AWS, not DT
+    #
+    # ISP identification is now performed via live ASN lookup (ip-api.com org field).
+    # The table below is a minimal fallback for offline mode only — only ranges
+    # that are definitively single-owner at the /8 level are included.
     TIER1_ISP_RANGES = {
-        "Verizon": ["4.0.0.0/8"],
-        "AT&T": ["12.0.0.0/8"],
-        "Lemontel": ["150.254.0.0/16"],
-        "Vodafone": ["77.48.0.0/13"],
-        "Deutsche Telekom": ["3.0.0.0/8"],
+        "AT&T":      ["12.0.0.0/8"],      # AT&T WorldNet Services — verified /8 owner
+        "Vodafone":  ["77.48.0.0/13"],    # Vodafone Germany — verified RIPE allocation
+        # Note: Lumentel/Level3 owns 4.0.0.0/8, not Verizon. Removed.
+        # Note: Deutsche Telekom does NOT own 3.0.0.0/8 (that is Amazon). Removed.
     }
-    
-    # Datacenter Ranges (Technique 3)
+
+    # ── Datacenter ranges ─────────────────────────────────────────────────
+    # These are approximate starting points only. Cloud providers publish their
+    # full IP ranges as JSON:
+    #   AWS:   https://ip-ranges.amazonaws.com/ip-ranges.json
+    #   Azure: https://www.microsoft.com/en-us/download/details.aspx?id=56519
+    #   GCP:   https://www.gstatic.com/ipranges/cloud.json
+    #
+    # For production accuracy, fetch these at startup. The ranges below cover
+    # only a small fraction of actual cloud IP space — use org-name matching
+    # from ip-api.com as the primary method; these are offline fallback only.
     DATACENTER_RANGES = {
-        "AWS": ["52.0.0.0/8"],
-        "Azure": ["13.64.0.0/11"],
-        "Google Cloud": ["34.64.0.0/10"],
-        "DigitalOcean": ["104.131.0.0/16"],
-        "Linode": ["45.33.0.0/16"],
+        "AWS":          ["52.0.0.0/8", "54.0.0.0/8", "3.0.0.0/8",
+                         "18.0.0.0/8", "34.192.0.0/10"],
+        "Azure":        ["13.64.0.0/11", "40.64.0.0/10", "52.96.0.0/13"],
+        "Google Cloud": ["34.64.0.0/10", "35.184.0.0/13", "104.154.0.0/15"],
+        "DigitalOcean": ["104.131.0.0/16", "159.65.0.0/16", "138.68.0.0/16"],
+        "Linode":       ["45.33.0.0/16",  "45.56.0.0/16",  "139.162.0.0/16"],
+        "Vultr":        ["45.63.0.0/16",  "108.61.0.0/16", "207.246.0.0/16"],
+        "Hetzner":      ["5.9.0.0/16",    "78.46.0.0/15",  "95.216.0.0/16"],
+        "OVH":          ["135.125.0.0/16","51.38.0.0/16",  "51.68.0.0/16"],
     }
     
     # Mail Provider IP Ranges (Technique 2.5 - CRITICAL: Detects when attackers use legitimate mail services)
