@@ -252,6 +252,18 @@ class HunterTraceV3:
 
         self.mitre_mapper = MitreMapper()
 
+        # Import attribution engine (Bayesian ACI + tier system)
+        try:
+            from attributionEngine import AttributionEngine, integrate_with_v3
+            self._attribution_engine    = AttributionEngine(verbose=verbose)
+            self._integrate_attribution = integrate_with_v3
+        except ImportError as e:
+            if verbose:
+                print(f"[v3] attributionEngine.py not found — "
+                      f"Bayesian attribution unavailable: {e}")
+            self._attribution_engine    = None
+            self._integrate_attribution = None
+
         # Import v1/v2 pipeline (optional — not needed for offline mode)
         self._pipeline_class = None
         try:
@@ -266,10 +278,11 @@ class HunterTraceV3:
                 print("[v3] hunterTrace.py not found — offline-only mode")
 
         # State
-        self._results:  Dict[str, Any] = {}   # file → CompletePipelineResult
-        self._report:   Any = None
-        self._profiles: Dict[str, Any] = {}   # actor_id → ActorTTPProfile
-        self._graph:    Any = None
+        self._results:       Dict[str, Any] = {}   # file → CompletePipelineResult
+        self._report:        Any = None
+        self._profiles:      Dict[str, Any] = {}   # actor_id → ActorTTPProfile
+        self._graph:         Any = None
+        self._attribution:   Dict[str, Any] = {}   # actor_id → AttributionResult
 
     # ─────────────────────────────────────────────────────────────────────
     # PUBLIC API
@@ -316,6 +329,11 @@ class HunterTraceV3:
                     self._results[eml_file.name] = result
                     self.correlator.ingest(eml_file.name, result)
                     print(f"  ✓ Ingested into v3 correlator")
+                    # Feed into attribution engine for per-email signal accumulation
+                    if self._attribution_engine:
+                        # We don't know the actor_id yet (assigned post-correlation)
+                        # so we store the result — attribution is done post-correlation
+                        pass
                 else:
                     print(f"  ✗ Pipeline returned no result")
             except Exception as e:
@@ -380,6 +398,48 @@ class HunterTraceV3:
             self._profiles[cluster.actor_id] = profile
             print(profile.analyst_brief())
 
+        # Step 2.5: Bayesian Attribution Engine
+        print(f"\n{'='*70}")
+        print("  [v3 STEP 2.5] Bayesian Attribution (ACI + Tier)")
+        print(f"{'='*70}")
+        if self._attribution_engine and self._profiles:
+            # Build geolocation map from all pipeline results
+            geo_map = {}
+            for result in self._results.values():
+                geo = getattr(result, "geolocation_results", None) or {}
+                geo_map.update(geo)
+
+            # Longitudinal accumulation:
+            # For each actor cluster, feed its emails into the engine in order.
+            # This updates the posterior incrementally — exactly how Bayesian
+            # inference should work: each new email refines the existing posterior.
+            for cluster in self._report.actor_clusters:
+                actor_id = cluster.actor_id
+                profile  = self._profiles.get(actor_id)
+
+                if profile:
+                    # Primary path: attribute from the full TTP profile
+                    # (uses consensus timezone/country/infra from all emails)
+                    ar = self._attribution_engine.attribute_from_profile(
+                        profile, geo_map
+                    )
+                else:
+                    # Fallback: accumulate directly from fingerprints
+                    for fp in cluster.fingerprints:
+                        self._attribution_engine.update_campaign_from_fingerprint(
+                            actor_id, fp, geo_map
+                        )
+                    ar = self._attribution_engine.finalize_campaign(actor_id)
+
+                self._attribution[actor_id] = ar
+                print(f"\n  [{actor_id}]")
+                print(ar.analyst_brief())
+        else:
+            if not self._attribution_engine:
+                print("  [SKIP] attributionEngine.py not available")
+            else:
+                print("  [SKIP] No actor profiles to attribute")
+
         # Step 3: Build attack graph
         print(f"\n{'='*70}")
         print("  [v3 STEP 3] Attack Graph")
@@ -397,10 +457,11 @@ class HunterTraceV3:
         self._write_outputs()
 
         report = V3Report(
-            correlation   = self._report,
-            actor_profiles= self._profiles,
-            attack_graph  = self._graph,
-            output_dir    = str(self.output_dir),
+            correlation          = self._report,
+            actor_profiles       = self._profiles,
+            attack_graph         = self._graph,
+            output_dir           = str(self.output_dir),
+            attribution_results  = self._attribution if self._attribution else None,
         )
 
         print(f"\n{'='*70}")
@@ -461,6 +522,17 @@ class HunterTraceV3:
             )
             print(f"  → MITRE layer:  {mitre_path.name}")
 
+            # 3b. Bayesian attribution results JSON
+            if self._attribution:
+                attr_path = self.output_dir / f"v3_attribution_{ts}.json"
+                attr_data = {
+                    actor_id: result.to_dict()
+                    for actor_id, result in self._attribution.items()
+                }
+                attr_path.write_text(json.dumps(attr_data, indent=2))
+                print(f"  → Attribution:  {attr_path.name}  "
+                      f"(Bayesian ACI + tier results)")
+
         # 4. Attack graph HTML
         if self._graph:
             graph_path = self.output_dir / f"v3_attack_graph_{ts}.html"
@@ -489,10 +561,11 @@ class HunterTraceV3:
 @dataclass
 class V3Report:
     """Container for all v3 outputs."""
-    correlation:    Any     # CorrelationReport
-    actor_profiles: Dict    # actor_id → ActorTTPProfile
-    attack_graph:   Any     # AttackGraph
-    output_dir:     str
+    correlation:         Any     # CorrelationReport
+    actor_profiles:      Dict    # actor_id → ActorTTPProfile
+    attack_graph:        Any     # AttackGraph
+    output_dir:          str
+    attribution_results: Dict = None  # actor_id → AttributionResult (from attributionEngine)
 
     def print_executive_summary(self):
         c = self.correlation
@@ -512,6 +585,12 @@ class V3Report:
                   f"({prof.infrastructure.opsec_score}/100)")
             if prof.temporal.likely_country:
                 print(f"    Country:    {prof.temporal.likely_country}")
+            # Bayesian attribution tier (if available)
+            if self.attribution_results and actor_id in self.attribution_results:
+                ar = self.attribution_results[actor_id]
+                print(f"    Attribution: Tier {ar.tier} ({ar.tier_label}) | "
+                      f"{ar.primary_region} | ACI={ar.aci.final_aci:.2f} | "
+                      f"{ar.aci_adjusted_prob:.0%} ACI-adjusted")
             print(f"    MITRE:      "
                   f"{', '.join(m.technique_id for m in prof.mitre_mappings)}")
             print()
