@@ -373,11 +373,14 @@ class AttributionAnalysisEngine:
             ))
         
         # Obfuscation evidence
+        # Confidence reflects certainty that obfuscation is present, not attribution certainty.
+        # Tor exit node detection (live list) → 0.92. VPN/proxy → 0.80 (ASN-based detection).
         if proxy_analysis.obfuscation_count > 0:
+            obfusc_conf = 0.92 if getattr(proxy_analysis, 'tor_detected', False) else 0.80
             evidence.append(EvidenceItem(
                 category="technical",
                 description=f"Detected {proxy_analysis.obfuscation_count} obfuscation layers (Tor/VPN/Proxy)",
-                confidence=0.95,
+                confidence=obfusc_conf,
                 severity="high",
                 stage_origin=3,
                 source="proxy_analysis"
@@ -400,14 +403,26 @@ class AttributionAnalysisEngine:
                 reasoning.append(f"Location: {location_conf:.0%} based on {len(valid_geolocs)} geolocations")
         
         # Infrastructure confidence
+        # Logic: if multiple IPs all resolve to the same ASN/organization, that
+        # is consistent evidence pointing at one actor infrastructure — higher confidence.
+        # Previous formula was INVERTED: 1.0 - (unique_asns/total_ips) produced
+        # HIGH confidence when IPs had DIVERSE ASNs (many different providers),
+        # and LOW confidence when all IPs shared the same ASN.
+        # Fixed: ratio of IPs that match the most-common ASN → high ratio = high confidence.
         infra_conf = 0.0
         if enrichment_results:
-            consistent_asns = len(set([e.whois_data.asn for e in enrichment_results.values() if e.whois_data.asn]))
+            from collections import Counter
+            asns = [e.whois_data.asn for e in enrichment_results.values() if e.whois_data.asn]
             total_ips = len(enrichment_results)
-            if total_ips > 0:
-                # More IPs from same ASN = more confident
-                infra_conf = 1.0 - (consistent_asns / total_ips)
-                reasoning.append(f"Infrastructure: {infra_conf:.0%} (consistency across {total_ips} IPs)")
+            if asns and total_ips > 0:
+                most_common_count = Counter(asns).most_common(1)[0][1]
+                # Fraction of IPs sharing the dominant ASN — scaled to 0.4–0.80 range
+                raw_ratio = most_common_count / total_ips
+                infra_conf = 0.40 + (raw_ratio * 0.40)   # 0.40 (no consensus) → 0.80 (all same ASN)
+                reasoning.append(
+                    f"Infrastructure: {infra_conf:.0%} "
+                    f"({most_common_count}/{total_ips} IPs share dominant ASN)"
+                )
         
         # Threat intel confidence
         threat_conf = 0.0
