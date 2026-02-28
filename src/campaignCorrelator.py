@@ -458,8 +458,11 @@ class SimilarityEngine:
         else:
             score = total_matched_weight / total_possible_weight
 
-        # Convert score → actor probability (slight curve up for high scores)
-        prob = min(0.99, score * 1.15 if score > 0.6 else score)
+        # Convert normalized score → actor-same probability.
+        # No artificial inflation: score already reflects signal match fraction.
+        # Hard cap at 0.92 — email-only forensics cannot reach certainty without
+        # network-layer evidence (ISP logs, court order, device seizure).
+        prob = min(0.92, score)
 
         if prob >= THRESHOLD_SAME_ACTOR:
             verdict = "SAME_ACTOR"
@@ -627,7 +630,10 @@ class ClusterBuilder:
             if v is not None
         )
         max_signals = len(fps) * 5
-        confidence = min(0.98, 0.60 + 0.38 * (signals_filled / max_signals if max_signals else 0))
+        # Cluster confidence: starts at 0.50 (single email), rises with signal richness.
+        # Cap at 0.85 — cluster membership is inferred, not proven. Hard attribution
+        # requires corroboration beyond email metadata alone.
+        confidence = min(0.85, 0.50 + 0.35 * (signals_filled / max_signals if max_signals else 0))
 
         # TTPs (behavioral observations)
         ttps = []
