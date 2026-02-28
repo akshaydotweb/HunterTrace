@@ -73,13 +73,26 @@ class RealIPExtractor:
     Extracts the true attacker IP address even when VPN/proxy obfuscation is used.
     """
     
-    # Known VPN/Proxy provider IP ranges (simplified - in production, use full databases)
-    KNOWN_VPN_PROVIDERS = {
-        "ExpressVPN": ["1.1.1.0/24"],
-        "NordVPN": ["2.2.2.0/24"],
-        "Surfshark": ["3.3.3.0/24"],
-        "ProtonVPN": ["4.4.4.0/24"],
-        "Private Internet Access": ["5.5.5.0/24"],
+    # VPN provider org-name keywords for matching against WHOIS/ip-api org field.
+    # Using keyword matching against live ASN data is far more accurate and
+    # future-proof than hardcoded IP ranges (VPN providers rotate their IP pools).
+    #
+    # OLD CODE REMOVED: sequential placeholder ranges (1.1.1.0/24 = Cloudflare DNS,
+    # 2.2.2.0/24, 3.3.3.0/24 etc.) were never real VPN ranges and would cause any
+    # Cloudflare-routed email to be misidentified as ExpressVPN.
+    KNOWN_VPN_PROVIDER_KEYWORDS = {
+        "NordVPN":              ["nordvpn", "nord vpn", "tefincom"],
+        "ExpressVPN":           ["expressvpn", "express vpn", "kape technologies"],
+        "Surfshark":            ["surfshark"],
+        "ProtonVPN":            ["protonvpn", "proton vpn", "proton ag"],
+        "Private Internet Access": ["privateinternetaccess", "pia vpn", "kape"],
+        "Mullvad":              ["mullvad"],
+        "CyberGhost":           ["cyberghost", "kape technologies"],
+        "TunnelBear":           ["tunnelbear"],
+        "Windscribe":           ["windscribe"],
+        "IPVanish":             ["ipvanish", "highwinds"],
+        "HideMyAss":            ["hidemyass", "hide my ass", "avast"],
+        "TorGuard":             ["torguard"],
     }
     
     # Datacenter IP ranges (likely proxy infrastructure)
@@ -264,9 +277,10 @@ class RealIPExtractor:
             # Try to identify VPN provider from IP or enrichment data
             for ip in vpn_ips:
                 if enrichment_data and ip in enrichment_data:
-                    org = enrichment_data[ip].get("organization", "")
-                    for provider, ranges in self.KNOWN_VPN_PROVIDERS.items():
-                        if provider.lower() in org.lower():
+                    org = (enrichment_data[ip].get("organization") or "").lower()
+                    # Match against keyword lists instead of fake IP ranges
+                    for provider, keywords in self.KNOWN_VPN_PROVIDER_KEYWORDS.items():
+                        if any(kw in org for kw in keywords):
                             vpn_provider = provider
                             break
         
