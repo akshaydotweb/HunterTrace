@@ -481,11 +481,14 @@ class ActorProfiler:
         mappings = []
 
         # T1566 — Phishing
+        # Confidence scales with number of corroborating emails: a single email
+        # is weaker evidence than a consistent multi-email campaign pattern.
+        t1566_conf = min(0.90, 0.65 + 0.05 * cluster.campaign_count)
         mappings.append(MITREMapping(
             technique_id   = "T1566.001",
             technique_name = "Spearphishing via Email",
             tactic         = "Initial Access",
-            confidence     = 0.95,
+            confidence     = round(t1566_conf, 2),
             evidence       = f"{cluster.campaign_count} phishing email(s) analysed",
         ))
 
