@@ -147,36 +147,21 @@ class AdvancedRealIPExtractor:
         'tor_exit_node': 'Known Tor exit node detected',
     }
     
-    # Known Tor exit nodes (for Technique 9)
-    TOR_EXIT_NODES = [
-        "109.200.50.0/24",
-        "195.154.60.0/24", 
-        "185.195.236.0/24",
-        "66.111.32.0/24",
-        "204.8.156.0/24",
-    ]
-    
-    # Technique 10: RESIP Provider signatures
-    RESIP_PROVIDERS = {
-        'SpeakEasy': {'risk_score': 0.95, 'networks': ['residential_pool_1']},
-        'PCRental': {'risk_score': 0.90, 'networks': ['residential_pool_2']},
-        'Luminati': {'risk_score': 0.85, 'networks': ['residential_network']},
-        'Bright': {'risk_score': 0.80, 'networks': ['proxy_residential']},
-    }
-    
-    # VPN Provider Database (Technique 1, 2)
-    VPN_PROVIDERS = {
-        "ExpressVPN": ["198.51.100.0/24"],
-        "NordVPN": ["195.154.1.0/24"],
-        "Surfshark": ["89.45.90.0/24"],
-        "CyberGhost": ["109.71.142.0/22"],
-        "ProtonVPN": ["185.217.116.0/22"],
-        "TunnelBear": ["192.241.239.0/24"],
-        "PrivateVPN": ["185.10.248.0/22"],
-        "Hotspot Shield": ["162.142.125.0/24"],
-        "Private Internet Access": ["165.227.1.0/24"],
-        "Mullvad": ["185.217.116.0/22"],
-    }
+    # ── Live IP database ─────────────────────────────────────────────────────
+    # TOR_EXIT_NODES, VPN_PROVIDERS, and RESIP_PROVIDERS were static tables
+    # with stale/wrong data.  All three are replaced by LiveIPDatabase which
+    # fetches from authoritative live sources:
+    #   - Tor exit nodes:   torproject.org (TTL 1h)
+    #   - Cloud ranges:     AWS/GCP/Azure published JSON feeds (TTL 24h)
+    #   - VPN/proxy:        ip-api.com live org+proxy flag lookup
+    #   - RESIP:            ip-api.com + org keyword matching
+    #
+    # Removed (wrong):
+    #   "ExpressVPN": ["198.51.100.0/24"]  → RFC 5737 documentation range
+    #   "Mullvad": ["185.217.116.0/22"]    → also listed under ProtonVPN (same /22)
+    #
+    # LiveIPDatabase is instantiated in __init__ and shared across all technique calls.
+    # ─────────────────────────────────────────────────────────────────────────
     
     # ── TIER-1 / RESIDENTIAL ISP RANGES ──────────────────────────────────
     # Primary method for ISP identification is live ASN lookup via ip-api.com
@@ -331,9 +316,19 @@ class AdvancedRealIPExtractor:
         ],
     }
     
-    def __init__(self, verbose: bool = False):
+    def __init__(self, verbose: bool = False, abuseipdb_key: str = None):
         self.verbose = verbose
         self.techniques_applied = []
+        # Live IP database — replaces all hardcoded static IP tables.
+        # Lazily imported so the module works without liveIpDatabase.py present.
+        try:
+            from liveIpDatabase import LiveIPDatabase
+            self.live_db = LiveIPDatabase(abuseipdb_key=abuseipdb_key, verbose=verbose)
+        except ImportError:
+            self.live_db = None
+            if verbose:
+                print("[AdvancedRealIPExtractor] liveIpDatabase.py not found — "
+                      "falling back to static CIDR tables")
     
     def extract_real_ip(
         self,
@@ -685,18 +680,36 @@ class AdvancedRealIPExtractor:
         
         org = enrichments.get('organization', '')
         
-        for provider, info in self.RESIP_PROVIDERS.items():
-            if provider.lower() in org.lower():
-                evidence.append(f"Residential proxy provider detected: {provider}")
-                evidence.append(f"Compromised host risk: {info['risk_score']:.0%}")
-                
+        # Use LiveIPDatabase for RESIP detection when available
+        if self.live_db and ip:
+            ip_info = self.live_db.enrich(ip)
+            if ip_info.is_proxy and ip_info.org:
+                evidence.append(f"Residential proxy provider detected: {ip_info.org}")
+                evidence.append(f"ip-api.com proxy flag — confidence {ip_info.confidence:.0%}")
                 return RESIPSignal(
                     is_residential_ip=True,
                     proxy_forwarding_detected=True,
-                    compromised_host_risk=info['risk_score'],
-                    typical_resip_provider=provider,
+                    compromised_host_risk=ip_info.confidence,
+                    typical_resip_provider=ip_info.org,
                 )
-        
+
+        # Fallback keyword matching on org name from enrichments
+        resip_keywords = {
+            "luminati": 0.90, "bright data": 0.90, "brightdata": 0.90,
+            "oxylabs": 0.88, "smartproxy": 0.85, "geosurf": 0.85,
+            "netnut": 0.82, "iproyal": 0.80, "proxyrack": 0.80,
+        }
+        for kw, risk in resip_keywords.items():
+            if kw in org.lower():
+                evidence.append(f"Residential proxy provider detected: {kw}")
+                evidence.append(f"Org-name keyword match — risk {risk:.0%}")
+                return RESIPSignal(
+                    is_residential_ip=True,
+                    proxy_forwarding_detected=True,
+                    compromised_host_risk=risk,
+                    typical_resip_provider=kw,
+                )
+
         return None
     
     def _technique_mail_provider_detection(self, ip: str, email_headers: dict,
@@ -727,36 +740,52 @@ class AdvancedRealIPExtractor:
         except ValueError:
             return {"is_mail_provider": False, "provider_name": None, "confidence": 0.0, "recommendation": f"Invalid IP: {ip}"}
         
-        # Check against all known mail provider CIDR ranges
+        # Step 1: Use LiveIPDatabase if available (checks both live cloud ranges + SPF CIDRs)
+        if self.live_db:
+            mail_name = self.live_db.get_mail_provider(ip)
+            if mail_name:
+                evidence.append(f"   MAIL PROVIDER DETECTED: {mail_name}")
+                evidence.append(f"   IP {ip} belongs to {mail_name} (SPF-verified CIDR)")
+                evidence.append(f"   This IP is NOT the attacker origin")
+                evidence.append(f"   Must analyze previous hop in Received chain")
+                return {
+                    "is_mail_provider": True, "provider_name": mail_name,
+                    "ip": ip, "cidr_matched": "live_db", "confidence": 0.92,
+                    "recommendation": f"SKIP {ip} - analyze previous Received header"
+                }
+            # Also check cloud provider — cloud IPs are not attacker direct origins
+            cloud_name = self.live_db.get_cloud_provider(ip)
+            if cloud_name:
+                evidence.append(f"   CLOUD PROVIDER DETECTED: {cloud_name}")
+                evidence.append(f"   IP {ip} is a {cloud_name} server (not direct attacker origin)")
+                return {
+                    "is_mail_provider": False, "provider_name": cloud_name,
+                    "is_cloud": True, "ip": ip, "cidr_matched": "live_db", "confidence": 0.88,
+                    "recommendation": f"{ip} is a cloud host — check for mail relay or attacker-controlled VPS"
+                }
+
+        # Step 2: Fallback — static MAIL_PROVIDER_RANGES CIDR table
         for provider_name, cidr_blocks in self.MAIL_PROVIDER_RANGES.items():
             for cidr_str in cidr_blocks:
                 try:
-                    cidr_network = ipaddress.ip_network(cidr_str, strict=False)
-                    if check_ip in cidr_network:
+                    if check_ip in ipaddress.ip_network(cidr_str, strict=False):
                         evidence.append(f"   MAIL PROVIDER DETECTED: {provider_name}")
-                        evidence.append(f"   IP {ip} belongs to {provider_name}")
-                        evidence.append(f"   This IP is NOT the attacker origin")
+                        evidence.append(f"   IP {ip} matched static SPF CIDR {cidr_str}")
                         evidence.append(f"   Must analyze previous hop in Received chain")
-                        
                         return {
-                            "is_mail_provider": True,
-                            "provider_name": provider_name,
-                            "ip": ip,
-                            "cidr_matched": cidr_str,
-                            "confidence": 1.0,
+                            "is_mail_provider": True, "provider_name": provider_name,
+                            "ip": ip, "cidr_matched": cidr_str, "confidence": 0.88,
                             "recommendation": f"SKIP {ip} - analyze previous Received header"
                         }
-                except ipaddress.NetmaskValueError:
+                except (ValueError, ipaddress.NetmaskValueError):
                     pass
-        
+
         # Not a known mail provider
         evidence.append(f"Origin IP {ip} is NOT a known mail provider (safe to geolocate)")
         return {
-            "is_mail_provider": False,
-            "provider_name": None,
-            "ip": ip,
-            "confidence": 1.0,
-            "recommendation": "Continue analysis - IP is not from known mail provider"
+            "is_mail_provider": False, "provider_name": None,
+            "ip": ip, "confidence": 0.75,
+            "recommendation": "Continue analysis - IP not from known mail provider"
         }
     
     def _extract_ip_from_received_header(self, received_header: str) -> Optional[str]:
