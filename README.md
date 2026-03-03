@@ -90,7 +90,17 @@ python src/hunterTrace.py path/to/email.eml --json report.json
 
 ## Demo
 
+## hunterTraceV3.py
+## The orchestrator. Two modes:
 
+### Process .eml files end-to-end
+python hunterTraceV3.py batch /path/to/emails/ --output ./v3_output/
+
+# Offline correlation from saved JSON reports
+python hunterTraceV3.py offline /path/to/reports/ --output ./v3_output/
+
+## hunterTrace.py — batch mode updated
+python hunterTrace.py batch /emails/ now automatically invokes v3 if hunterTraceV3.py is in the same directory. Falls back to v1 if not present.
 
 ### Example: Analyze a Single Email
 ```

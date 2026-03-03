@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HunterTrace v3 — Attack Infrastructure Graph</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:#fafafa;
+  color:#171717;
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Roboto',sans-serif;
+}
+
+/* HEADER */
+#header{
+  padding:20px 32px;
+  background:#fff;
+  border-bottom:1px solid #e5e5e5;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+}
+.header-left{display:flex;align-items:center;gap:12px}
+.logo{width:40px;height:auto}
+.title-group h1{font-size:18px;font-weight:600}
+.title-group p{font-size:12px;color:#737373}
+
+.header-stats{display:flex;gap:24px;font-size:13px;color:#404040}
+.divider{width:1px;height:16px;background:#e5e5e5}
+
+/* LAYOUT */
+#main{display:flex;height:calc(100vh - 73px)}
+#sidebar{
+  width:280px;
+  background:#fafafa;
+  border-right:1px solid #e5e5e5;
+  padding:24px;
+  overflow-y:auto;
+}
+#sidebar h3{
+  font-size:11px;
+  text-transform:uppercase;
+  letter-spacing:0.05em;
+  margin-bottom:16px;
+  color:#737373;
+}
+.legend-item{display:flex;gap:12px;margin:10px 0;align-items:center}
+.legend-dot{width:10px;height:10px;border-radius:2px}
+.legend-label{font-size:14px;font-weight:500;text-transform:capitalize}
+
+#node-info{
+  margin-top:32px;
+  padding-top:24px;
+  border-top:1px solid #e5e5e5;
+  font-size:12px;
+}
+
+#graph-area{flex:1;position:relative;background:#fff}
+svg{width:100%;height:100%}
+
+.node circle,.node rect,.node polygon{
+  stroke:#fff;
+  stroke-width:2px;
+  cursor:pointer;
+}
+.node text{
+  font-size:10px;
+  font-weight:500;
+  text-anchor:middle;
+  pointer-events:none;
+}
+
+.link{
+  fill:none;
+  stroke:#d4d4d4;
+  stroke-opacity:0.6;
+  stroke-width:1.5px;
+}
+.link-label{
+  font-size:9px;
+  fill:#a3a3a3;
+}
+
+#controls{
+  position:absolute;
+  bottom:24px;
+  right:24px;
+  display:flex;
+  gap:8px;
+}
+.ctrl-btn{
+  background:#fff;
+  border:1px solid #e5e5e5;
+  border-radius:8px;
+  padding:8px 16px;
+  cursor:pointer;
+  font-size:14px;
+}
+.ctrl-btn:hover{background:#fafafa}
+
+#search-box{
+  position:absolute;
+  top:24px;
+  right:24px;
+  width:256px;
+  padding:8px 16px;
+  border:1px solid #e5e5e5;
+  border-radius:8px;
+  font-size:14px;
+}
+</style>
+</head>
+
+<body>
+
+<div id="header">
+  <div class="header-left">
+    <img src="../assets/hunterTraceLogo.png" class="logo">
+    <div class="title-group">
+      <h1>HunterTrace</h1>
+      <p>Attack Infrastructure Graph</p>
+    </div>
+  </div>
+
+  <div class="header-stats">
+    <span><b>{{TOTAL_ACTORS}}</b> Actors</span>
+    <span><b>{{TOTAL_EMAILS}}</b> Emails</span>
+    <span><b>{{TOTAL_NODES}}</b> Nodes</span>
+    <span><b>{{TOTAL_EDGES}}</b> Edges</span>
+    <div class="divider"></div>
+    <span>{{GENERATED_AT}}</span>
+  </div>
+</div>
+
+<div id="main">
+
+<div id="sidebar">
+  <h3>Node Types</h3>
+  {{LEGEND_ITEMS}}
+
+  <div id="node-info">
+    <h4>Click a node for details</h4>
+  </div>
+</div>
+
+<div id="graph-area">
+  <svg id="svg"></svg>
+
+  <input id="search-box" placeholder="Search nodes…">
+
+  <div id="controls">
+    <button class="ctrl-btn" onclick="resetZoom()">Reset</button>
+    <button class="ctrl-btn" onclick="toggleLabels()">Labels</button>
+  </div>
+</div>
+
+</div>
+
+<script>
+
+/* DATA FROM PYTHON */
+const RAW_NODES = __NODES_JSON__;
+const RAW_EDGES = __EDGES_JSON__;
+
+/* D3 SETUP */
+const svg = d3.select("#svg");
+const width = document.getElementById("graph-area").clientWidth;
+const height = document.getElementById("graph-area").clientHeight;
+
+svg.attr("width", width).attr("height", height);
+
+const container = svg.append("g");
+
+const zoom = d3.zoom()
+  .scaleExtent([0.2,4])
+  .on("zoom", e => container.attr("transform", e.transform));
+svg.call(zoom);
+
+/* ARROW MARKERS */
+svg.append("defs").append("marker")
+  .attr("id","arrow")
+  .attr("viewBox","0 -4 8 8")
+  .attr("refX",18).attr("refY",0)
+  .attr("markerWidth",6).attr("markerHeight",6)
+  .attr("orient","auto")
+  .append("path")
+  .attr("d","M0,-4L8,0L0,4")
+  .attr("fill","#a3a3a3");
+
+/* SIMULATION */
+const sim = d3.forceSimulation(RAW_NODES)
+  .force("link", d3.forceLink(RAW_EDGES)
+    .id(d=>d.id)
+    .distance(120)
+    .strength(0.4))
+  .force("charge", d3.forceManyBody().strength(-350))
+  .force("center", d3.forceCenter(width/2,height/2))
+  .force("collision", d3.forceCollide(d=>d.size+8));
+
+/* LINKS */
+const link = container.append("g")
+  .selectAll("line")
+  .data(RAW_EDGES)
+  .enter()
+  .append("line")
+  .attr("class","link")
+  .attr("marker-end","url(#arrow)");
+
+/* LINK LABELS */
+const linkLabel = container.append("g")
+  .selectAll("text")
+  .data(RAW_EDGES.filter(e=>e.label))
+  .enter()
+  .append("text")
+  .attr("class","link-label")
+  .text(d=>d.label);
+
+/* NODES */
+const node = container.append("g")
+  .selectAll(".node")
+  .data(RAW_NODES)
+  .enter()
+  .append("g")
+  .attr("class","node")
+  .call(d3.drag()
+    .on("start",(e,d)=>{
+      if(!e.active) sim.alphaTarget(0.3).restart();
+      d.fx=d.x; d.fy=d.y;
+    })
+    .on("drag",(e,d)=>{ d.fx=e.x; d.fy=e.y; })
+    .on("end",(e,d)=>{
+      if(!e.active) sim.alphaTarget(0);
+      d.fx=null; d.fy=null;
+    }))
+  .on("click", showNodeInfo);
+
+/* SHAPES */
+node.each(function(d){
+  const g = d3.select(this);
+  const r = d.size/2;
+
+  if(d.type==="actor"){
+    g.append("polygon")
+      .attr("points",`0,${-r} ${r},0 0,${r} ${-r},0`)
+      .attr("fill",d.color);
+  }
+  else if(d.type==="email"){
+    g.append("rect")
+      .attr("x",-r)
+      .attr("y",-r/1.5)
+      .attr("width",r*2)
+      .attr("height",r*1.3)
+      .attr("rx",2)
+      .attr("fill",d.color);
+  }
+  else{
+    g.append("circle")
+      .attr("r",r)
+      .attr("fill",d.color);
+  }
+});
+
+/* LABELS */
+let showLabels=true;
+const labels=node.append("text").text(d=>d.label);
+
+/* TICK */
+sim.on("tick",()=>{
+  link
+    .attr("x1",d=>d.source.x)
+    .attr("y1",d=>d.source.y)
+    .attr("x2",d=>d.target.x)
+    .attr("y2",d=>d.target.y);
+
+  linkLabel
+    .attr("x",d=>(d.source.x+d.target.x)/2)
+    .attr("y",d=>(d.source.y+d.target.y)/2);
+
+  node.attr("transform",d=>`translate(${d.x},${d.y})`);
+});
+
+/* NODE INFO */
+function showNodeInfo(e,d){
+  const panel=document.getElementById("node-info");
+  let html=`<h4>${d.label}</h4><div>Type: <b>${d.type}</b></div>`;
+  Object.entries(d.meta||{}).forEach(([k,v])=>{
+    html+=`<div>${k.replace(/_/g," ")}: <b>${v}</b></div>`;
+  });
+  panel.innerHTML=html;
+}
+
+/* CONTROLS */
+function resetZoom(){
+  svg.transition().duration(400)
+    .call(zoom.transform,d3.zoomIdentity);
+}
+function toggleLabels(){
+  showLabels=!showLabels;
+  labels.style("display",showLabels?null:"none");
+}
+
+/* SEARCH */
+document.getElementById("search-box")
+.addEventListener("input",function(){
+  const q=this.value.toLowerCase();
+  node.style("opacity",d=>
+    !q || d.label.toLowerCase().includes(q) ? 1 : 0.15);
+});
+
+</script>
+</body>
+</html>

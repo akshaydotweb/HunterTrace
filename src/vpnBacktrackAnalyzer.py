@@ -426,24 +426,37 @@ class RealIPBacktracker:
                         evidence.append(f"     This suggests the attacker falsified the Date header timezone!")
 
         
-        # If VPN is different country = real location detected
-        if vpn_country and vpn_country.lower() != region.lower():
-            evidence.append(f"VPN endpoint: {vpn_country} (different timezone = real location elsewhere)")
-            
-            # Adjust confidence based on spoofing detection
-            if spoofing_detected:
-                confidence = 0.50  # LOW - timezone likely spoofed
-                evidence.append("[WARNING] WARNING: Timezone mismatch suggests potential spoofing. Confidence reduced.")
-            elif server_tz_matches:
-                confidence = 0.95  # VERY HIGH - server validates timezone
-                evidence.append("[CHECK] HIGH CONFIDENCE: Server timestamps corroborate timezone")
-            else:
-                confidence = 0.90  # HIGH - timezone not explicitly spoofed, but unvalidated
+        # Calibrate confidence — Date: header is client-controlled.
+        # All confidence values here are capped lower than "server-added" signals.
+        if spoofing_detected:
+            # Server Received timestamps contradict the Date: timezone — spoofed
+            confidence = 0.10
+            evidence.append(
+                "[SPOOFED] Server-added Received timestamps contradict Date: timezone — "
+                "attacker falsified the Date header. This signal is unreliable."
+            )
+        elif server_tz_matches:
+            # A server-added Received header independently confirms the same offset
+            confidence = 0.65
+            evidence.append(
+                "[VALIDATED] MTA Received header confirms matching timezone offset — "
+                "moderate confidence (server-corroborated but still client-declared)."
+            )
         else:
-            if spoofing_detected or not server_tz_matches:
-                confidence = 0.40  # LOW - timezone possibly spoofed/unvalidated
-            else:
-                confidence = 0.75  # MEDIUM - timezone consistent across headers
+            # No server header to cross-validate — Date: alone is unverified
+            confidence = 0.30
+            evidence.append(
+                "[UNVERIFIED] Date: timezone not corroborated by any server-added header — "
+                "treat as weak indicator only."
+            )
+
+        # Small informational bonus when VPN country clearly differs from inferred region
+        if vpn_country and region and vpn_country.lower() not in region.lower():
+            evidence.append(
+                f"VPN exit country ({vpn_country}) differs from inferred timezone region "
+                f"({region}) — operator is likely not in the VPN country."
+            )
+            confidence = min(confidence + 0.08, 0.73)
         
         return RealIPSignal(
             method=BacktrackMethod.TIMEZONE_CORRELATION,
@@ -773,10 +786,15 @@ class RealIPBacktracker:
             evidence.append(f"Client: Android device detected")
         
         # Check for GoPhish/Evilginx/phishing frameworks
+        # Detecting the tool name confirms it's a phishing campaign but says
+        # nothing about the attacker's real geographic location. confidence=0.0
+        # here means this signal alone cannot geolocate; spoofing_detected=True
+        # means we distrust the Date: header timezone from this point on.
         if 'gophish' in x_mailer or 'evilginx' in x_mailer:
-            evidence.append("[!] PHISHING FRAMEWORK DETECTED: GoPhish/Evilginx")
+            evidence.append("[!] PHISHING FRAMEWORK DETECTED: GoPhish/Evilginx — "
+                            "confirms campaign tool; Date: header timezone now untrusted.")
             spoofing_detected = True
-            confidence = 0.95
+            confidence = 0.0   # Tool detection ≠ real-location confidence
         
         if spoofing_detected or evidence:
             return RealIPSignal(
@@ -1226,10 +1244,26 @@ class VPNBacktrackAnalyzer:
         actions = self._generate_backtrack_actions(backtracking_signals, vpn_provider)
         le_notes = self._generate_law_enforcement_notes(vpn_provider, backtracking_signals)
         
+        # Calibrate VPN detection confidence based on how the provider was identified:
+        # - Known VPN org name from live ASN lookup → high confidence (0.90)
+        # - IP prefix in verified table              → moderate (0.70)
+        # - Tor exit list match                      → high (0.92)
+        # - Passed in by caller with no evidence     → low (0.50)
+        if vpn_provider.lower() in ("tor", "tor exit") or "onion" in vpn_provider.lower():
+            _vpn_det_conf = 0.92
+        elif any(kw in vpn_provider.lower() for kw in
+                 ["nordvpn","expressvpn","surfshark","protonvpn","mullvad",
+                  "cyberghost","pia","tunnelbear","windscribe","ipvanish"]):
+            _vpn_det_conf = 0.88
+        elif vpn_provider not in ("", "Unknown", "unknown"):
+            _vpn_det_conf = 0.70
+        else:
+            _vpn_det_conf = 0.50
+
         analysis = VPNAnalysis(
             vpn_provider=vpn_provider,
             vpn_endpoint_ip=vpn_endpoint_ip,
-            detected_vpn_confidence=0.95,
+            detected_vpn_confidence=_vpn_det_conf,
             backtracking_signals=backtracking_signals,
             likely_real_ip=likely_real_ip,
             backtracking_confidence=backtracking_confidence,
