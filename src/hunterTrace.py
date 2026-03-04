@@ -83,6 +83,35 @@ except ImportError:
     VPN_BACKTRACK_AVAILABLE = False
 
 # ============================================================================
+# HUNTЕРТRACE v3 COMPONENTS - INTEGRATED
+# ============================================================================
+
+# Graph Centrality Engine
+try:
+    from graphCentralityEngine import (
+        InfrastructureGraphAnalyzer,
+        integrate_graph_boost_into_attribution
+    )
+    GRAPH_CENTRALITY_AVAILABLE = True
+except ImportError:
+    GRAPH_CENTRALITY_AVAILABLE = False
+
+# Bayesian Attribution Engine
+try:
+    from attributionEngine import AttributionEngine, AttributionResult
+    ATTRIBUTION_ENGINE_AVAILABLE = True
+except ImportError:
+    ATTRIBUTION_ENGINE_AVAILABLE = False
+
+# Webmail v2 Real IP Extractor
+try:
+    from webMailRealIpExtrator import run_webmail_extraction
+    WEBMAIL_V2_AVAILABLE = True
+except ImportError:
+    WEBMAIL_V2_AVAILABLE = False
+
+
+# ============================================================================
 # STAGE 1: EMAIL HEADER EXTRACTION
 # ============================================================================
 
@@ -2290,6 +2319,11 @@ class CompletePipelineResult:
     real_ip_analysis: Optional['RealIPAnalysis'] = None
     vpn_backtrack_analysis: Optional['BacktrackResult'] = None
 
+    # v3 Components
+    webmail_extraction: Optional[Any] = None
+    bayesian_attribution: Optional[Any] = None
+    graph_boost_factors: Optional[Any] = None
+
 
 class CompletePipelineReport:
     """Generate complete analysis report"""
@@ -3058,6 +3092,25 @@ class CompletePipeline:
         
         self.verbose = verbose
         self.use_advanced_extraction = use_advanced_extraction and ADVANCED_REAL_IP_EXTRACTOR_AVAILABLE
+
+        # ====================================================================
+        # v3 Components - Graph & Attribution
+        # ====================================================================
+        
+        # Graph analyzer (for batch mode)
+        if GRAPH_CENTRALITY_AVAILABLE:
+            self.graph_analyzer = InfrastructureGraphAnalyzer()
+        else:
+            self.graph_analyzer = None
+        
+        # Bayesian attribution
+        if ATTRIBUTION_ENGINE_AVAILABLE:
+            self.bayesian_attribution = AttributionEngine()
+        else:
+            self.bayesian_attribution = None
+        
+        # Track processed emails for batch graph analysis
+        self.processed_emails = []
     
     def run(self, email_file: str) -> Optional[CompletePipelineResult]:
         """Run all 7 stages (1: Headers, 2: Classification, 3A: Proxy Chain, 3B: Enrichment, 3C: Correlation, 4: Threat Intelligence, Geolocation, 5: Attribution)"""

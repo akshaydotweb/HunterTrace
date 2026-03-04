@@ -37,6 +37,26 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+
+# ============================================================================
+# GRAPH CENTRALITY INTEGRATION
+# ============================================================================
+
+try:
+    from graphCentralityEngine import (
+        InfrastructureGraphAnalyzer,
+        integrate_graph_boost_into_attribution
+    )
+    GRAPH_ENGINE_AVAILABLE = True
+except ImportError:
+    GRAPH_ENGINE_AVAILABLE = False
+
+try:
+    from attributionEngine import AttributionEngine
+    ATTRIBUTION_ENGINE_V3_AVAILABLE = True
+except ImportError:
+    ATTRIBUTION_ENGINE_V3_AVAILABLE = False
+
 from collections import defaultdict
 
 
