@@ -27,7 +27,12 @@ import email
 import socket
 import requests
 import time
-import whois
+try:
+    import whois
+    WHOIS_AVAILABLE = True
+except ImportError:
+    whois = None
+    WHOIS_AVAILABLE = False
 from typing import List, Dict, Optional, Tuple, Set
 from dataclasses import dataclass, asdict, field
 from datetime import datetime
@@ -118,7 +123,7 @@ class HeaderExtractor:
     
     def __init__(self):
         self.patterns = {
-            "ipv4_only": re.compile(r'\[(\d+\.\d+\.\d+\.\d+)\]', re.IGNORECASE),
+            "ipv4_only": re.compile(r'\[(\d+\.\d+\.\d+\.\d+)\]|(?:^|\bfrom\s+)(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(?!\])', re.IGNORECASE),
             "ipv6_with_brackets": re.compile(r'\[([a-fA-F0-9:]+)\]', re.IGNORECASE),  # IPv6 in brackets
             "ipv6_loose": re.compile(r'\b([a-fA-F0-9]{0,4}:[a-fA-F0-9:]*[a-fA-F0-9]{0,4})\b', re.IGNORECASE),  # IPv6 without brackets
             "protocol": re.compile(r'with\s+(ESMTP|SMTP|HTTP|HTTPS|LMTP)', re.IGNORECASE),
@@ -168,9 +173,32 @@ class HeaderExtractor:
             hop.hop_number = i + 1
         
         # Get origin IP (prefer IPv4, fall back to IPv6)
+        # Priority: first hop with a public IP → last hop public IP → sender domain DNS
         origin_ip = None
-        if hops:
-            origin_ip = hops[0].ip or hops[0].ipv6
+        for hop in hops:
+            candidate = hop.ip or hop.ipv6
+            if candidate:
+                origin_ip = candidate
+                break  # take first (oldest) hop that has an IP
+
+        # Fallback: resolve the From: domain to an IP if no Received: IP found
+        if not origin_ip and email_from:
+            try:
+                domain_match = re.search(r'@([\w.\-]+)', email_from)
+                if domain_match:
+                    from_domain = domain_match.group(1)
+                    resolved = socket.gethostbyname(from_domain)
+                    # Only use if it's a public IP
+                    parts = resolved.split('.')
+                    first, second = int(parts[0]), int(parts[1])
+                    is_private = (first == 10 or first == 127 or
+                                  (first == 172 and 16 <= second <= 31) or
+                                  (first == 192 and second == 168))
+                    if not is_private:
+                        origin_ip = resolved
+                        print(f"  [+] From domain resolved: {from_domain} → {resolved}")
+            except Exception:
+                pass  # DNS failure is non-fatal
         
         destination_ip = None
         if hops:
@@ -219,11 +247,22 @@ class HeaderExtractor:
         authentication = {}
         parsing_confidence = 0.5
         
-        # Extract IPv4 address
+        # Extract IPv4 address — match bracketed [1.2.3.4] first, then bare IP after 'from'
         ipv4_match = self.patterns["ipv4_only"].search(header_text)
         if ipv4_match:
-            ipv4 = ipv4_match.group(1)
-            parsing_confidence = 0.95
+            # group(1) = bracketed match, group(2) = bare match after 'from'
+            ipv4 = ipv4_match.group(1) or ipv4_match.group(2)
+            # Validate it's a real routable IP (skip private/loopback ranges)
+            if ipv4:
+                parts = ipv4.split('.')
+                if len(parts) == 4:
+                    first = int(parts[0])
+                    second = int(parts[1])
+                    # Filter private ranges: 10.x, 172.16-31.x, 192.168.x, 127.x
+                    if first == 10 or first == 127 or (first == 172 and 16 <= second <= 31) or (first == 192 and second == 168):
+                        ipv4 = None  # discard private IP, keep looking
+            if ipv4:
+                parsing_confidence = 0.95
         
         # Extract IPv6 address (priority: bracketed form first)
         ipv6_match = self.patterns["ipv6_with_brackets"].search(header_text)
@@ -799,6 +838,8 @@ class WHOISLookupManager:
         confidence = 0.0
         
         try:
+            if not WHOIS_AVAILABLE or whois is None:
+                raise ImportError("python-whois not installed")
             w = whois.whois(ip)
             raw_whois = str(w)
             lookup_success = True
@@ -3672,7 +3713,7 @@ class BatchProcessor:
     """Process multiple emails and correlate campaigns"""
     
     def __init__(self, mail_dir=None, verbose=False, skip_enrichment=False):
-        self.mail_dir = Path(mail_dir) if mail_dir else Path("/Users/lapac/Documents/PES/SOC/ProjectPhase2/mails")
+        self.mail_dir = Path(mail_dir) if mail_dir else Path(".")
         self.pipeline = CompletePipeline(verbose=verbose, skip_enrichment=skip_enrichment)
         self.results = []
         self.verbose = verbose
@@ -3811,169 +3852,427 @@ class BatchProcessor:
 # CLI ENTRY POINT - UNIFIED INTERFACE
 # ============================================================================
 
+
+# ============================================================================
+# CONFIG / API KEY LOADING
+# ============================================================================
+
+def _load_config(config_file=None):
+    """
+    Load API keys from (in priority order):
+      1. --config <file>  explicitly passed on CLI
+      2. .env file in current working directory
+      3. OS environment variables (always override file values)
+
+    Supported keys:
+      ABUSEIPDB_API_KEY, IPINFO_TOKEN, VIRUSTOTAL_API_KEY
+    """
+    cfg = {}
+
+    # Candidate files: explicit first, then .env in cwd
+    candidates = []
+    if config_file:
+        candidates.append(Path(config_file))
+    candidates.append(Path(".env"))
+
+    for fpath in candidates:
+        if fpath.is_file():
+            try:
+                for raw in fpath.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    line = raw.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if "=" in line:
+                        k, _, v = line.partition("=")
+                        cfg[k.strip()] = v.strip().strip('"').strip("'")
+            except Exception:
+                pass
+            break  # first matching file wins
+
+    # Environment variables always override
+    for env_key in ("ABUSEIPDB_API_KEY", "IPINFO_TOKEN", "VIRUSTOTAL_API_KEY"):
+        val = os.getenv(env_key)
+        if val:
+            cfg[env_key] = val
+
+    return cfg
+
+
+def _inject_keys(cfg, args):
+    """
+    Push resolved API keys into os.environ so every module/stage picks them up
+    without needing to be refactored.  CLI flags beat config file values.
+    """
+    # AbuseIPDB
+    key = getattr(args, "abuseipdb_key", None) or cfg.get("ABUSEIPDB_API_KEY")
+    if key:
+        os.environ["ABUSEIPDB_API_KEY"] = key
+
+    # IPInfo
+    tok = cfg.get("IPINFO_TOKEN")
+    if tok:
+        os.environ["IPINFO_TOKEN"] = tok
+
+    # VirusTotal
+    vt = cfg.get("VIRUSTOTAL_API_KEY")
+    if vt:
+        os.environ["VIRUSTOTAL_API_KEY"] = vt
+
+
+def _key_status_lines():
+    """Return a list of human-readable lines showing which keys are active."""
+    checks = [
+        ("AbuseIPDB",  "ABUSEIPDB_API_KEY"),
+        ("IPInfo",     "IPINFO_TOKEN"),
+        ("VirusTotal", "VIRUSTOTAL_API_KEY"),
+    ]
+    lines = []
+    for label, env in checks:
+        val = os.getenv(env)
+        if val:
+            lines.append(f"  {label:14} ✓  ({env}={val[:6]}{'...' if len(val) > 6 else ''})")
+        else:
+            lines.append(f"  {label:14} ✗  (unset — pass --abuseipdb-key or add to .env)")
+    return lines
+
+
+# ============================================================================
+# CLI ENTRY POINT
+# ============================================================================
+
 def main():
-    """Command-line interface - unified single file execution"""
-    
+    """
+    HunterTrace — Phishing Email Attribution & Campaign Intelligence
+
+    Commands
+    --------
+      <file.eml>           Analyse a single email
+      batch  <dir>         Batch-process all .eml files in a directory
+      v3     <dir>         Full v3 campaign analysis (actor clustering + MITRE)
+      offline <dir>        V3 correlation from saved JSON reports
+      info                 Show module/API-key status
+
+    Quick start
+    -----------
+      # Single email, all output to ./ht_output/
+      python hunterTrace.py suspicious.eml
+
+      # With an AbuseIPDB key
+      python hunterTrace.py suspicious.eml --abuseipdb-key YOUR_KEY
+
+      # Or put keys in a .env file (picked up automatically)
+      echo "ABUSEIPDB_API_KEY=YOUR_KEY" >> .env
+      python hunterTrace.py suspicious.eml
+
+      # Batch processing
+      python hunterTrace.py batch ./inbox/ --output ./reports/
+
+      # Full v3 campaign intelligence
+      python hunterTrace.py v3 ./inbox/ --output ./reports/ --verbose
+    """
+
     parser = argparse.ArgumentParser(
-        description="Complete Attacker IP Identification System - Single-File All-in-One",
+        prog="hunterTrace.py",
+        description="HunterTrace — Phishing Email Attribution & Campaign Intelligence",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-USAGE MODES:
+COMMANDS
+  <file.eml>           Analyse a single .eml file
+  batch  <dir>         Batch-analyse every .eml in a directory
+  v3     <dir>         V3 campaign mode: actor clustering + MITRE ATT&CK mapping
+  offline <dir>        V3 correlation from previously-saved JSON reports
+  info                 Show available modules and API-key status
 
-  Single email analysis:
-    python complete_attacker_identification_system.py email.eml
-    python complete_attacker_identification_system.py single email.eml
+OUTPUT FLAGS
+  -o / --output DIR    Directory for all output files  (default: ./ht_output/)
+  --format FORMAT      Output format: text | json | both  (default: both)
 
-  Batch processing:
-    python complete_attacker_identification_system.py batch /path/to/mails/
-    python complete_attacker_identification_system.py batch
+API KEY FLAGS  (also accepted via .env file or environment variables)
+  --abuseipdb-key KEY  AbuseIPDB key  (env: ABUSEIPDB_API_KEY)
+  --config FILE        Load keys from this file instead of .env
 
-  System information:
-    python complete_attacker_identification_system.py info
+PIPELINE FLAGS
+  --skip-enrichment    Skip WHOIS / reverse-DNS enrichment (Stage 3B) — faster,
+                       loses infrastructure correlation and Stage 5 attribution
+  -v / --verbose       Print per-stage detail
+  -q / --quiet         Print only the final summary
 
-EXAMPLES:
+.env FILE FORMAT  (place alongside hunterTrace.py or in working directory)
+  ABUSEIPDB_API_KEY=abc123def456
+  IPINFO_TOKEN=tok_xxxx
+  VIRUSTOTAL_API_KEY=vt_xxxx
 
-  Single email with verbose:
-    python complete_attacker_identification_system.py email.eml --verbose
-  
-  Generate JSON report:
-    python complete_attacker_identification_system.py email.eml --json report.json
-  
-  Batch process with campaign correlation:
-    python complete_attacker_identification_system.py batch /Users/emails/ --json batch_report.json
-
-PIPELINE STAGES:
-  Stage 1: Email header extraction (RFC 2822,  IPv4/IPv6)
-  Stage 2: IP classification (Tor/VPN/Proxy)
-  Stage 3A: Proxy chain analysis
-  Stage 3B: WHOIS/Reverse DNS enrichment
-  Stage 3C: Infrastructure correlation
-  Stage 4: Threat intelligence aggregation
-  Real IP Extraction: 11+ techniques for VPN/Proxy bypass
-  VPN Backtracking: 7 forensic methods
-  Stage 5: Final attribution analysis
-
-SETUP:
-  pip install requests python-whois dnspython
-  export ABUSEIPDB_API_KEY="your_key"
-        """
+EXAMPLES
+  python hunterTrace.py phishing.eml
+  python hunterTrace.py phishing.eml --abuseipdb-key abc123 --format json -o ./out/
+  python hunterTrace.py batch ./mails/ -o ./reports/ --skip-enrichment
+  python hunterTrace.py v3    ./mails/ -o ./campaign/ --verbose
+  python hunterTrace.py offline ./json_reports/ -o ./campaign/
+  python hunterTrace.py info
+""",
     )
-    
+
+    # ── Positional args ───────────────────────────────────────────────────
     parser.add_argument(
-        "target",
-        nargs='?',
-        help="Email file / 'batch' for batch mode / 'single' for explicit single mode / 'info' for system info"
+        "command",
+        metavar="COMMAND_OR_FILE",
+        help="Command (batch | v3 | offline | info) or path to a single .eml file",
     )
-    
     parser.add_argument(
         "path",
-        nargs='?',
-        help="Additional argument for batch mode (mail directory path)"
+        nargs="?",
+        metavar="PATH",
+        help="Directory for batch / v3 / offline commands",
     )
-    
+
+    # ── Output ────────────────────────────────────────────────────────────
     parser.add_argument(
-        "--json",
-        metavar="OUTPUT_FILE",
-        help="Export analysis to JSON file"
+        "--output", "-o",
+        metavar="DIR",
+        default="./ht_output",
+        help="Output directory (default: ./ht_output)",
     )
-    
     parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Show detailed output"
+        "--format", "-f",
+        choices=["text", "json", "both"],
+        default="both",
+        help="Output format: text, json, or both  (default: both)",
     )
-    
+
+    # ── API keys ──────────────────────────────────────────────────────────
+    parser.add_argument(
+        "--abuseipdb-key",
+        metavar="KEY",
+        dest="abuseipdb_key",
+        help="AbuseIPDB API key  (overrides ABUSEIPDB_API_KEY in .env / env)",
+    )
+    parser.add_argument(
+        "--config",
+        metavar="FILE",
+        help="Config / .env file with API keys  (default: .env in cwd)",
+    )
+
+    # ── Pipeline ──────────────────────────────────────────────────────────
     parser.add_argument(
         "--skip-enrichment",
         action="store_true",
-        help="Skip Stage 3B (WHOIS enrichment)"
+        help="Skip Stage 3B WHOIS enrichment — faster, works fully offline",
     )
-    
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Print detailed per-stage output",
+    )
+    parser.add_argument(
+        "--quiet", "-q",
+        action="store_true",
+        help="Suppress stage output; show only the final summary",
+    )
+
     args = parser.parse_args()
-    
-    # No arguments - print help
-    if not args.target:
-        parser.print_help()
+
+    if args.quiet and args.verbose:
+        parser.error("--quiet and --verbose are mutually exclusive")
+
+    # ── Load config and inject keys into os.environ ───────────────────────
+    cfg = _load_config(args.config)
+    _inject_keys(cfg, args)
+
+    # ── Ensure output directory exists ────────────────────────────────────
+    output_dir = Path(args.output)
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        print(f"[ERROR] Cannot create output directory {output_dir}: {e}")
         sys.exit(1)
-    
-    # INFO MODE
-    if args.target == "info":
-        print("\n[SYSTEM INFORMATION]")
-        print("=" * 80)
-        print("[+] Complete Attacker IP Identification System v2.0")
-        print("[+] Single-File Unified Interface (All Modes in One)")
-        print("\n[MODES]")
-        print("    - Single Email Analysis")
-        print("    - Batch Processing (multi-email)")
-        print("    - Campaign Correlation & Threat Pattern Detection")
-        print("\n[CAPABILITIES]")
-        print("    - Stage 1: Email Header Extraction (IPv4 + IPv6)")
-        print("    - Stage 2: IP Classification (VPN/Tor/Proxy)")
-        print("    - Stage 3A: Proxy Chain Analysis")
-        print("    - Stage 3B: WHOIS/Reverse DNS Enrichment")
-        print("    - Stage 3C: Infrastructure Correlation")
-        print("    - Stage 4: Threat Intelligence Aggregation")
-        print("    - Stage 5: Final Attribution Analysis")
-        print("    - Real IP Extraction: 11+ Techniques")
-        print("    - VPN Backtracking: 7 Forensic Methods")
-        print("    - Geolocation: IPv4 + IPv6 Mapping")
-        print("\n[AVAILABLE MODULES]")
-        print(f"    ✓ Core Pipeline")
-        print(f"    {'✓' if GEOLOCATION_AVAILABLE else '✗'} Geolocation Engine")
-        print(f"    {'✓' if STAGE5_AVAILABLE else '✗'} Attribution Analysis")
-        print(f"    {'✓' if VPN_BACKTRACK_AVAILABLE else '✗'} VPN Backtracking")
-        print(f"    {'✓' if ADVANCED_REAL_IP_EXTRACTOR_AVAILABLE else '✗'} Advanced Real IP Extractor")
-        print("\n")
+
+    verbose = args.verbose and not args.quiet
+
+    # ══════════════════════════════════════════════════════════════════════
+    # INFO
+    # ══════════════════════════════════════════════════════════════════════
+    if args.command == "info":
+        print("\n  HunterTrace — module & key status")
+        print("  " + "─" * 46)
+        print("\n  Core modules:")
+        module_checks = [
+            ("Core pipeline",         True),
+            ("Geolocation",           GEOLOCATION_AVAILABLE),
+            ("Stage 5 attribution",   STAGE5_AVAILABLE),
+            ("VPN backtracking",      VPN_BACKTRACK_AVAILABLE),
+            ("Advanced real-IP",      ADVANCED_REAL_IP_EXTRACTOR_AVAILABLE),
+            ("WHOIS enrichment",      WHOIS_AVAILABLE),
+            ("Hosting keywords",      HOSTING_KEYWORDS_AVAILABLE),
+        ]
+        for label, ok in module_checks:
+            icon = "✓" if ok else "✗"
+            hint = ""
+            if not ok and label == "WHOIS enrichment":
+                hint = "  → pip install python-whois"
+            print(f"    {icon}  {label}{hint}")
+
+        print("\n  V3 modules:")
+        for mod in ("campaignCorrelator", "actorProfiler", "attackGraphBuilder",
+                    "attributionEngine", "hunterTraceV3"):
+            try:
+                __import__(mod)
+                print(f"    ✓  {mod}.py")
+            except ImportError:
+                print(f"    ✗  {mod}.py  (not found alongside hunterTrace.py)")
+
+        print("\n  API keys:")
+        for line in _key_status_lines():
+            print(line)
+
+        print(f"\n  Output directory:  {output_dir.resolve()}")
+        print()
         return
-    
-    # BATCH MODE
-    if args.target == "batch" or (args.target and str(args.target).startswith('/') and Path(args.target).is_dir()):
-        mail_dir = args.path if args.path else (args.target if args.target != "batch" else None)
-        
-        processor = BatchProcessor(mail_dir=mail_dir, verbose=args.verbose, skip_enrichment=args.skip_enrichment)
-        
+
+    # ══════════════════════════════════════════════════════════════════════
+    # V3 / OFFLINE — campaign intelligence via hunterTraceV3
+    # ══════════════════════════════════════════════════════════════════════
+    if args.command in ("v3", "offline"):
+        target = args.path
+        if not target:
+            parser.error(
+                f"'{args.command}' requires a directory path\n"
+                f"  Usage: hunterTrace.py {args.command} /path/to/emails/"
+            )
+        if not Path(target).exists():
+            print(f"[ERROR] Path not found: {target}")
+            sys.exit(1)
+
+        try:
+            from hunterTraceV3 import HunterTraceV3
+        except ImportError:
+            print("[ERROR] hunterTraceV3.py not found in the current directory.")
+            print("  Make sure hunterTraceV3.py is placed alongside hunterTrace.py.")
+            sys.exit(1)
+
+        if not args.quiet:
+            print(f"\n  HunterTrace v3 — Campaign Intelligence")
+            print(f"  {'─'*44}")
+            print(f"  Mode    : {args.command}")
+            print(f"  Input   : {Path(target).resolve()}")
+            print(f"  Output  : {output_dir.resolve()}")
+            print("\n  API keys:")
+            for line in _key_status_lines():
+                print(line)
+            print()
+
+        v3 = HunterTraceV3(
+            verbose=verbose,
+            skip_enrichment=args.skip_enrichment,
+            output_dir=str(output_dir),
+        )
+
+        report = v3.run_batch(target) if args.command == "v3" else v3.correlate_from_json_dir(target)
+
+        if report:
+            report.print_executive_summary()
+            if not args.quiet:
+                print(f"\n  Outputs written to: {output_dir.resolve()}/\n")
+        return
+
+    # ══════════════════════════════════════════════════════════════════════
+    # BATCH — process a directory of .eml files
+    # ══════════════════════════════════════════════════════════════════════
+    if args.command == "batch":
+        mail_dir = args.path
+        if not mail_dir:
+            parser.error(
+                "'batch' requires a directory path\n"
+                "  Usage: hunterTrace.py batch /path/to/emails/"
+            )
+        if not Path(mail_dir).exists():
+            print(f"[ERROR] Directory not found: {mail_dir}")
+            sys.exit(1)
+
+        if not args.quiet:
+            print(f"\n  HunterTrace — Batch Processing")
+            print(f"  {'─'*44}")
+            print(f"  Input   : {Path(mail_dir).resolve()}")
+            print(f"  Output  : {output_dir.resolve()}")
+            print("\n  API keys:")
+            for line in _key_status_lines():
+                print(line)
+            print()
+
+        processor = BatchProcessor(
+            mail_dir=mail_dir,
+            verbose=verbose,
+            skip_enrichment=args.skip_enrichment,
+        )
+
         if processor.process_all_emails():
             processor.correlate_campaigns()
-            
-            output_file = args.json if args.json else "soc_report.json"
-            processor.export_json_report(output_file)
-        
+
+            if args.format in ("json", "both"):
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                json_path = output_dir / f"batch_report_{ts}.json"
+                processor.export_json_report(str(json_path))
+                if not args.quiet:
+                    print(f"\n  Report: {json_path}")
         return
-    
-    # SINGLE EMAIL MODE
-    email_file = args.target
-    if args.target == "single" and args.path:
-        email_file = args.path
-    
-    # Validate file exists
+
+    # ══════════════════════════════════════════════════════════════════════
+    # SINGLE EMAIL — default when command looks like a file path
+    # ══════════════════════════════════════════════════════════════════════
+    email_file = args.command
+
+    # Catch unknown subcommands before attempting file I/O
+    known_commands = {"batch", "v3", "offline", "info"}
+    if email_file in known_commands:
+        # Already handled above; this branch means the user forgot the path arg
+        parser.error(
+            f"'{email_file}' requires a path argument\n"
+            f"  Usage: hunterTrace.py {email_file} /path/to/..."
+        )
+
     if not Path(email_file).exists():
-        print(f"[ERROR] File not found: {email_file}")
+        print(f"[ERROR] File not found: {email_file!r}")
+        print("  Tip: for batch mode use:  hunterTrace.py batch /path/to/emails/")
         sys.exit(1)
-    
-    # Run pipeline
-    pipeline = CompletePipeline(verbose=args.verbose, skip_enrichment=args.skip_enrichment)
+
+    if not args.quiet:
+        print(f"\n  HunterTrace — Single Email Analysis")
+        print(f"  {'─'*44}")
+        print(f"  File    : {Path(email_file).resolve()}")
+        print(f"  Output  : {output_dir.resolve()}")
+        print("\n  API keys:")
+        for line in _key_status_lines():
+            print(line)
+        print()
+
+    pipeline = CompletePipeline(verbose=verbose, skip_enrichment=args.skip_enrichment)
     result = pipeline.run(email_file)
-    
+
     if not result:
-        print("[ERROR] Pipeline execution failed")
+        print("[ERROR] Pipeline failed — could not parse the email file")
         sys.exit(1)
-    
-    # Generate and display report
-    print("\n")
-    report = CompletePipelineReport(result)
-    print(report.generate_text_report(verbose=args.verbose))
-    
-    # Export JSON if requested
-    if args.json:
+
+    report_obj = CompletePipelineReport(result)
+
+    # ── Text output ───────────────────────────────────────────────────────
+    if args.format in ("text", "both") and not args.quiet:
+        print("\n")
+        print(report_obj.generate_text_report(verbose=verbose))
+
+    # ── JSON output ───────────────────────────────────────────────────────
+    if args.format in ("json", "both"):
+        ts  = datetime.now().strftime("%Y%m%d_%H%M%S")
+        stem = Path(email_file).stem
+        json_path = output_dir / f"{stem}_{ts}.json"
         try:
-            with open(args.json, 'w') as f:
-                json.dump(report.to_json(), f, indent=2)
-            print(f"[SUCCESS] Full analysis exported to: {args.json}")
+            with open(json_path, "w", encoding="utf-8") as fh:
+                json.dump(report_obj.to_json(), fh, indent=2)
+            if not args.quiet:
+                print(f"  JSON: {json_path}")
         except Exception as e:
-            print(f"[ERROR] Failed to export JSON: {e}")
-            sys.exit(1)
-    
-    print("[COMPLETE] Analysis finished successfully")
+            print(f"[ERROR] Could not write JSON report: {e}")
+
+    if not args.quiet:
+        print("\n[COMPLETE]\n")
 
 
 if __name__ == "__main__":
