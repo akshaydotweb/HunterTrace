@@ -602,144 +602,49 @@ class V3Report:
 # CLI ENTRY POINT
 # ─────────────────────────────────────────────────────────────────────────────
 
-def main():
-    """
-    HunterTrace v3 — Campaign Correlation & Actor Profiling
-
-    Usage
-    -----
-      Batch (process .eml files):
-        python hunterTraceV3.py batch /path/to/emails/ -o ./reports/
-
-      Offline (correlate from saved JSON reports):
-        python hunterTraceV3.py offline /path/to/json_reports/ -o ./reports/
-
-    Outputs (written to -o / --output directory)
-    -----
-      v3_correlation_<ts>.json      Actor clusters + signal matches
-      v3_actor_profiles_<ts>.json   Full TTP profiles per actor
-      v3_mitre_layer_<ts>.json      MITRE Navigator layer
-      v3_attack_graph_<ts>.html     Interactive D3.js graph
-      v3_attack_graph_<ts>.graphml  Gephi / Maltego import
-    """
-    import argparse, os, sys
-    from pathlib import Path
+if __name__ == "__main__":
+    import argparse
 
     parser = argparse.ArgumentParser(
-        prog="hunterTraceV3.py",
         description="HunterTrace v3 — Campaign Correlation & Actor Profiling",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-EXAMPLES
-  python hunterTraceV3.py batch   ./emails/        -o ./reports/
-  python hunterTraceV3.py batch   ./emails/        -o ./reports/ --abuseipdb-key abc123
-  python hunterTraceV3.py offline ./json_reports/  -o ./reports/
-  python hunterTraceV3.py batch   ./emails/        --skip-enrichment --verbose
+MODES:
+  Batch (process .eml files):
+    python hunterTraceV3.py batch /path/to/emails/ --output ./v3_reports/
 
-API KEYS (.env file, alongside this script or in cwd)
-  ABUSEIPDB_API_KEY=your_key
-  IPINFO_TOKEN=your_token
-  VIRUSTOTAL_API_KEY=your_key
-""",
+  Offline (correlate from saved JSON reports):
+    python hunterTraceV3.py offline /path/to/json_reports/ --output ./v3_reports/
+
+OUTPUTS (written to --output directory):
+  v3_correlation_<ts>.json     — Actor clusters + signal matches
+  v3_actor_profiles_<ts>.json  — Full TTP profiles per actor
+  v3_mitre_layer_<ts>.json     — MITRE Navigator layer (drag into navigator)
+  v3_attack_graph_<ts>.html    — Interactive D3.js graph (open in browser)
+  v3_attack_graph_<ts>.graphml — Gephi / Maltego import
+        """
     )
-
-    parser.add_argument("mode", choices=["batch", "offline"], help="Run mode")
+    parser.add_argument("mode", choices=["batch", "offline"],
+                        help="Run mode")
     parser.add_argument("path", help="Email directory (batch) or JSON dir (offline)")
-    parser.add_argument(
-        "--output", "-o",
-        default="./v3_output",
-        metavar="DIR",
-        help="Output directory  (default: ./v3_output)",
-    )
-    parser.add_argument(
-        "--abuseipdb-key",
-        metavar="KEY",
-        dest="abuseipdb_key",
-        help="AbuseIPDB API key  (overrides ABUSEIPDB_API_KEY env / .env)",
-    )
-    parser.add_argument(
-        "--config",
-        metavar="FILE",
-        help="Config / .env file with API keys  (default: .env in cwd)",
-    )
+    parser.add_argument("--output", default="./v3_output",
+                        help="Output directory (default: ./v3_output)")
+    parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--skip-enrichment", action="store_true",
-                        help="Skip WHOIS enrichment (faster, fully offline)")
-    parser.add_argument("--verbose", "-v", action="store_true",
-                        help="Print detailed per-stage output")
-    parser.add_argument("--quiet", "-q", action="store_true",
-                        help="Suppress stage output; show only final summary")
+                        help="Skip WHOIS enrichment (faster)")
 
     args = parser.parse_args()
 
-    if args.quiet and args.verbose:
-        parser.error("--quiet and --verbose are mutually exclusive")
-
-    # ── Load API keys from .env / env / flags ─────────────────────────────
-    cfg = {}
-    candidates = []
-    if args.config:
-        candidates.append(Path(args.config))
-    candidates.append(Path(".env"))
-    for fpath in candidates:
-        if fpath.is_file():
-            try:
-                for raw in fpath.read_text(encoding="utf-8", errors="ignore").splitlines():
-                    line = raw.strip()
-                    if not line or line.startswith("#"):
-                        continue
-                    if "=" in line:
-                        k, _, v = line.partition("=")
-                        cfg[k.strip()] = v.strip().strip('"').strip("'")
-            except Exception:
-                pass
-            break
-
-    for env_key in ("ABUSEIPDB_API_KEY", "IPINFO_TOKEN", "VIRUSTOTAL_API_KEY"):
-        val = os.getenv(env_key)
-        if val:
-            cfg[env_key] = val
-
-    if args.abuseipdb_key:
-        os.environ["ABUSEIPDB_API_KEY"] = args.abuseipdb_key
-    elif "ABUSEIPDB_API_KEY" in cfg:
-        os.environ["ABUSEIPDB_API_KEY"] = cfg["ABUSEIPDB_API_KEY"]
-    for k in ("IPINFO_TOKEN", "VIRUSTOTAL_API_KEY"):
-        if k in cfg:
-            os.environ[k] = cfg[k]
-
-    # ── Validate input path ───────────────────────────────────────────────
-    if not Path(args.path).exists():
-        print(f"[ERROR] Path not found: {args.path}")
-        sys.exit(1)
-
-    # ── Ensure output directory ───────────────────────────────────────────
-    output_dir = Path(args.output)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    if not args.quiet:
-        print(f"\n  HunterTrace v3 — Campaign Intelligence")
-        print(f"  {'─' * 44}")
-        print(f"  Mode    : {args.mode}")
-        print(f"  Input   : {Path(args.path).resolve()}")
-        print(f"  Output  : {output_dir.resolve()}")
-        abuseipdb_val = os.getenv("ABUSEIPDB_API_KEY")
-        key_status = f"✓  ({abuseipdb_val[:6]}...)" if abuseipdb_val else "✗  (unset)"
-        print(f"  AbuseIPDB key: {key_status}")
-        print()
-
     v3 = HunterTraceV3(
-        verbose=args.verbose and not args.quiet,
-        skip_enrichment=args.skip_enrichment,
-        output_dir=str(output_dir),
+        verbose         = args.verbose,
+        skip_enrichment = args.skip_enrichment,
+        output_dir      = args.output,
     )
 
-    report = v3.run_batch(args.path) if args.mode == "batch" else v3.correlate_from_json_dir(args.path)
+    if args.mode == "batch":
+        report = v3.run_batch(args.path)
+    else:
+        report = v3.correlate_from_json_dir(args.path)
 
     if report:
         report.print_executive_summary()
-        if not args.quiet:
-            print(f"\n  Outputs written to: {output_dir.resolve()}/\n")
-
-
-if __name__ == "__main__":
-    main()
