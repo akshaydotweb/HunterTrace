@@ -154,7 +154,7 @@ class HeaderExtractor:
         self.patterns = {
             "ipv4_only": re.compile(r'\[(\d+\.\d+\.\d+\.\d+)\]|(?:^|\bfrom\s+)(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(?!\])', re.IGNORECASE),
             "ipv6_with_brackets": re.compile(r'\[([a-fA-F0-9:]+)\]', re.IGNORECASE),  # IPv6 in brackets
-            "ipv6_loose": re.compile(r'\b([a-fA-F0-9]{0,4}:[a-fA-F0-9:]*[a-fA-F0-9]{0,4})\b', re.IGNORECASE),  # IPv6 without brackets
+            "ipv6_loose": re.compile(r'\b([a-fA-F0-9]{1,4}(?::[a-fA-F0-9]{1,4}){2,7})\b', re.IGNORECASE),  # IPv6 without brackets — requires ≥2 colons
             "protocol": re.compile(r'with\s+(ESMTP|SMTP|HTTP|HTTPS|LMTP)', re.IGNORECASE),
             "by_clause": re.compile(r'by\s+(\S+)', re.IGNORECASE),
         }
@@ -342,9 +342,39 @@ class HeaderExtractor:
         return bool(re.match(r'^\d+\.\d+\.\d+\.\d+$', address))
     
     def _is_valid_ipv6(self, address: str) -> bool:
-        """Validate IPv6 address format"""
-        # Simple check: contains colons and hex characters
-        return ':' in address and all(c in '0123456789abcdefABCDEF:' for c in address) and address.count(':') >= 2
+        """Validate IPv6 address format — rejects timestamps and other false positives."""
+        import re as _re
+        if not address or ':' not in address:
+            return False
+
+        # Must have at least 2 colons (timestamps like 01:38:44 have exactly 2
+        # but are caught by the next check)
+        if address.count(':') < 2:
+            return False
+
+        # Reject HH:MM:SS and HH:MM timestamps — segments are exactly 2 digits
+        # e.g. "01:38:44" → ["01","38","44"] — all length 2, all decimal
+        segments = address.split(':')
+        if all(len(s) <= 2 and s.isdigit() for s in segments):
+            return False
+
+        # All characters must be hex or colon
+        if not all(c in '0123456789abcdefABCDEF:' for c in address):
+            return False
+
+        # Each segment must be 1–4 hex characters (standard IPv6 group size)
+        # Allow empty segments only for :: notation
+        non_empty = [s for s in segments if s]
+        if not all(1 <= len(s) <= 4 for s in non_empty):
+            return False
+
+        # Use Python's own IPv6 parser as final check
+        try:
+            import ipaddress
+            ipaddress.IPv6Address(address)
+            return True
+        except ValueError:
+            return False
 
 
 # ============================================================================
