@@ -1,0 +1,30 @@
+{
+  "accuracy": {
+    "top1_country": 0.5283,
+    "top1_region": 0.566,
+    "tier_mae": 2.0566,
+    "ci_95_lower": 0.3966,
+    "ci_95_upper": 0.6562
+  },
+  "precision_recall_f1": {
+    "macro_precision": 0.325,
+    "macro_recall": 0.4544,
+    "macro_f1": 0.3617
+  },
+  "calibration": {
+    "ece": 0.230914,
+    "avg_confidence": 0.6033,
+    "conf_when_correct": 0.6475,
+    "conf_when_incorrect": 0.5539
+  },
+  "coverage": {
+    "total_emails": 53,
+    "n_predicted": 53,
+    "n_failed": 0,
+    "webmail_leak_rate": 0.3774
+  },
+  "metadata": {
+    "evaluated_at": "2026-03-06T21:08:04.022580",
+    "notes": ""
+  }
+}

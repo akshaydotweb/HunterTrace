@@ -339,19 +339,44 @@ class FingerprintExtractor:
     # ── Private helpers ───────────────────────────────────────────────────
 
     def _extract_tz_offset(self, ha) -> Optional[str]:
+        """
+        Extract timezone offset from email_date.
+        Handles both raw Date header format (+0530) and
+        Python isoformat() output (+05:30) — the colon is added by isoformat().
+        """
         if not ha or not ha.email_date:
             return None
-        m = re.search(r'([+-]\d{4})', str(ha.email_date))
-        return m.group(1) if m else None
+        date_str = str(ha.email_date)
+
+        # isoformat() produces +05:30 — match and normalise to +0530
+        m = re.search(r'([+-])(\d{2}):(\d{2})$', date_str)
+        if m:
+            return f"{m.group(1)}{m.group(2)}{m.group(3)}"
+
+        # Raw Date header: +0530 (no colon)
+        m = re.search(r'([+-]\d{4})', date_str)
+        if m:
+            return m.group(1)
+
+        return None
 
     def _extract_send_hour(self, ha) -> Optional[int]:
+        """Extract local send hour (0-23) from email_date."""
         if not ha or not ha.email_date:
             return None
-        m = re.search(r'T(\d{2}):', str(ha.email_date))
+        date_str = str(ha.email_date)
+
+        # isoformat: 2002-08-23T15:42:17+05:30
+        m = re.search(r'T(\d{2}):', date_str)
         if m:
             return int(m.group(1))
-        m2 = re.search(r'(\d{2}):(\d{2}):\d{2}', str(ha.email_date))
-        return int(m2.group(1)) if m2 else None
+
+        # Raw Date header: 15:42:17
+        m = re.search(r'\b(\d{2}):\d{2}:\d{2}\b', date_str)
+        if m:
+            return int(m.group(1))
+
+        return None
 
     def _extract_day_of_week(self, ha) -> Optional[str]:
         if not ha or not ha.email_date:
@@ -646,8 +671,11 @@ class ClusterBuilder:
         if send_window:
             ttps.append(f"Send window: {send_window}")
 
-        # Geographic inference from timezone
+        # Geographic inference: timezone first, IP geolocation as fallback
         country_from_tz = _tz_to_country(tz)
+        if not country_from_tz:
+            all_real_ips = list(set(fp.real_ip for fp in fps if fp.real_ip))
+            country_from_tz = _country_from_ips(all_real_ips)
 
         return ThreatActorCluster(
             actor_id            = actor_id,
@@ -684,16 +712,46 @@ class ClusterBuilder:
 def _tz_to_country(tz_offset: Optional[str]) -> Optional[str]:
     """Map timezone offset to most likely single country for display."""
     TZ_COUNTRY = {
-        "+0530": "India",        "+0545": "Nepal",
-        "+0600": "Bangladesh",   "+0530": "India",
-        "+0800": "China",        "+0900": "Japan",
-        "+0700": "Thailand",     "+0300": "Russia",
-        "+0200": "South Africa", "+0100": "Germany",
-        "+0000": "UK",           "-0500": "United States (ET)",
-        "-0800": "United States (PT)", "-0300": "Brazil",
-        "+0400": "UAE",          "+0330": "Iran",
+        "+0000": "United Kingdom",   "+0100": "Germany",
+        "+0200": "Ukraine",          "+0300": "Russia",
+        "+0330": "Iran",             "+0400": "UAE",
+        "+0430": "Afghanistan",      "+0500": "Pakistan",
+        "+0530": "India",            "+0545": "Nepal",
+        "+0600": "Bangladesh",       "+0630": "Myanmar",
+        "+0700": "Thailand",         "+0800": "China",
+        "+0900": "Japan",            "+0930": "Australia",
+        "+1000": "Australia",        "+1200": "New Zealand",
+        "-0300": "Brazil",           "-0400": "Venezuela",
+        "-0500": "United States",    "-0600": "Mexico",
+        "-0700": "United States",    "-0800": "United States",
+        "-1000": "United States",
     }
     return TZ_COUNTRY.get(tz_offset) if tz_offset else None
+
+
+def _country_from_ips(all_origin_ips: list) -> Optional[str]:
+    """
+    Derive likely_country from origin IPs when timezone is unavailable.
+    Uses ip-api.com (same as autoCorpusBuilder) with a short cache.
+    Only called when tz-based country is None.
+    """
+    import urllib.request, json, time
+    for ip in all_origin_ips[:3]:   # try up to 3 IPs
+        if not ip:
+            continue
+        try:
+            req = urllib.request.Request(
+                f"http://ip-api.com/json/{ip}?fields=status,country,countryCode",
+                headers={"User-Agent": "HunterTrace/3.0"}
+            )
+            with urllib.request.urlopen(req, timeout=5) as r:
+                data = json.loads(r.read())
+            time.sleep(1.4)
+            if data.get("status") == "success" and data.get("country"):
+                return data["country"]
+        except Exception:
+            continue
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────

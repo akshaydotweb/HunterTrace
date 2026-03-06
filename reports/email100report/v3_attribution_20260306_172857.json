@@ -1,0 +1,1833 @@
+{
+  "ACTOR_001": {
+    "primary_region": "Other",
+    "primary_probability": 0.289,
+    "aci_adjusted_prob": 0.237,
+    "tier": 0,
+    "tier_label": "Unknown",
+    "tier_description": "Insufficient evidence to attribute geographically",
+    "aci_score": 0.82,
+    "aci_breakdown": {
+      "layers_detected": {
+        "tor": false,
+        "residential_proxy": false,
+        "vpn": true,
+        "timestamp_spoof": false,
+        "datacenter": false
+      },
+      "penalty_applied": {
+        "tor": 0.0,
+        "residential_proxy": 0.0,
+        "vpn": 0.18,
+        "timestamp_spoof": 0.0,
+        "datacenter": 0.0
+      },
+      "interpretation": "Minimal obfuscation \u2014 signals are reliable"
+    },
+    "posterior": [
+      {
+        "region": "Other",
+        "probability": 0.289,
+        "signals": []
+      },
+      {
+        "region": "Nigeria",
+        "probability": 0.085,
+        "signals": []
+      },
+      {
+        "region": "India",
+        "probability": 0.08,
+        "signals": []
+      },
+      {
+        "region": "Russia",
+        "probability": 0.07,
+        "signals": []
+      },
+      {
+        "region": "China",
+        "probability": 0.065,
+        "signals": []
+      },
+      {
+        "region": "United States",
+        "probability": 0.055,
+        "signals": []
+      },
+      {
+        "region": "Romania",
+        "probability": 0.045,
+        "signals": []
+      },
+      {
+        "region": "Brazil",
+        "probability": 0.04,
+        "signals": []
+      },
+      {
+        "region": "Ukraine",
+        "probability": 0.038,
+        "signals": []
+      },
+      {
+        "region": "South Africa",
+        "probability": 0.035,
+        "signals": []
+      }
+    ],
+    "signals_used": [
+      "webmail_provider",
+      "real_ip_country"
+    ],
+    "signals_missing": [
+      "geolocation_country",
+      "isp_country",
+      "timezone_offset",
+      "timezone_region",
+      "vpn_exit_country",
+      "send_hour_local",
+      "hop_pattern",
+      "subject_language"
+    ],
+    "n_observations": 12,
+    "is_campaign_level": true,
+    "timestamp": "2026-03-06T17:28:57.278512"
+  },
+  "ACTOR_002": {
+    "primary_region": "Other",
+    "primary_probability": 0.289,
+    "aci_adjusted_prob": 0.289,
+    "tier": 1,
+    "tier_label": "Region-level",
+    "tier_description": "Broad geographic region identified",
+    "aci_score": 1.0,
+    "aci_breakdown": {
+      "layers_detected": {
+        "tor": false,
+        "residential_proxy": false,
+        "vpn": false,
+        "timestamp_spoof": false,
+        "datacenter": false
+      },
+      "penalty_applied": {
+        "tor": 0.0,
+        "residential_proxy": 0.0,
+        "vpn": 0.0,
+        "timestamp_spoof": 0.0,
+        "datacenter": 0.0
+      },
+      "interpretation": "Minimal obfuscation \u2014 signals are reliable"
+    },
+    "posterior": [
+      {
+        "region": "Other",
+        "probability": 0.289,
+        "signals": []
+      },
+      {
+        "region": "Nigeria",
+        "probability": 0.085,
+        "signals": []
+      },
+      {
+        "region": "India",
+        "probability": 0.08,
+        "signals": []
+      },
+      {
+        "region": "Russia",
+        "probability": 0.07,
+        "signals": []
+      },
+      {
+        "region": "China",
+        "probability": 0.065,
+        "signals": []
+      },
+      {
+        "region": "United States",
+        "probability": 0.055,
+        "signals": []
+      },
+      {
+        "region": "Romania",
+        "probability": 0.045,
+        "signals": []
+      },
+      {
+        "region": "Brazil",
+        "probability": 0.04,
+        "signals": []
+      },
+      {
+        "region": "Ukraine",
+        "probability": 0.038,
+        "signals": []
+      },
+      {
+        "region": "South Africa",
+        "probability": 0.035,
+        "signals": []
+      }
+    ],
+    "signals_used": [
+      "webmail_provider",
+      "real_ip_country"
+    ],
+    "signals_missing": [
+      "geolocation_country",
+      "isp_country",
+      "timezone_offset",
+      "timezone_region",
+      "vpn_exit_country",
+      "send_hour_local",
+      "hop_pattern",
+      "subject_language"
+    ],
+    "n_observations": 12,
+    "is_campaign_level": true,
+    "timestamp": "2026-03-06T17:28:57.279538"
+  },
+  "ACTOR_003": {
+    "primary_region": "United States",
+    "primary_probability": 1.0,
+    "aci_adjusted_prob": 0.95,
+    "tier": 4,
+    "tier_label": "ISP-level",
+    "tier_description": "Corroborated to ISP/city level \u2014 court order / ISP contact warranted",
+    "aci_score": 1.0,
+    "aci_breakdown": {
+      "layers_detected": {
+        "tor": false,
+        "residential_proxy": false,
+        "vpn": false,
+        "timestamp_spoof": false,
+        "datacenter": false
+      },
+      "penalty_applied": {
+        "tor": 0.0,
+        "residential_proxy": 0.0,
+        "vpn": 0.0,
+        "timestamp_spoof": 0.0,
+        "datacenter": 0.0
+      },
+      "interpretation": "Minimal obfuscation \u2014 signals are reliable"
+    },
+    "posterior": [
+      {
+        "region": "United States",
+        "probability": 1.0,
+        "signals": [
+          "real_ip_country"
+        ]
+      },
+      {
+        "region": "Other",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Nigeria",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "India",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Russia",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "China",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Romania",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Brazil",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Ukraine",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "South Africa",
+        "probability": 0.0,
+        "signals": []
+      }
+    ],
+    "signals_used": [
+      "webmail_provider",
+      "real_ip_country"
+    ],
+    "signals_missing": [
+      "geolocation_country",
+      "isp_country",
+      "timezone_offset",
+      "timezone_region",
+      "vpn_exit_country",
+      "send_hour_local",
+      "hop_pattern",
+      "subject_language"
+    ],
+    "n_observations": 6,
+    "is_campaign_level": true,
+    "timestamp": "2026-03-06T17:28:57.279924"
+  },
+  "ACTOR_004": {
+    "primary_region": "United States",
+    "primary_probability": 1.0,
+    "aci_adjusted_prob": 0.95,
+    "tier": 4,
+    "tier_label": "ISP-level",
+    "tier_description": "Corroborated to ISP/city level \u2014 court order / ISP contact warranted",
+    "aci_score": 1.0,
+    "aci_breakdown": {
+      "layers_detected": {
+        "tor": false,
+        "residential_proxy": false,
+        "vpn": false,
+        "timestamp_spoof": false,
+        "datacenter": false
+      },
+      "penalty_applied": {
+        "tor": 0.0,
+        "residential_proxy": 0.0,
+        "vpn": 0.0,
+        "timestamp_spoof": 0.0,
+        "datacenter": 0.0
+      },
+      "interpretation": "Minimal obfuscation \u2014 signals are reliable"
+    },
+    "posterior": [
+      {
+        "region": "United States",
+        "probability": 1.0,
+        "signals": [
+          "real_ip_country"
+        ]
+      },
+      {
+        "region": "Other",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Nigeria",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "India",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Russia",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "China",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Romania",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Brazil",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Ukraine",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "South Africa",
+        "probability": 0.0,
+        "signals": []
+      }
+    ],
+    "signals_used": [
+      "webmail_provider",
+      "real_ip_country"
+    ],
+    "signals_missing": [
+      "geolocation_country",
+      "isp_country",
+      "timezone_offset",
+      "timezone_region",
+      "vpn_exit_country",
+      "send_hour_local",
+      "hop_pattern",
+      "subject_language"
+    ],
+    "n_observations": 3,
+    "is_campaign_level": true,
+    "timestamp": "2026-03-06T17:28:57.280233"
+  },
+  "ACTOR_005": {
+    "primary_region": "Other",
+    "primary_probability": 0.289,
+    "aci_adjusted_prob": 0.289,
+    "tier": 1,
+    "tier_label": "Region-level",
+    "tier_description": "Broad geographic region identified",
+    "aci_score": 1.0,
+    "aci_breakdown": {
+      "layers_detected": {
+        "tor": false,
+        "residential_proxy": false,
+        "vpn": false,
+        "timestamp_spoof": false,
+        "datacenter": false
+      },
+      "penalty_applied": {
+        "tor": 0.0,
+        "residential_proxy": 0.0,
+        "vpn": 0.0,
+        "timestamp_spoof": 0.0,
+        "datacenter": 0.0
+      },
+      "interpretation": "Minimal obfuscation \u2014 signals are reliable"
+    },
+    "posterior": [
+      {
+        "region": "Other",
+        "probability": 0.289,
+        "signals": []
+      },
+      {
+        "region": "Nigeria",
+        "probability": 0.085,
+        "signals": []
+      },
+      {
+        "region": "India",
+        "probability": 0.08,
+        "signals": []
+      },
+      {
+        "region": "Russia",
+        "probability": 0.07,
+        "signals": []
+      },
+      {
+        "region": "China",
+        "probability": 0.065,
+        "signals": []
+      },
+      {
+        "region": "United States",
+        "probability": 0.055,
+        "signals": []
+      },
+      {
+        "region": "Romania",
+        "probability": 0.045,
+        "signals": []
+      },
+      {
+        "region": "Brazil",
+        "probability": 0.04,
+        "signals": []
+      },
+      {
+        "region": "Ukraine",
+        "probability": 0.038,
+        "signals": []
+      },
+      {
+        "region": "South Africa",
+        "probability": 0.035,
+        "signals": []
+      }
+    ],
+    "signals_used": [
+      "webmail_provider",
+      "real_ip_country"
+    ],
+    "signals_missing": [
+      "geolocation_country",
+      "isp_country",
+      "timezone_offset",
+      "timezone_region",
+      "vpn_exit_country",
+      "send_hour_local",
+      "hop_pattern",
+      "subject_language"
+    ],
+    "n_observations": 3,
+    "is_campaign_level": true,
+    "timestamp": "2026-03-06T17:28:57.280701"
+  },
+  "ACTOR_006": {
+    "primary_region": "United States",
+    "primary_probability": 1.0,
+    "aci_adjusted_prob": 0.95,
+    "tier": 4,
+    "tier_label": "ISP-level",
+    "tier_description": "Corroborated to ISP/city level \u2014 court order / ISP contact warranted",
+    "aci_score": 1.0,
+    "aci_breakdown": {
+      "layers_detected": {
+        "tor": false,
+        "residential_proxy": false,
+        "vpn": false,
+        "timestamp_spoof": false,
+        "datacenter": false
+      },
+      "penalty_applied": {
+        "tor": 0.0,
+        "residential_proxy": 0.0,
+        "vpn": 0.0,
+        "timestamp_spoof": 0.0,
+        "datacenter": 0.0
+      },
+      "interpretation": "Minimal obfuscation \u2014 signals are reliable"
+    },
+    "posterior": [
+      {
+        "region": "United States",
+        "probability": 1.0,
+        "signals": [
+          "real_ip_country"
+        ]
+      },
+      {
+        "region": "Other",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Nigeria",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "India",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Russia",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "China",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Romania",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Brazil",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Ukraine",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "South Africa",
+        "probability": 0.0,
+        "signals": []
+      }
+    ],
+    "signals_used": [
+      "webmail_provider",
+      "real_ip_country"
+    ],
+    "signals_missing": [
+      "geolocation_country",
+      "isp_country",
+      "timezone_offset",
+      "timezone_region",
+      "vpn_exit_country",
+      "send_hour_local",
+      "hop_pattern",
+      "subject_language"
+    ],
+    "n_observations": 3,
+    "is_campaign_level": true,
+    "timestamp": "2026-03-06T17:28:57.280927"
+  },
+  "ACTOR_007": {
+    "primary_region": "United States",
+    "primary_probability": 0.9999,
+    "aci_adjusted_prob": 0.8199,
+    "tier": 3,
+    "tier_label": "City-level",
+    "tier_description": "City and ISP identified with high confidence",
+    "aci_score": 0.82,
+    "aci_breakdown": {
+      "layers_detected": {
+        "tor": false,
+        "residential_proxy": false,
+        "vpn": true,
+        "timestamp_spoof": false,
+        "datacenter": false
+      },
+      "penalty_applied": {
+        "tor": 0.0,
+        "residential_proxy": 0.0,
+        "vpn": 0.18,
+        "timestamp_spoof": 0.0,
+        "datacenter": 0.0
+      },
+      "interpretation": "Minimal obfuscation \u2014 signals are reliable"
+    },
+    "posterior": [
+      {
+        "region": "United States",
+        "probability": 0.9999,
+        "signals": [
+          "real_ip_country"
+        ]
+      },
+      {
+        "region": "Other",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Nigeria",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "India",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Russia",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "China",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Romania",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Brazil",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Ukraine",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "South Africa",
+        "probability": 0.0,
+        "signals": []
+      }
+    ],
+    "signals_used": [
+      "webmail_provider",
+      "real_ip_country"
+    ],
+    "signals_missing": [
+      "geolocation_country",
+      "isp_country",
+      "timezone_offset",
+      "timezone_region",
+      "vpn_exit_country",
+      "send_hour_local",
+      "hop_pattern",
+      "subject_language"
+    ],
+    "n_observations": 2,
+    "is_campaign_level": true,
+    "timestamp": "2026-03-06T17:28:57.281100"
+  },
+  "ACTOR_008": {
+    "primary_region": "China",
+    "primary_probability": 0.9999,
+    "aci_adjusted_prob": 0.95,
+    "tier": 4,
+    "tier_label": "ISP-level",
+    "tier_description": "Corroborated to ISP/city level \u2014 court order / ISP contact warranted",
+    "aci_score": 1.0,
+    "aci_breakdown": {
+      "layers_detected": {
+        "tor": false,
+        "residential_proxy": false,
+        "vpn": false,
+        "timestamp_spoof": false,
+        "datacenter": false
+      },
+      "penalty_applied": {
+        "tor": 0.0,
+        "residential_proxy": 0.0,
+        "vpn": 0.0,
+        "timestamp_spoof": 0.0,
+        "datacenter": 0.0
+      },
+      "interpretation": "Minimal obfuscation \u2014 signals are reliable"
+    },
+    "posterior": [
+      {
+        "region": "China",
+        "probability": 0.9999,
+        "signals": [
+          "real_ip_country"
+        ]
+      },
+      {
+        "region": "Other",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Nigeria",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "India",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Russia",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "United States",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Romania",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Brazil",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Ukraine",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "South Africa",
+        "probability": 0.0,
+        "signals": []
+      }
+    ],
+    "signals_used": [
+      "webmail_provider",
+      "real_ip_country"
+    ],
+    "signals_missing": [
+      "geolocation_country",
+      "isp_country",
+      "timezone_offset",
+      "timezone_region",
+      "vpn_exit_country",
+      "send_hour_local",
+      "hop_pattern",
+      "subject_language"
+    ],
+    "n_observations": 2,
+    "is_campaign_level": true,
+    "timestamp": "2026-03-06T17:28:57.281270"
+  },
+  "ACTOR_009": {
+    "primary_region": "United States",
+    "primary_probability": 0.9999,
+    "aci_adjusted_prob": 0.8199,
+    "tier": 3,
+    "tier_label": "City-level",
+    "tier_description": "City and ISP identified with high confidence",
+    "aci_score": 0.82,
+    "aci_breakdown": {
+      "layers_detected": {
+        "tor": false,
+        "residential_proxy": false,
+        "vpn": true,
+        "timestamp_spoof": false,
+        "datacenter": false
+      },
+      "penalty_applied": {
+        "tor": 0.0,
+        "residential_proxy": 0.0,
+        "vpn": 0.18,
+        "timestamp_spoof": 0.0,
+        "datacenter": 0.0
+      },
+      "interpretation": "Minimal obfuscation \u2014 signals are reliable"
+    },
+    "posterior": [
+      {
+        "region": "United States",
+        "probability": 0.9999,
+        "signals": [
+          "real_ip_country"
+        ]
+      },
+      {
+        "region": "Other",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Nigeria",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "India",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Russia",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "China",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Romania",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Brazil",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Ukraine",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "South Africa",
+        "probability": 0.0,
+        "signals": []
+      }
+    ],
+    "signals_used": [
+      "webmail_provider",
+      "real_ip_country"
+    ],
+    "signals_missing": [
+      "geolocation_country",
+      "isp_country",
+      "timezone_offset",
+      "timezone_region",
+      "vpn_exit_country",
+      "send_hour_local",
+      "hop_pattern",
+      "subject_language"
+    ],
+    "n_observations": 2,
+    "is_campaign_level": true,
+    "timestamp": "2026-03-06T17:28:57.281578"
+  },
+  "ACTOR_010": {
+    "primary_region": "United States",
+    "primary_probability": 0.9999,
+    "aci_adjusted_prob": 0.95,
+    "tier": 4,
+    "tier_label": "ISP-level",
+    "tier_description": "Corroborated to ISP/city level \u2014 court order / ISP contact warranted",
+    "aci_score": 1.0,
+    "aci_breakdown": {
+      "layers_detected": {
+        "tor": false,
+        "residential_proxy": false,
+        "vpn": false,
+        "timestamp_spoof": false,
+        "datacenter": false
+      },
+      "penalty_applied": {
+        "tor": 0.0,
+        "residential_proxy": 0.0,
+        "vpn": 0.0,
+        "timestamp_spoof": 0.0,
+        "datacenter": 0.0
+      },
+      "interpretation": "Minimal obfuscation \u2014 signals are reliable"
+    },
+    "posterior": [
+      {
+        "region": "United States",
+        "probability": 0.9999,
+        "signals": [
+          "real_ip_country"
+        ]
+      },
+      {
+        "region": "Other",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Nigeria",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "India",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Russia",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "China",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Romania",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Brazil",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Ukraine",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "South Africa",
+        "probability": 0.0,
+        "signals": []
+      }
+    ],
+    "signals_used": [
+      "webmail_provider",
+      "real_ip_country"
+    ],
+    "signals_missing": [
+      "geolocation_country",
+      "isp_country",
+      "timezone_offset",
+      "timezone_region",
+      "vpn_exit_country",
+      "send_hour_local",
+      "hop_pattern",
+      "subject_language"
+    ],
+    "n_observations": 2,
+    "is_campaign_level": true,
+    "timestamp": "2026-03-06T17:28:57.281747"
+  },
+  "ACTOR_011": {
+    "primary_region": "United States",
+    "primary_probability": 0.9999,
+    "aci_adjusted_prob": 0.95,
+    "tier": 4,
+    "tier_label": "ISP-level",
+    "tier_description": "Corroborated to ISP/city level \u2014 court order / ISP contact warranted",
+    "aci_score": 1.0,
+    "aci_breakdown": {
+      "layers_detected": {
+        "tor": false,
+        "residential_proxy": false,
+        "vpn": false,
+        "timestamp_spoof": false,
+        "datacenter": false
+      },
+      "penalty_applied": {
+        "tor": 0.0,
+        "residential_proxy": 0.0,
+        "vpn": 0.0,
+        "timestamp_spoof": 0.0,
+        "datacenter": 0.0
+      },
+      "interpretation": "Minimal obfuscation \u2014 signals are reliable"
+    },
+    "posterior": [
+      {
+        "region": "United States",
+        "probability": 0.9999,
+        "signals": [
+          "real_ip_country"
+        ]
+      },
+      {
+        "region": "Other",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Nigeria",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "India",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Russia",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "China",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Romania",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Brazil",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Ukraine",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "South Africa",
+        "probability": 0.0,
+        "signals": []
+      }
+    ],
+    "signals_used": [
+      "webmail_provider",
+      "real_ip_country"
+    ],
+    "signals_missing": [
+      "geolocation_country",
+      "isp_country",
+      "timezone_offset",
+      "timezone_region",
+      "vpn_exit_country",
+      "send_hour_local",
+      "hop_pattern",
+      "subject_language"
+    ],
+    "n_observations": 2,
+    "is_campaign_level": true,
+    "timestamp": "2026-03-06T17:28:57.281915"
+  },
+  "ACTOR_012": {
+    "primary_region": "United States",
+    "primary_probability": 0.9999,
+    "aci_adjusted_prob": 0.95,
+    "tier": 4,
+    "tier_label": "ISP-level",
+    "tier_description": "Corroborated to ISP/city level \u2014 court order / ISP contact warranted",
+    "aci_score": 1.0,
+    "aci_breakdown": {
+      "layers_detected": {
+        "tor": false,
+        "residential_proxy": false,
+        "vpn": false,
+        "timestamp_spoof": false,
+        "datacenter": false
+      },
+      "penalty_applied": {
+        "tor": 0.0,
+        "residential_proxy": 0.0,
+        "vpn": 0.0,
+        "timestamp_spoof": 0.0,
+        "datacenter": 0.0
+      },
+      "interpretation": "Minimal obfuscation \u2014 signals are reliable"
+    },
+    "posterior": [
+      {
+        "region": "United States",
+        "probability": 0.9999,
+        "signals": [
+          "real_ip_country"
+        ]
+      },
+      {
+        "region": "Other",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Nigeria",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "India",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Russia",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "China",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Romania",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Brazil",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Ukraine",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "South Africa",
+        "probability": 0.0,
+        "signals": []
+      }
+    ],
+    "signals_used": [
+      "webmail_provider",
+      "real_ip_country"
+    ],
+    "signals_missing": [
+      "geolocation_country",
+      "isp_country",
+      "timezone_offset",
+      "timezone_region",
+      "vpn_exit_country",
+      "send_hour_local",
+      "hop_pattern",
+      "subject_language"
+    ],
+    "n_observations": 2,
+    "is_campaign_level": true,
+    "timestamp": "2026-03-06T17:28:57.282121"
+  },
+  "ACTOR_013": {
+    "primary_region": "United States",
+    "primary_probability": 0.9999,
+    "aci_adjusted_prob": 0.8199,
+    "tier": 3,
+    "tier_label": "City-level",
+    "tier_description": "City and ISP identified with high confidence",
+    "aci_score": 0.82,
+    "aci_breakdown": {
+      "layers_detected": {
+        "tor": false,
+        "residential_proxy": false,
+        "vpn": true,
+        "timestamp_spoof": false,
+        "datacenter": false
+      },
+      "penalty_applied": {
+        "tor": 0.0,
+        "residential_proxy": 0.0,
+        "vpn": 0.18,
+        "timestamp_spoof": 0.0,
+        "datacenter": 0.0
+      },
+      "interpretation": "Minimal obfuscation \u2014 signals are reliable"
+    },
+    "posterior": [
+      {
+        "region": "United States",
+        "probability": 0.9999,
+        "signals": [
+          "real_ip_country"
+        ]
+      },
+      {
+        "region": "Other",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Nigeria",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "India",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Russia",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "China",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Romania",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Brazil",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Ukraine",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "South Africa",
+        "probability": 0.0,
+        "signals": []
+      }
+    ],
+    "signals_used": [
+      "webmail_provider",
+      "real_ip_country"
+    ],
+    "signals_missing": [
+      "geolocation_country",
+      "isp_country",
+      "timezone_offset",
+      "timezone_region",
+      "vpn_exit_country",
+      "send_hour_local",
+      "hop_pattern",
+      "subject_language"
+    ],
+    "n_observations": 2,
+    "is_campaign_level": true,
+    "timestamp": "2026-03-06T17:28:57.282316"
+  },
+  "ACTOR_014": {
+    "primary_region": "Other",
+    "primary_probability": 0.289,
+    "aci_adjusted_prob": 0.289,
+    "tier": 1,
+    "tier_label": "Region-level",
+    "tier_description": "Broad geographic region identified",
+    "aci_score": 1.0,
+    "aci_breakdown": {
+      "layers_detected": {
+        "tor": false,
+        "residential_proxy": false,
+        "vpn": false,
+        "timestamp_spoof": false,
+        "datacenter": false
+      },
+      "penalty_applied": {
+        "tor": 0.0,
+        "residential_proxy": 0.0,
+        "vpn": 0.0,
+        "timestamp_spoof": 0.0,
+        "datacenter": 0.0
+      },
+      "interpretation": "Minimal obfuscation \u2014 signals are reliable"
+    },
+    "posterior": [
+      {
+        "region": "Other",
+        "probability": 0.289,
+        "signals": []
+      },
+      {
+        "region": "Nigeria",
+        "probability": 0.085,
+        "signals": []
+      },
+      {
+        "region": "India",
+        "probability": 0.08,
+        "signals": []
+      },
+      {
+        "region": "Russia",
+        "probability": 0.07,
+        "signals": []
+      },
+      {
+        "region": "China",
+        "probability": 0.065,
+        "signals": []
+      },
+      {
+        "region": "United States",
+        "probability": 0.055,
+        "signals": []
+      },
+      {
+        "region": "Romania",
+        "probability": 0.045,
+        "signals": []
+      },
+      {
+        "region": "Brazil",
+        "probability": 0.04,
+        "signals": []
+      },
+      {
+        "region": "Ukraine",
+        "probability": 0.038,
+        "signals": []
+      },
+      {
+        "region": "South Africa",
+        "probability": 0.035,
+        "signals": []
+      }
+    ],
+    "signals_used": [
+      "webmail_provider",
+      "real_ip_country"
+    ],
+    "signals_missing": [
+      "geolocation_country",
+      "isp_country",
+      "timezone_offset",
+      "timezone_region",
+      "vpn_exit_country",
+      "send_hour_local",
+      "hop_pattern",
+      "subject_language"
+    ],
+    "n_observations": 2,
+    "is_campaign_level": true,
+    "timestamp": "2026-03-06T17:28:57.282585"
+  },
+  "ACTOR_015": {
+    "primary_region": "United States",
+    "primary_probability": 0.9999,
+    "aci_adjusted_prob": 0.95,
+    "tier": 4,
+    "tier_label": "ISP-level",
+    "tier_description": "Corroborated to ISP/city level \u2014 court order / ISP contact warranted",
+    "aci_score": 1.0,
+    "aci_breakdown": {
+      "layers_detected": {
+        "tor": false,
+        "residential_proxy": false,
+        "vpn": false,
+        "timestamp_spoof": false,
+        "datacenter": false
+      },
+      "penalty_applied": {
+        "tor": 0.0,
+        "residential_proxy": 0.0,
+        "vpn": 0.0,
+        "timestamp_spoof": 0.0,
+        "datacenter": 0.0
+      },
+      "interpretation": "Minimal obfuscation \u2014 signals are reliable"
+    },
+    "posterior": [
+      {
+        "region": "United States",
+        "probability": 0.9999,
+        "signals": [
+          "real_ip_country"
+        ]
+      },
+      {
+        "region": "Other",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Nigeria",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "India",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Russia",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "China",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Romania",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Brazil",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Ukraine",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "South Africa",
+        "probability": 0.0,
+        "signals": []
+      }
+    ],
+    "signals_used": [
+      "webmail_provider",
+      "real_ip_country"
+    ],
+    "signals_missing": [
+      "geolocation_country",
+      "isp_country",
+      "timezone_offset",
+      "timezone_region",
+      "vpn_exit_country",
+      "send_hour_local",
+      "hop_pattern",
+      "subject_language"
+    ],
+    "n_observations": 2,
+    "is_campaign_level": true,
+    "timestamp": "2026-03-06T17:28:57.282972"
+  },
+  "ACTOR_016": {
+    "primary_region": "India",
+    "primary_probability": 0.9999,
+    "aci_adjusted_prob": 0.95,
+    "tier": 4,
+    "tier_label": "ISP-level",
+    "tier_description": "Corroborated to ISP/city level \u2014 court order / ISP contact warranted",
+    "aci_score": 1.0,
+    "aci_breakdown": {
+      "layers_detected": {
+        "tor": false,
+        "residential_proxy": false,
+        "vpn": false,
+        "timestamp_spoof": false,
+        "datacenter": false
+      },
+      "penalty_applied": {
+        "tor": 0.0,
+        "residential_proxy": 0.0,
+        "vpn": 0.0,
+        "timestamp_spoof": 0.0,
+        "datacenter": 0.0
+      },
+      "interpretation": "Minimal obfuscation \u2014 signals are reliable"
+    },
+    "posterior": [
+      {
+        "region": "India",
+        "probability": 0.9999,
+        "signals": [
+          "real_ip_country"
+        ]
+      },
+      {
+        "region": "Other",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Nigeria",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Russia",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "China",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "United States",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Romania",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Brazil",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Ukraine",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "South Africa",
+        "probability": 0.0,
+        "signals": []
+      }
+    ],
+    "signals_used": [
+      "webmail_provider",
+      "real_ip_country"
+    ],
+    "signals_missing": [
+      "geolocation_country",
+      "isp_country",
+      "timezone_offset",
+      "timezone_region",
+      "vpn_exit_country",
+      "send_hour_local",
+      "hop_pattern",
+      "subject_language"
+    ],
+    "n_observations": 2,
+    "is_campaign_level": true,
+    "timestamp": "2026-03-06T17:28:57.283131"
+  },
+  "ACTOR_017": {
+    "primary_region": "Other",
+    "primary_probability": 0.289,
+    "aci_adjusted_prob": 0.237,
+    "tier": 0,
+    "tier_label": "Unknown",
+    "tier_description": "Insufficient evidence to attribute geographically",
+    "aci_score": 0.82,
+    "aci_breakdown": {
+      "layers_detected": {
+        "tor": false,
+        "residential_proxy": false,
+        "vpn": true,
+        "timestamp_spoof": false,
+        "datacenter": false
+      },
+      "penalty_applied": {
+        "tor": 0.0,
+        "residential_proxy": 0.0,
+        "vpn": 0.18,
+        "timestamp_spoof": 0.0,
+        "datacenter": 0.0
+      },
+      "interpretation": "Minimal obfuscation \u2014 signals are reliable"
+    },
+    "posterior": [
+      {
+        "region": "Other",
+        "probability": 0.289,
+        "signals": []
+      },
+      {
+        "region": "Nigeria",
+        "probability": 0.085,
+        "signals": []
+      },
+      {
+        "region": "India",
+        "probability": 0.08,
+        "signals": []
+      },
+      {
+        "region": "Russia",
+        "probability": 0.07,
+        "signals": []
+      },
+      {
+        "region": "China",
+        "probability": 0.065,
+        "signals": []
+      },
+      {
+        "region": "United States",
+        "probability": 0.055,
+        "signals": []
+      },
+      {
+        "region": "Romania",
+        "probability": 0.045,
+        "signals": []
+      },
+      {
+        "region": "Brazil",
+        "probability": 0.04,
+        "signals": []
+      },
+      {
+        "region": "Ukraine",
+        "probability": 0.038,
+        "signals": []
+      },
+      {
+        "region": "South Africa",
+        "probability": 0.035,
+        "signals": []
+      }
+    ],
+    "signals_used": [
+      "webmail_provider",
+      "real_ip_country"
+    ],
+    "signals_missing": [
+      "geolocation_country",
+      "isp_country",
+      "timezone_offset",
+      "timezone_region",
+      "vpn_exit_country",
+      "send_hour_local",
+      "hop_pattern",
+      "subject_language"
+    ],
+    "n_observations": 2,
+    "is_campaign_level": true,
+    "timestamp": "2026-03-06T17:28:57.283434"
+  },
+  "ACTOR_018": {
+    "primary_region": "India",
+    "primary_probability": 0.9999,
+    "aci_adjusted_prob": 0.95,
+    "tier": 4,
+    "tier_label": "ISP-level",
+    "tier_description": "Corroborated to ISP/city level \u2014 court order / ISP contact warranted",
+    "aci_score": 1.0,
+    "aci_breakdown": {
+      "layers_detected": {
+        "tor": false,
+        "residential_proxy": false,
+        "vpn": false,
+        "timestamp_spoof": false,
+        "datacenter": false
+      },
+      "penalty_applied": {
+        "tor": 0.0,
+        "residential_proxy": 0.0,
+        "vpn": 0.0,
+        "timestamp_spoof": 0.0,
+        "datacenter": 0.0
+      },
+      "interpretation": "Minimal obfuscation \u2014 signals are reliable"
+    },
+    "posterior": [
+      {
+        "region": "India",
+        "probability": 0.9999,
+        "signals": [
+          "real_ip_country"
+        ]
+      },
+      {
+        "region": "Other",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Nigeria",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Russia",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "China",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "United States",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Romania",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Brazil",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "Ukraine",
+        "probability": 0.0,
+        "signals": []
+      },
+      {
+        "region": "South Africa",
+        "probability": 0.0,
+        "signals": []
+      }
+    ],
+    "signals_used": [
+      "webmail_provider",
+      "real_ip_country"
+    ],
+    "signals_missing": [
+      "geolocation_country",
+      "isp_country",
+      "timezone_offset",
+      "timezone_region",
+      "vpn_exit_country",
+      "send_hour_local",
+      "hop_pattern",
+      "subject_language"
+    ],
+    "n_observations": 2,
+    "is_campaign_level": true,
+    "timestamp": "2026-03-06T17:28:57.283749"
+  },
+  "ACTOR_019": {
+    "primary_region": "Other",
+    "primary_probability": 0.289,
+    "aci_adjusted_prob": 0.289,
+    "tier": 1,
+    "tier_label": "Region-level",
+    "tier_description": "Broad geographic region identified",
+    "aci_score": 1.0,
+    "aci_breakdown": {
+      "layers_detected": {
+        "tor": false,
+        "residential_proxy": false,
+        "vpn": false,
+        "timestamp_spoof": false,
+        "datacenter": false
+      },
+      "penalty_applied": {
+        "tor": 0.0,
+        "residential_proxy": 0.0,
+        "vpn": 0.0,
+        "timestamp_spoof": 0.0,
+        "datacenter": 0.0
+      },
+      "interpretation": "Minimal obfuscation \u2014 signals are reliable"
+    },
+    "posterior": [
+      {
+        "region": "Other",
+        "probability": 0.289,
+        "signals": []
+      },
+      {
+        "region": "Nigeria",
+        "probability": 0.085,
+        "signals": []
+      },
+      {
+        "region": "India",
+        "probability": 0.08,
+        "signals": []
+      },
+      {
+        "region": "Russia",
+        "probability": 0.07,
+        "signals": []
+      },
+      {
+        "region": "China",
+        "probability": 0.065,
+        "signals": []
+      },
+      {
+        "region": "United States",
+        "probability": 0.055,
+        "signals": []
+      },
+      {
+        "region": "Romania",
+        "probability": 0.045,
+        "signals": []
+      },
+      {
+        "region": "Brazil",
+        "probability": 0.04,
+        "signals": []
+      },
+      {
+        "region": "Ukraine",
+        "probability": 0.038,
+        "signals": []
+      },
+      {
+        "region": "South Africa",
+        "probability": 0.035,
+        "signals": []
+      }
+    ],
+    "signals_used": [
+      "webmail_provider",
+      "real_ip_country"
+    ],
+    "signals_missing": [
+      "geolocation_country",
+      "isp_country",
+      "timezone_offset",
+      "timezone_region",
+      "vpn_exit_country",
+      "send_hour_local",
+      "hop_pattern",
+      "subject_language"
+    ],
+    "n_observations": 2,
+    "is_campaign_level": true,
+    "timestamp": "2026-03-06T17:28:57.286076"
+  }
+}

@@ -1,40 +1,37 @@
 #!/usr/bin/env python3
 """
-HUNTЕРТRACE — AUTOMATED CORPUS BUILDER v2
+HUNTЕРТRACE — AUTOMATED CORPUS BUILDER v3
 ==========================================
-Downloads real spam/phishing emails from public sources, auto-labels
-each one via IP geolocation, and writes a ready-to-use corpus.json.
+Downloads real phishing/spam emails from multiple public sources,
+auto-labels each one via IP geolocation, writes corpus.json.
 
-Sources (all free, no login):
-  SpamAssassin Public Corpus — 6 tarballs, ~6,000 real emails with headers
-
-Auto-labeling:
-  Parse Received: chain → geolocate public IPs → write ground truth label
+Sources:
+  1. SpamAssassin Public Corpus (7 tarballs, ~6000 emails)
+  2. Nazario Phishing Corpus    (2400+ real phishing emails, mbox format)
+  3. CSDMC2010 Spam Corpus      (4327 spam emails with full headers)
 
 Usage:
     cd src
-    python autoCorpusBuilder.py                         # 150 emails default
+    python autoCorpusBuilder.py                        # 150 default
     python autoCorpusBuilder.py --target 200
-    python autoCorpusBuilder.py --eml-dir /my/emails/  # use local files
-    python autoCorpusBuilder.py --target 50 --verbose
+    python autoCorpusBuilder.py --eml-dir /my/emails/
+    python autoCorpusBuilder.py --verbose --target 50
 """
 
-import os, re, sys, json, time, email, tarfile, hashlib
+import os, re, sys, json, time, email, tarfile, zipfile, hashlib, mailbox
 import argparse, urllib.request, urllib.error
 from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
-from typing import Optional, Dict, List, Tuple
-
+from typing import Optional, Dict, List
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
 
 GEO_API        = "http://ip-api.com/json/{ip}?fields=status,country,countryCode,isp,org,as,proxy,hosting"
-GEO_RATE_LIMIT = 1.5   # seconds between requests — ip-api free = 45/min
+GEO_RATE_LIMIT = 1.5
 
-# All 6 SpamAssassin tarballs (gives ~6000 emails total)
 SPAMASSASSIN_CORPUS = [
     ("20021010_easy_ham.tar.bz2",   "https://spamassassin.apache.org/old/publiccorpus/20021010_easy_ham.tar.bz2"),
     ("20021010_spam.tar.bz2",       "https://spamassassin.apache.org/old/publiccorpus/20021010_spam.tar.bz2"),
@@ -44,6 +41,16 @@ SPAMASSASSIN_CORPUS = [
     ("20030228_spam_2.tar.bz2",     "https://spamassassin.apache.org/old/publiccorpus/20030228_spam_2.tar.bz2"),
     ("20050311_spam_2.tar.bz2",     "https://spamassassin.apache.org/old/publiccorpus/20050311_spam_2.tar.bz2"),
 ]
+
+# Nazario phishing corpus — real reported phishing emails, mbox format
+# Mirrored on GitHub (original monkey.org/~jose/phishing/ often offline)
+NAZARIO_URLS = [
+    "https://raw.githubusercontent.com/diegoocampoh/MachineLearningPhishing/master/phishing3.mbox",
+    "http://monkey.org/~jose/phishing/phishing3.mbox",   # original (often slow)
+]
+
+# CSDMC2010 — classic labeled spam competition dataset
+CSDMC_URL = "https://github.com/dslab-epfl/phishing/raw/master/spam/CSDMC2010_SPAM.zip"
 
 ISO_NAMES = {
     "NG":"Nigeria","IN":"India","RU":"Russia","CN":"China","US":"United States",
@@ -55,7 +62,7 @@ ISO_NAMES = {
     "BD":"Bangladesh","AU":"Australia","CA":"Canada","MX":"Mexico","AR":"Argentina",
     "SA":"Saudi Arabia","AE":"UAE","IL":"Israel","JP":"Japan","KR":"South Korea",
     "ES":"Spain","IT":"Italy","SE":"Sweden","NO":"Norway","FI":"Finland",
-    "CZ":"Czech Republic","HU":"Hungary","SK":"Slovakia","AT":"Austria",
+    "CZ":"Czech Republic","HU":"Hungary","AT":"Austria","PT":"Portugal",
 }
 
 CC_TO_REGION = {
@@ -67,7 +74,7 @@ CC_TO_REGION = {
     "RU":"Europe","UA":"Europe","RO":"Europe","BG":"Europe","BY":"Europe",
     "PL":"Europe","DE":"Europe","FR":"Europe","GB":"Europe","NL":"Europe",
     "ES":"Europe","IT":"Europe","SE":"Europe","NO":"Europe","FI":"Europe",
-    "CZ":"Europe","HU":"Europe","SK":"Europe","AT":"Europe",
+    "CZ":"Europe","HU":"Europe","AT":"Europe","PT":"Europe",
     "US":"Americas","BR":"Americas","CA":"Americas","MX":"Americas",
     "CO":"Americas","AR":"Americas","CL":"Americas",
     "SA":"Middle East","AE":"Middle East","IL":"Middle East",
@@ -77,19 +84,14 @@ CC_TO_REGION = {
 DATACENTER_ORGS = [
     "amazon","aws","google","azure","microsoft","digitalocean","linode",
     "vultr","hetzner","ovh","scaleway","leaseweb","cloudflare","akamai",
-    "fastly","rackspace","softlayer","internap","zenlayer","choopa",
-    "quadranet","psychz","tzulo","frantech","serverius","reliablesite",
-    "hosting","datacenter","data center","vps","colocation","colo",
-    "selectel","timeweb","beget","aliyun","alibaba","tencent","qcloud",
+    "fastly","rackspace","hosting","datacenter","data center","vps","colo",
+    "selectel","timeweb","beget","aliyun","alibaba","tencent",
 ]
 
-# Mail relay services whose IPs are NOT the attacker's IP
 RELAY_ORGS = [
-    "google","yahoo","microsoft","amazon ses","sendgrid",
-    "mailchimp","sparkpost","postmark","mailgun","exacttarget",
-    "constant contact","sailthru","klaviyo","marketo",
+    "google","yahoo","microsoft","amazon ses","sendgrid","mailchimp",
+    "sparkpost","postmark","mailgun","exacttarget","constant contact",
 ]
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  IP UTILITIES
@@ -140,13 +142,10 @@ def org_is_relay(geo: dict) -> bool:
 
 
 def classify_ip(geo: dict) -> str:
-    if geo.get("proxy"):
-        return "vpn"
-    if geo.get("hosting"):
-        return "datacenter"
+    if geo.get("proxy"): return "vpn"
+    if geo.get("hosting"): return "datacenter"
     org = (geo.get("org") or geo.get("isp") or "").lower()
-    if any(kw in org for kw in DATACENTER_ORGS):
-        return "datacenter"
+    if any(kw in org for kw in DATACENTER_ORGS): return "datacenter"
     return "residential"
 
 
@@ -164,34 +163,26 @@ def parse_email(raw: str) -> Optional[dict]:
     if not received:
         return None
 
-    # Collect all public IPs from Received chain (bottom = first hop)
     all_ips = []
     for hdr in received:
         all_ips.extend(extract_ips(hdr))
 
-    # Also check X-Originating-IP
     x_orig = (msg.get("X-Originating-IP") or msg.get("X-Originating-ip") or "").strip().strip("[]")
-
     public_ips = [ip for ip in all_ips if not is_private(ip)]
     if x_orig and not is_private(x_orig):
-        # Put X-Originating-IP first — highest priority
         public_ips = [x_orig] + [ip for ip in public_ips if ip != x_orig]
 
     if not public_ips:
         return None
 
-    # Date / timezone
-    date_str  = msg.get("Date", "")
+    date_str = msg.get("Date", "")
     tz_offset = None
     send_hour = None
     m = re.search(r'([+-]\d{4})', date_str)
-    if m:
-        tz_offset = m.group(1)
+    if m: tz_offset = m.group(1)
     m = re.search(r'(\d{2}):\d{2}:\d{2}', date_str)
-    if m:
-        send_hour = int(m.group(1))
+    if m: send_hour = int(m.group(1))
 
-    # Webmail provider
     from_addr = msg.get("From", "").lower()
     received_str = " ".join(received).lower()
     webmail = "none"
@@ -205,22 +196,14 @@ def parse_email(raw: str) -> Optional[dict]:
             webmail = provider
             break
 
-    # DKIM domain
-    dkim = msg.get("DKIM-Signature", "")
-    dkim_domain = None
-    m = re.search(r'\bd=([^\s;]+)', dkim)
-    if m:
-        dkim_domain = m.group(1).strip(";")
-
     return {
-        "public_ips":   public_ips,
-        "has_x_orig":   bool(x_orig and not is_private(x_orig)),
-        "tz_offset":    tz_offset,
-        "send_hour":    send_hour,
-        "webmail":      webmail,
-        "from_addr":    from_addr,
-        "dkim_domain":  dkim_domain,
-        "subject":      msg.get("Subject", ""),
+        "public_ips": public_ips,
+        "has_x_orig": bool(x_orig and not is_private(x_orig)),
+        "tz_offset":  tz_offset,
+        "send_hour":  send_hour,
+        "webmail":    webmail,
+        "from_addr":  from_addr,
+        "subject":    msg.get("Subject", ""),
     }
 
 
@@ -229,17 +212,12 @@ def parse_email(raw: str) -> Optional[dict]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def auto_label(parsed: dict, geo_cache: dict, verbose: bool = False) -> Optional[dict]:
-    """
-    Try each public IP from most-reliable to least.
-    Return the first successful non-relay geolocation.
-    """
     for ip in parsed["public_ips"]:
         geo = geolocate(ip, geo_cache)
         if not geo:
             continue
         if org_is_relay(geo):
-            if verbose:
-                print(f"      skip {ip} — relay ({geo.get('org','')})")
+            if verbose: print(f"      skip {ip} — relay ({geo.get('org','')})")
             continue
 
         cc           = geo.get("countryCode", "XX")
@@ -247,86 +225,128 @@ def auto_label(parsed: dict, geo_cache: dict, verbose: bool = False) -> Optional
         region       = CC_TO_REGION.get(cc, "Unknown")
         ip_type      = classify_ip(geo)
         has_vpn      = ip_type in ("vpn", "datacenter")
+        confidence   = "high" if parsed["has_x_orig"] and ip == parsed["public_ips"][0] else "medium"
 
-        # Confidence: X-Originating-IP = high, else medium
-        confidence = "high" if parsed["has_x_orig"] and ip == parsed["public_ips"][0] else "medium"
-
-        # Tier estimate
         tier = 1
-        if parsed["tz_offset"]:
-            tier = 2
-        if parsed["has_x_orig"] and ip == parsed["public_ips"][0]:
-            tier = 3
+        if parsed["tz_offset"]: tier = 2
+        if parsed["has_x_orig"] and ip == parsed["public_ips"][0]: tier = 3
 
         return {
-            "ip":           ip,
-            "ip_type":      ip_type,
-            "country":      cc,
-            "country_name": country_name,
-            "region":       region,
-            "tier":         tier,
-            "confidence":   confidence,
-            "has_vpn":      has_vpn,
-            "isp":          geo.get("isp", ""),
+            "ip": ip, "ip_type": ip_type, "country": cc,
+            "country_name": country_name, "region": region,
+            "tier": tier, "confidence": confidence,
+            "has_vpn": has_vpn, "isp": geo.get("isp", ""),
         }
-
     return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  SPAMASSASSIN ITERATOR — fixed version
+#  SOURCE ITERATORS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def iter_spamassassin(download_dir: Path, verbose: bool):
-    """
-    Download all SpamAssassin tarballs and yield (name, raw_email) pairs.
-    No limit here — caller decides when to stop.
-    """
-    download_dir.mkdir(parents=True, exist_ok=True)
+def _download(url: str, dest: Path, label: str) -> bool:
+    if dest.exists():
+        print(f"  [cached]   {label}")
+        return True
+    print(f"  [download] {label} ...", end="", flush=True)
+    try:
+        urllib.request.urlretrieve(url, dest)
+        print(f" ({dest.stat().st_size // 1024} KB)")
+        return True
+    except Exception as e:
+        print(f" FAILED: {e}")
+        if dest.exists(): dest.unlink()
+        return False
 
+
+def iter_spamassassin(dl_dir: Path):
     for fname, url in SPAMASSASSIN_CORPUS:
-        local = download_dir / fname
-        if not local.exists():
-            print(f"  [download] {fname}  ", end="", flush=True)
-            try:
-                urllib.request.urlretrieve(url, local)
-                print(f"({local.stat().st_size // 1024} KB)")
-            except Exception as e:
-                print(f"FAILED: {e}")
-                continue
-        else:
-            print(f"  [cached]   {fname}")
-
+        local = dl_dir / fname
+        if not _download(url, local, fname):
+            continue
         try:
             with tarfile.open(local, "r:bz2") as tar:
                 members = [m for m in tar.getmembers() if m.isfile()]
-                print(f"             → {len(members)} files inside")
+                print(f"             → {len(members)} files")
                 for member in members:
                     try:
                         f = tar.extractfile(member)
-                        if f is None:
-                            continue
+                        if f is None: continue
                         raw = f.read().decode("utf-8", errors="replace")
-                        if len(raw) < 100:
-                            continue
-                        # Use full archive path as name for uniqueness
-                        yield member.name, raw
+                        if len(raw) >= 100:
+                            yield member.name, raw
                     except Exception:
                         continue
         except Exception as e:
             print(f"  [!] Extract failed: {e}")
-            continue
+
+
+def iter_nazario(dl_dir: Path):
+    """Download and iterate Nazario phishing corpus (mbox format)."""
+    local = dl_dir / "phishing3.mbox"
+    downloaded = False
+    for url in NAZARIO_URLS:
+        if _download(url, local, "phishing3.mbox (Nazario corpus)"):
+            downloaded = True
+            break
+    if not downloaded:
+        print("  [!] Nazario corpus unavailable — skipping")
+        return
+
+    try:
+        mbox = mailbox.mbox(str(local))
+        count = 0
+        for i, msg in enumerate(mbox):
+            try:
+                raw = msg.as_string()
+                if len(raw) >= 100:
+                    yield f"nazario_{i:05d}", raw
+                    count += 1
+            except Exception:
+                continue
+        print(f"  [nazario]  → {count} messages")
+    except Exception as e:
+        print(f"  [!] Nazario parse failed: {e}")
+
+
+def iter_csdmc(dl_dir: Path):
+    """Download and iterate CSDMC2010 spam corpus (zip of .eml files)."""
+    local = dl_dir / "CSDMC2010_SPAM.zip"
+    if not _download(CSDMC_URL, local, "CSDMC2010_SPAM.zip"):
+        return
+    try:
+        with zipfile.ZipFile(local, "r") as z:
+            names = [n for n in z.namelist() if n.endswith(".eml") or "/SPAM/" in n]
+            print(f"  [csdmc]    → {len(names)} files")
+            for name in names:
+                try:
+                    raw = z.read(name).decode("utf-8", errors="replace")
+                    if len(raw) >= 100:
+                        yield name, raw
+                except Exception:
+                    continue
+    except Exception as e:
+        print(f"  [!] CSDMC parse failed: {e}")
 
 
 def iter_local(eml_dir: Path):
-    """Yield (name, raw) from all .eml files in a directory."""
     files = sorted(eml_dir.rglob("*.eml")) + sorted(eml_dir.rglob("*.msg"))
-    print(f"  [local] {len(files)} files in {eml_dir}")
+    print(f"  [local]    → {len(files)} files in {eml_dir}")
     for f in files:
         try:
             yield f.name, f.read_text(errors="replace")
         except Exception:
             continue
+
+
+def all_sources(dl_dir: Path):
+    """Chain all sources in order of quality."""
+    print("\n[sources] SpamAssassin corpus:")
+    yield from iter_spamassassin(dl_dir)
+    print("\n[sources] Nazario phishing corpus:")
+    yield from iter_nazario(dl_dir)
+    print("\n[sources] CSDMC2010 spam corpus:")
+    yield from iter_csdmc(dl_dir)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -348,11 +368,12 @@ def build_corpus(
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     eml_out_dir.mkdir(parents=True, exist_ok=True)
+    dl_dir.mkdir(parents=True, exist_ok=True)
 
     # Resume
     entries: List[dict] = []
-    seen_ids: set = set()
-    seen_ips: set = set()   # avoid geolocating same origin IP twice
+    seen_ids:  set = set()
+    seen_ips:  set = set()
 
     if resume and out_path.exists():
         try:
@@ -367,7 +388,7 @@ def build_corpus(
 
     needed = target - len(entries)
     if needed <= 0:
-        print(f"[autoCorpusBuilder] Already have {len(entries)}/{target}. Done.")
+        print(f"[autoCorpusBuilder] Already at {len(entries)}/{target}. Done.")
         _save(entries, out_path)
         return
 
@@ -375,7 +396,7 @@ def build_corpus(
 
     geo_cache: dict = {}
     processed = skipped_parse = skipped_geo = skipped_dupe = 0
-    iterator  = iter_local(Path(eml_dir)) if eml_dir else iter_spamassassin(dl_dir, verbose)
+    iterator  = iter_local(Path(eml_dir)) if eml_dir else all_sources(dl_dir)
 
     for raw_name, raw_email in iterator:
         if len(entries) >= target:
@@ -387,8 +408,6 @@ def build_corpus(
             continue
 
         processed += 1
-
-        # Progress every 50 processed
         if processed % 50 == 0:
             pct = len(entries) / target * 100
             print(f"  [{len(entries)}/{target} = {pct:.0f}%]  "
@@ -400,28 +419,23 @@ def build_corpus(
             skipped_parse += 1
             continue
 
-        # Skip if we've already labeled an email from this exact IP
         primary_ip = parsed["public_ips"][0] if parsed["public_ips"] else None
         if primary_ip and primary_ip in seen_ips:
             skipped_dupe += 1
             continue
 
         label = auto_label(parsed, geo_cache, verbose=verbose)
-        if not label:
+        if not label or label["country"] in ("XX", ""):
             skipped_geo += 1
             continue
 
-        if label["country"] in ("XX", ""):
-            skipped_geo += 1
-            continue
-
-        # Save .eml
-        eml_filename = f"{email_id}.eml"
-        (eml_out_dir / eml_filename).write_text(raw_email, encoding="utf-8", errors="replace")
+        (eml_out_dir / f"{email_id}.eml").write_text(
+            raw_email, encoding="utf-8", errors="replace"
+        )
 
         entry = {
             "id":   email_id,
-            "file": str(Path(eml_out_dir.name) / eml_filename),
+            "file": str(Path(eml_out_dir.name) / f"{email_id}.eml"),
             "ground_truth": {
                 "country":      label["country"],
                 "country_name": label["country_name"],
@@ -445,12 +459,11 @@ def build_corpus(
         }
         entries.append(entry)
         seen_ids.add(email_id)
-        if primary_ip:
-            seen_ips.add(primary_ip)
+        if primary_ip: seen_ips.add(primary_ip)
 
         if verbose:
             print(f"  ✓ {label['country']} ({label['ip_type']:<12}) "
-                  f"tier={label['tier']} {label['isp'][:30]}")
+                  f"tier={label['tier']}  {label['isp'][:35]}")
 
         if len(entries) % 25 == 0:
             _save(entries, out_path)
@@ -463,11 +476,11 @@ def build_corpus(
 def _save(entries, out_path):
     corpus = {
         "metadata": {
-            "version":        "1.0",
-            "created_at":     datetime.now().isoformat(),
-            "total_emails":   len(entries),
-            "label_schema":   "ISO-3166-1 alpha-2, auto-labeled via ip-api.com",
-            "labeling_method":"autoCorpusBuilder v2",
+            "version":         "1.0",
+            "created_at":      datetime.now().isoformat(),
+            "total_emails":    len(entries),
+            "label_schema":    "ISO-3166-1 alpha-2, auto-labeled via ip-api.com",
+            "labeling_method": "autoCorpusBuilder v3",
         },
         "emails": entries,
     }
@@ -476,7 +489,7 @@ def _save(entries, out_path):
         json.dump(corpus, f, indent=2)
 
 
-def _print_summary(entries, target, processed, skipped_parse, skipped_geo, out_path):
+def _print_summary(entries, target, processed, sp, sg, out_path):
     dist = defaultdict(int)
     for e in entries:
         dist[e["ground_truth"]["country"]] += 1
@@ -486,8 +499,8 @@ def _print_summary(entries, target, processed, skipped_parse, skipped_geo, out_p
     print(f"{'='*60}")
     print(f"  Collected  : {len(entries)} / {target}")
     print(f"  Processed  : {processed}")
-    print(f"  No parse   : {skipped_parse}")
-    print(f"  No geo     : {skipped_geo}")
+    print(f"  No parse   : {sp}")
+    print(f"  No geo     : {sg}")
     print(f"  Output     : {out_path}")
     print(f"\n  Top countries:")
     for cc, n in sorted(dist.items(), key=lambda x: -x[1])[:12]:
@@ -496,8 +509,9 @@ def _print_summary(entries, target, processed, skipped_parse, skipped_geo, out_p
     print(f"{'='*60}\n")
 
     if len(entries) < target:
-        print(f"[!] Collected {len(entries)}/{target}.")
-        print(f"    To get more emails, add your own:")
+        shortage = target - len(entries)
+        print(f"[!] {shortage} emails short of target.")
+        print(f"    Add your own .eml files:")
         print(f"    python autoCorpusBuilder.py --eml-dir /path/to/emails/ --target {target}\n")
 
 
@@ -507,12 +521,11 @@ def _print_summary(entries, target, processed, skipped_parse, skipped_geo, out_p
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="HunterTrace Automated Corpus Builder v2"
+        description="HunterTrace Automated Corpus Builder v3"
     )
     parser.add_argument("--target",    type=int, default=150)
     parser.add_argument("--out",       default="../mails/corpus.json")
-    parser.add_argument("--eml-dir",   default=None,
-                        help="Use local .eml files instead of downloading")
+    parser.add_argument("--eml-dir",   default=None)
     parser.add_argument("--eml-out",   default="../mails/emails/")
     parser.add_argument("--verbose",   action="store_true")
     parser.add_argument("--no-resume", action="store_true")

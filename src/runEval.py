@@ -1,41 +1,35 @@
 #!/usr/bin/env python3
 """
-HunterTrace — Evaluation Runner
-=================================
-Run this from the src/ directory:
+HunterTrace — Evaluation Runner v3
+=====================================
+Run from src/:
     python runEval.py
-    python runEval.py --corpus ../mails/corpus.json --test-ratio 0.2
-    python runEval.py --auto-corpus --target 150   <- build corpus first
+    python runEval.py --auto-corpus --target 150
+    python runEval.py --corpus ../mails/corpus.json --no-ablation
 """
 
-import os
-import sys
-import argparse
+import os, sys, argparse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  STEP 0 — Load .env BEFORE importing CompletePipeline
-#
-#  Root cause of avg_confidence=0.0:
-#  hunterTrace._load_config() is only called inside main() (CLI mode).
-#  When CompletePipeline is imported as a module, keys never reach
-#  os.environ — so AbuseIPDB, IPInfo, VirusTotal all silently skip.
+#  STEP 0 — Load .env BEFORE any hunterTrace import
+#  Root cause of avg_confidence=0.0: IPClassifierLight reads
+#  os.getenv("ABUSEIPDB_API_KEY") at __init__ time. If env isn't set
+#  before CompletePipeline() is constructed, AbuseIPDB is never called.
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _load_env() -> dict:
-    here       = Path(__file__).parent
-    candidates = [here, here.parent, here.parent.parent]
-    loaded     = {}
-
-    for directory in candidates:
+    here = Path(__file__).parent
+    loaded = {}
+    for directory in [here, here.parent, here.parent.parent]:
         env_file = directory / ".env"
         if not env_file.exists():
             continue
-        print(f"[runEval] Found .env → {env_file.resolve()}")
-        for raw in env_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+        print(f"[runEval] .env → {env_file.resolve()}")
+        for raw in env_file.read_text(errors="ignore").splitlines():
             line = raw.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
@@ -48,24 +42,15 @@ def _load_env() -> dict:
                 loaded[key] = val[:8] + "…"
         break
 
-    print("[runEval] API key status:")
-    for key in ("ABUSEIPDB_API_KEY", "IPINFO_TOKEN", "VIRUSTOTAL_API_KEY"):
-        val = os.environ.get(key)
-        status = f"✓  {val[:8]}…" if val else "✗  NOT SET (add to HunterTrace/.env)"
-        print(f"  {key}: {status}")
-
-    if not loaded:
-        print("\n  WARNING: No .env file found. Create HunterTrace/.env:")
-        print("    ABUSEIPDB_API_KEY=your_key_here")
-        print("    IPINFO_TOKEN=your_token_here\n")
-    else:
-        print()
-
+    print("[runEval] API keys:")
+    for k in ("ABUSEIPDB_API_KEY", "IPINFO_TOKEN", "VIRUSTOTAL_API_KEY"):
+        v = os.environ.get(k)
+        print(f"  {'✓' if v else '✗'}  {k}: {v[:8]+'…' if v else 'NOT SET'}")
+    print()
     return loaded
 
 
-# Load keys NOW — before CompletePipeline is imported
-_loaded_keys = _load_env()
+_loaded_keys = _load_env()   # must run before imports below
 
 from hunterTrace import CompletePipeline
 from datasetCreator import DatasetLoader, BatchEvaluator
@@ -73,7 +58,7 @@ from evaluationFramework import EvaluationFramework
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  PIPELINE WRAPPER
+#  PIPELINE — instantiated AFTER env is loaded
 # ─────────────────────────────────────────────────────────────────────────────
 
 pipeline = CompletePipeline(verbose=False)
@@ -83,37 +68,139 @@ def run_pipeline(eml_path: str):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  COUNTRY EXTRACTOR
+#  COUNTRY EXTRACTOR  — fixed to always return ISO-3166 alpha-2
+#
+#  Bug fixed: geolocation sets .country = "United States" (full name)
+#  but corpus ground truth uses .country = "US" (ISO code).
+#  extract_country() now always returns country_code, never the full name.
+#
+#  Priority:
+#    1. bayesian_attribution.primary_region  → ISO code via reverse lookup
+#    2. attribution_analysis fields          → ISO code
+#    3. geolocation_results[*].country_code  → ISO code directly ← KEY FIX
 # ─────────────────────────────────────────────────────────────────────────────
 
-def extract_country(result):
-    # 1. Bayesian attribution (v3)
+# Full-name → ISO-2 lookup (covers common geolocation return values)
+_NAME_TO_ISO = {
+    "nigeria":"NG","india":"IN","russia":"RU","china":"CN","united states":"US",
+    "romania":"RO","brazil":"BR","ukraine":"UA","south africa":"ZA","ghana":"GH",
+    "pakistan":"PK","indonesia":"ID","vietnam":"VN","philippines":"PH","turkey":"TR",
+    "iran":"IR","bulgaria":"BG","north korea":"KP","belarus":"BY","germany":"DE",
+    "france":"FR","united kingdom":"GB","netherlands":"NL","poland":"PL","kenya":"KE",
+    "egypt":"EG","morocco":"MA","thailand":"TH","malaysia":"MY","singapore":"SG",
+    "bangladesh":"BD","australia":"AU","canada":"CA","mexico":"MX","argentina":"AR",
+    "saudi arabia":"SA","united arab emirates":"AE","israel":"IL","japan":"JP",
+    "south korea":"KR","spain":"ES","italy":"IT","sweden":"SE","norway":"NO",
+    "finland":"FI","czech republic":"CZ","hungary":"HU","austria":"AT",
+    "ethiopia":"ET","tanzania":"TZ","senegal":"SN","cameroon":"CM",
+    "colombia":"CO","chile":"CL","peru":"PE","venezuela":"VE",
+    "iraq":"IQ","afghanistan":"AF","myanmar":"MM","cambodia":"KH","laos":"LA",
+    "taiwan":"TW","hong kong":"HK","new zealand":"NZ","portugal":"PT",
+    "greece":"GR","serbia":"RS","croatia":"HR","slovakia":"SK","moldova":"MD",
+}
+
+def _to_iso(val: str) -> str:
+    """Convert a country string to ISO-3166 alpha-2 if it isn't already."""
+    if not val:
+        return ""
+    v = val.strip()
+    if len(v) == 2 and v.upper().isalpha():
+        return v.upper()
+    return _NAME_TO_ISO.get(v.lower(), v.upper()[:2])
+
+
+def extract_country(result) -> str | None:
+    """
+    Extract predicted country as ISO-3166 alpha-2 from a CompletePipelineResult.
+
+    Architecture:
+      Geolocation gives the most accurate COUNTRY prediction.
+      Bayesian engine gives the most accurate CONFIDENCE score.
+      These are separate concerns — do not mix them.
+
+    Priority for country:
+      1. Geolocation country_code  (ISO-2, most accurate for country-level)
+      2. Geolocation country name  (convert via _to_iso)
+      3. attribution_analysis      (Stage 5 fallback)
+      4. bayesian primary_region   (last resort — region-level only)
+    """
+    # 1 & 2. Geolocation — most accurate country prediction
+    geo = getattr(result, "geolocation_results", None) or {}
+    for ip, g in geo.items():
+        cc = getattr(g, "country_code", None)
+        if cc and len(str(cc)) == 2:
+            return str(cc).upper()
+        country = getattr(g, "country", None)
+        if country:
+            iso = _to_iso(country)
+            if iso:
+                return iso
+
+    # 3. Stage 5 attribution analysis
+    aa = getattr(result, "attribution_analysis", None)
+    if aa:
+        for attr in ("attributed_country", "primary_country", "country_code", "country"):
+            val = getattr(aa, attr, None)
+            if val:
+                iso = _to_iso(val)
+                if iso:
+                    return iso
+
+    # 4. Bayesian primary_region — region-level fallback only
     ba = getattr(result, "bayesian_attribution", None)
     if ba:
         region = getattr(ba, "primary_region", None)
-        if region and region != "Unknown":
-            return region
-
-    # 2. Stage 5 attribution
-    aa = getattr(result, "attribution_analysis", None)
-    if aa:
-        for attr in ("attributed_country", "primary_country", "country"):
-            val = getattr(aa, attr, None)
-            if val:
-                return val
-
-    # 3. Geolocation fallback
-    geo = getattr(result, "geolocation_results", None) or {}
-    for ip, g in geo.items():
-        cc = getattr(g, "country_code", None) or getattr(g, "country", None)
-        if cc:
-            return cc
+        if region and region not in ("Unknown", "Other", ""):
+            iso = _to_iso(region)
+            if iso:
+                return iso
 
     return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  CORPUS AUTO-BUILD
+#  CONFIDENCE EXTRACTOR
+#  NOW uses aci_adjusted_prob from the Bayesian engine directly.
+#  This is a proper calibrated confidence — lower when signals are ambiguous,
+#  higher when multiple signals agree. Fixes ECE from 0.33 → target < 0.20.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def extract_confidence(result) -> float:
+    # PRIMARY: Bayesian aci_adjusted_prob — properly calibrated
+    ba = getattr(result, "bayesian_attribution", None)
+    if ba:
+        prob = getattr(ba, "aci_adjusted_prob", None)
+        if prob is not None and float(prob) > 0.0:
+            return float(prob)
+
+    # FALLBACK: geolocation confidence proxy
+    geo = getattr(result, "geolocation_results", None) or {}
+    confs = [getattr(g, "confidence", 0.0) for g in geo.values()
+             if getattr(g, "confidence", None) is not None]
+    if confs:
+        return sum(confs) / len(confs)
+
+    return 0.0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  PATCHED BatchEvaluator that uses extract_confidence
+# ─────────────────────────────────────────────────────────────────────────────
+
+from datasetCreator import EmailEntry, Prediction as _Prediction
+
+class PatchedBatchEvaluator(BatchEvaluator):
+    """Override _run_one to also extract confidence via extract_confidence()."""
+
+    def _run_one(self, entry: EmailEntry, eml_path: str) -> _Prediction:
+        pred = super()._run_one(entry, eml_path)
+        if pred.error is None and pred.raw_result is not None:
+            pred.confidence_score = extract_confidence(pred.raw_result)
+        return pred
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  AUTO-CORPUS
 # ─────────────────────────────────────────────────────────────────────────────
 
 def ensure_corpus(corpus_path: Path, target: int) -> None:
@@ -121,28 +208,22 @@ def ensure_corpus(corpus_path: Path, target: int) -> None:
     if corpus_path.exists():
         try:
             import json
-            with open(corpus_path) as f:
-                data = json.load(f)
-            current = len(data.get("emails", []))
-            if current >= target:
-                print(f"[runEval] Corpus already has {current} entries. Skipping build.")
+            data = json.load(open(corpus_path))
+            n = len(data.get("emails", []))
+            if n >= target:
+                print(f"[runEval] Corpus already has {n} entries. Skipping build.")
                 needs_build = False
             else:
-                print(f"[runEval] Corpus has {current}/{target} — running autoCorpusBuilder...")
+                print(f"[runEval] Corpus has {n}/{target} — building more...")
         except Exception:
-            print("[runEval] corpus.json unreadable — rebuilding...")
-
+            pass
     if needs_build:
         try:
             from autoCorpusBuilder import build_corpus
-            build_corpus(
-                target      = target,
-                out_path    = str(corpus_path),
-                eml_out_dir = str(corpus_path.parent / "emails"),
-                verbose     = False,
-            )
+            build_corpus(target=target, out_path=str(corpus_path),
+                         eml_out_dir=str(corpus_path.parent / "emails"))
         except ImportError:
-            print("[!] autoCorpusBuilder.py not in src/ — copy it first.")
+            print("[!] autoCorpusBuilder.py not in src/. Copy it first.")
             sys.exit(1)
 
 
@@ -156,22 +237,19 @@ def main():
     parser.add_argument("--test-ratio",   type=float, default=0.20)
     parser.add_argument("--seed",         type=int,   default=42)
     parser.add_argument("--report",       default="../results/evaluation_report.json")
-    parser.add_argument("--auto-corpus",  action="store_true",
-                        help="Auto-build corpus if missing or too small")
-    parser.add_argument("--target",       type=int, default=150,
-                        help="Corpus size target for --auto-corpus")
+    parser.add_argument("--auto-corpus",  action="store_true")
+    parser.add_argument("--target",       type=int, default=150)
     parser.add_argument("--no-ablation",  action="store_true")
     parser.add_argument("--no-baselines", action="store_true")
     args = parser.parse_args()
 
     corpus_path = Path(args.corpus)
 
-    # Optional auto-build
     if args.auto_corpus:
         ensure_corpus(corpus_path, args.target)
 
     if not corpus_path.exists():
-        print(f"\n[!] Corpus not found: {corpus_path}")
+        print(f"\n[!] No corpus at {corpus_path}")
         print("    Run:  python runEval.py --auto-corpus --target 150\n")
         sys.exit(1)
 
@@ -180,9 +258,9 @@ def main():
     dataset = DatasetLoader(str(corpus_path))
     dataset.print_stats()
 
-    if dataset.stats()["total"] < 20:
-        print(f"[!] Corpus too small ({dataset.stats()['total']} emails).")
-        print("    Run:  python runEval.py --auto-corpus --target 150")
+    total = dataset.stats()["total"]
+    if total < 20:
+        print(f"[!] Only {total} emails. Run: python runEval.py --auto-corpus --target 150")
         sys.exit(1)
 
     # 2. Split
@@ -190,9 +268,9 @@ def main():
     train, test = dataset.split(test_ratio=args.test_ratio, seed=args.seed)
     print(f"      Train: {len(train)}  |  Test: {len(test)}\n")
 
-    # 3. Run pipeline
+    # 3. Run
     print(f"[3/5] Running pipeline on {len(test)} test emails...")
-    evaluator = BatchEvaluator(
+    evaluator = PatchedBatchEvaluator(
         pipeline_fn    = run_pipeline,
         geo_country_fn = extract_country,
         base_dir       = str(corpus_path.parent),
@@ -200,8 +278,19 @@ def main():
     )
     predictions = evaluator.run(test)
 
+    # Debug: print first 5 predictions vs ground truth
+    print("\n[DEBUG] First 5 predictions vs ground truth:")
+    print(f"  {'ID':<14} {'Predicted':>10}  {'GroundTruth':>12}  {'Conf':>6}  {'Match'}")
+    print("  " + "─" * 55)
+    for pred, entry in zip(predictions[:5], test[:5]):
+        match = "✓" if pred.predicted_country == entry.ground_truth.country else "✗"
+        print(f"  {entry.id:<14} {str(pred.predicted_country):>10}  "
+              f"{entry.ground_truth.country:>12}  "
+              f"{pred.confidence_score:>6.2f}  {match}")
+    print()
+
     # 4. Metrics
-    print("\n[4/5] Computing metrics...")
+    print("[4/5] Computing metrics...")
     framework = EvaluationFramework()
     metrics   = framework.evaluate(test, predictions)
     framework.print_report(metrics)

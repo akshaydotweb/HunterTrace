@@ -1,0 +1,1551 @@
+{
+  "ACTOR_001": {
+    "actor_id": "ACTOR_001",
+    "generated_at": "2026-03-06T17:28:57.275785",
+    "campaign_count": 12,
+    "confidence": 0.6691666666666667,
+    "actor_label": "Outlook / Hotmail (Microsoft) phisher, via Azure",
+    "sophistication": "intermediate",
+    "likely_motivation": "unknown",
+    "fingerprint_summary": "VPN:Azure | MAIL:Outlook / Hotmail (Microsoft) | REALIP:217.34.194.18",
+    "distinguishing_signals": [
+      "Consistently active 12:00\u201316:00 local",
+      "VPN provider: Azure",
+      "Real IP(s) leaked by webmail: 217.34.194.18, 200.241.240.183, 194.29.209.49",
+      "Sends via Outlook / Hotmail (Microsoft)"
+    ],
+    "temporal": {
+      "timezone_offset": null,
+      "timezone_region": null,
+      "likely_country": null,
+      "peak_send_hour": 12,
+      "active_window": "12:00\u201316:00 local",
+      "active_window_type": "business hours",
+      "prefers_weekday": true,
+      "cadence_label": "weekly",
+      "campaign_count": 12
+    },
+    "infrastructure": {
+      "vpn_providers": [
+        "Azure"
+      ],
+      "primary_webmail": "Outlook / Hotmail (Microsoft)",
+      "origin_ips": [
+        "217.34.194.18",
+        "200.241.240.183",
+        "194.29.209.49",
+        "66.92.145.79",
+        "194.130.102.81",
+        "213.121.94.124",
+        "63.224.51.161",
+        "216.30.74.2",
+        "62.172.206.50",
+        "4.63.110.224",
+        "200.251.234.66",
+        "207.202.171.254"
+      ],
+      "vpn_exit_ips": [
+        "64.4.22.46",
+        "217.34.194.18",
+        "200.241.240.183",
+        "64.4.18.192",
+        "194.130.102.81",
+        "213.121.94.124",
+        "216.30.74.2",
+        "14.42.188.81",
+        "66.218.67.137",
+        "64.4.36.89",
+        "64.4.22.83",
+        "200.251.234.66"
+      ],
+      "opsec_score": 55,
+      "opsec_label": "intermediate",
+      "opsec_notes": [
+        "Uses VPN (Azure)",
+        "Rotates VPN exit IPs across campaigns",
+        "Single VPN provider \u2014 attributable via subscription records",
+        "OpSec failure: webmail provider leaked real IP in headers"
+      ]
+    },
+    "content": {
+      "subject_themes": [
+        "computer",
+        "virus",
+        "ruin",
+        "zzzzteana",
+        "hill",
+        "monuments",
+        "defaced",
+        "promote",
+        "hunting",
+        "internet"
+      ],
+      "lure_types": [],
+      "from_domains": [
+        "hotmail.com"
+      ]
+    },
+    "mitre_mappings": [
+      {
+        "id": "T1566.001",
+        "name": "Spearphishing via Email",
+        "tactic": "Initial Access",
+        "confidence": 0.9,
+        "evidence": "12 phishing email(s) analysed"
+      },
+      {
+        "id": "T1090.003",
+        "name": "Multi-hop Proxy (VPN)",
+        "tactic": "Command and Control",
+        "confidence": 0.9,
+        "evidence": "VPN detected: Azure"
+      },
+      {
+        "id": "T1078",
+        "name": "Valid Accounts (Webmail)",
+        "tactic": "Persistence",
+        "confidence": 0.7,
+        "evidence": "Sent via Outlook / Hotmail (Microsoft) account"
+      }
+    ]
+  },
+  "ACTOR_002": {
+    "actor_id": "ACTOR_002",
+    "generated_at": "2026-03-06T17:28:57.275938",
+    "campaign_count": 12,
+    "confidence": 0.64,
+    "actor_label": "Unknown / Unidentified phisher",
+    "sophistication": "novice",
+    "likely_motivation": "unknown",
+    "fingerprint_summary": "MAIL:Unknown / Unidentified | REALIP:217.36.8.232",
+    "distinguishing_signals": [
+      "Consistently active 12:00\u201316:00 local",
+      "Real IP(s) leaked by webmail: 217.36.8.232, 217.35.11.51, 217.36.22.4",
+      "Sends via Unknown / Unidentified"
+    ],
+    "temporal": {
+      "timezone_offset": null,
+      "timezone_region": null,
+      "likely_country": null,
+      "peak_send_hour": 12,
+      "active_window": "12:00\u201316:00 local",
+      "active_window_type": "business hours",
+      "prefers_weekday": true,
+      "cadence_label": "weekly",
+      "campaign_count": 12
+    },
+    "infrastructure": {
+      "vpn_providers": [],
+      "primary_webmail": "Unknown / Unidentified",
+      "origin_ips": [
+        "217.36.8.232",
+        "217.35.11.51",
+        "217.36.22.4",
+        "217.35.23.133"
+      ],
+      "vpn_exit_ips": [
+        "217.36.8.232",
+        "217.35.11.51",
+        "217.36.22.4",
+        "217.35.23.133"
+      ],
+      "opsec_score": 40,
+      "opsec_label": "amateur",
+      "opsec_notes": [
+        "Rotates VPN exit IPs across campaigns",
+        "Single VPN provider \u2014 attributable via subscription records"
+      ]
+    },
+    "content": {
+      "subject_themes": [
+        "zzzzteana",
+        "lioness",
+        "adopts",
+        "fifth",
+        "antelope",
+        "cambodian",
+        "buddhaas",
+        "unearthed",
+        "billy",
+        "septics"
+      ],
+      "lure_types": [],
+      "from_domains": [
+        "2ubh.com"
+      ]
+    },
+    "mitre_mappings": [
+      {
+        "id": "T1566.001",
+        "name": "Spearphishing via Email",
+        "tactic": "Initial Access",
+        "confidence": 0.9,
+        "evidence": "12 phishing email(s) analysed"
+      },
+      {
+        "id": "T1078",
+        "name": "Valid Accounts (Webmail)",
+        "tactic": "Persistence",
+        "confidence": 0.7,
+        "evidence": "Sent via Unknown / Unidentified account"
+      }
+    ]
+  },
+  "ACTOR_003": {
+    "actor_id": "ACTOR_003",
+    "generated_at": "2026-03-06T17:28:57.276024",
+    "campaign_count": 6,
+    "confidence": 0.64,
+    "actor_label": "Unknown / Unidentified phisher",
+    "sophistication": "novice",
+    "likely_motivation": "unknown",
+    "fingerprint_summary": "MAIL:Unknown / Unidentified | REALIP:66.44.40.158",
+    "distinguishing_signals": [
+      "Consistently active 08:00\u201312:00 local",
+      "Real IP(s) leaked by webmail: 66.44.40.158, 4.64.17.47, 66.44.42.81",
+      "Sends via Unknown / Unidentified",
+      "Lure types: delivery"
+    ],
+    "temporal": {
+      "timezone_offset": null,
+      "timezone_region": null,
+      "likely_country": null,
+      "peak_send_hour": 7,
+      "active_window": "08:00\u201312:00 local",
+      "active_window_type": "early morning",
+      "prefers_weekday": true,
+      "cadence_label": "weekly",
+      "campaign_count": 6
+    },
+    "infrastructure": {
+      "vpn_providers": [],
+      "primary_webmail": "Unknown / Unidentified",
+      "origin_ips": [
+        "66.44.40.158",
+        "4.64.17.47",
+        "66.44.42.81",
+        "66.92.157.2",
+        "4.64.218.140",
+        "4.64.17.23"
+      ],
+      "vpn_exit_ips": [
+        "66.92.157.3"
+      ],
+      "opsec_score": 10,
+      "opsec_label": "amateur",
+      "opsec_notes": [
+        "Single VPN provider \u2014 attributable via subscription records",
+        "OpSec failure: webmail provider leaked real IP in headers"
+      ]
+    },
+    "content": {
+      "subject_themes": [
+        "null",
+        "upgrade",
+        "testing",
+        "packages",
+        "hybrid",
+        "system",
+        "alsa",
+        "redhat",
+        "compatability"
+      ],
+      "lure_types": [
+        "delivery"
+      ],
+      "from_domains": [
+        "aminvestments.com"
+      ]
+    },
+    "mitre_mappings": [
+      {
+        "id": "T1566.001",
+        "name": "Spearphishing via Email",
+        "tactic": "Initial Access",
+        "confidence": 0.9,
+        "evidence": "6 phishing email(s) analysed"
+      },
+      {
+        "id": "T1078",
+        "name": "Valid Accounts (Webmail)",
+        "tactic": "Persistence",
+        "confidence": 0.7,
+        "evidence": "Sent via Unknown / Unidentified account"
+      }
+    ]
+  },
+  "ACTOR_004": {
+    "actor_id": "ACTOR_004",
+    "generated_at": "2026-03-06T17:28:57.276087",
+    "campaign_count": 3,
+    "confidence": 0.64,
+    "actor_label": "Yahoo Mail phisher",
+    "sophistication": "novice",
+    "likely_motivation": "unknown",
+    "fingerprint_summary": "MAIL:Yahoo Mail | REALIP:130.91.58.120",
+    "distinguishing_signals": [
+      "Consistently active 16:00\u201320:00 local",
+      "Real IP(s) leaked by webmail: 130.91.58.120, 212.23.14.40, 153.176.78.191",
+      "Sends via Yahoo Mail"
+    ],
+    "temporal": {
+      "timezone_offset": null,
+      "timezone_region": null,
+      "likely_country": null,
+      "peak_send_hour": 18,
+      "active_window": "16:00\u201320:00 local",
+      "active_window_type": "evening",
+      "prefers_weekday": true,
+      "cadence_label": "sporadic",
+      "campaign_count": 3
+    },
+    "infrastructure": {
+      "vpn_providers": [],
+      "primary_webmail": "Yahoo Mail",
+      "origin_ips": [
+        "130.91.58.120",
+        "212.23.14.40",
+        "153.176.78.191"
+      ],
+      "vpn_exit_ips": [
+        "130.91.58.120",
+        "212.23.14.40",
+        "61.144.216.44"
+      ],
+      "opsec_score": 30,
+      "opsec_label": "amateur",
+      "opsec_notes": [
+        "Rotates VPN exit IPs across campaigns",
+        "Single VPN provider \u2014 attributable via subscription records",
+        "OpSec failure: webmail provider leaked real IP in headers"
+      ]
+    },
+    "content": {
+      "subject_themes": [
+        "free",
+        "webbook",
+        "publishing",
+        "software",
+        "download",
+        "gbvzzzz",
+        "would",
+        "like",
+        "create",
+        "library"
+      ],
+      "lure_types": [],
+      "from_domains": [
+        "yahoo.com"
+      ]
+    },
+    "mitre_mappings": [
+      {
+        "id": "T1566.001",
+        "name": "Spearphishing via Email",
+        "tactic": "Initial Access",
+        "confidence": 0.8,
+        "evidence": "3 phishing email(s) analysed"
+      },
+      {
+        "id": "T1078",
+        "name": "Valid Accounts (Webmail)",
+        "tactic": "Persistence",
+        "confidence": 0.7,
+        "evidence": "Sent via Yahoo Mail account"
+      }
+    ]
+  },
+  "ACTOR_005": {
+    "actor_id": "ACTOR_005",
+    "generated_at": "2026-03-06T17:28:57.276150",
+    "campaign_count": 3,
+    "confidence": 0.64,
+    "actor_label": "Unknown / Unidentified phisher",
+    "sophistication": "novice",
+    "likely_motivation": "unknown",
+    "fingerprint_summary": "MAIL:Unknown / Unidentified | REALIP:66.38.151.19",
+    "distinguishing_signals": [
+      "Consistently active 12:00\u201316:00 local",
+      "Real IP(s) leaked by webmail: 66.38.151.19",
+      "Sends via Unknown / Unidentified"
+    ],
+    "temporal": {
+      "timezone_offset": null,
+      "timezone_region": null,
+      "likely_country": null,
+      "peak_send_hour": 10,
+      "active_window": "12:00\u201316:00 local",
+      "active_window_type": "business hours",
+      "prefers_weekday": true,
+      "cadence_label": "daily / burst",
+      "campaign_count": 3
+    },
+    "infrastructure": {
+      "vpn_providers": [],
+      "primary_webmail": "Unknown / Unidentified",
+      "origin_ips": [
+        "66.38.151.19"
+      ],
+      "vpn_exit_ips": [
+        "66.38.151.19"
+      ],
+      "opsec_score": 20,
+      "opsec_label": "amateur",
+      "opsec_notes": [
+        "Single VPN provider \u2014 attributable via subscription records"
+      ]
+    },
+    "content": {
+      "subject_themes": [
+        "base",
+        "image",
+        "delta",
+        "automated",
+        "recovery",
+        "attacks",
+        "secure",
+        "sofware",
+        "ttacks"
+      ],
+      "lure_types": [],
+      "from_domains": [
+        "ygingras.net",
+        "sandy.ru",
+        "firstusa.com"
+      ]
+    },
+    "mitre_mappings": [
+      {
+        "id": "T1566.001",
+        "name": "Spearphishing via Email",
+        "tactic": "Initial Access",
+        "confidence": 0.8,
+        "evidence": "3 phishing email(s) analysed"
+      },
+      {
+        "id": "T1078",
+        "name": "Valid Accounts (Webmail)",
+        "tactic": "Persistence",
+        "confidence": 0.7,
+        "evidence": "Sent via Unknown / Unidentified account"
+      }
+    ]
+  },
+  "ACTOR_006": {
+    "actor_id": "ACTOR_006",
+    "generated_at": "2026-03-06T17:28:57.276210",
+    "campaign_count": 3,
+    "confidence": 0.64,
+    "actor_label": "Unknown / Unidentified phisher",
+    "sophistication": "novice",
+    "likely_motivation": "unknown",
+    "fingerprint_summary": "MAIL:Unknown / Unidentified | REALIP:209.103.203.17",
+    "distinguishing_signals": [
+      "Consistently active 20:00\u201324:00 local",
+      "Real IP(s) leaked by webmail: 209.103.203.17, 209.103.203.50",
+      "Sends via Unknown / Unidentified"
+    ],
+    "temporal": {
+      "timezone_offset": null,
+      "timezone_region": null,
+      "likely_country": null,
+      "peak_send_hour": 22,
+      "active_window": "20:00\u201324:00 local",
+      "active_window_type": "evening",
+      "prefers_weekday": true,
+      "cadence_label": "monthly",
+      "campaign_count": 3
+    },
+    "infrastructure": {
+      "vpn_providers": [],
+      "primary_webmail": "Unknown / Unidentified",
+      "origin_ips": [
+        "209.103.203.17",
+        "209.103.203.50"
+      ],
+      "vpn_exit_ips": [
+        "209.103.203.17",
+        "209.103.203.50"
+      ],
+      "opsec_score": 30,
+      "opsec_label": "amateur",
+      "opsec_notes": [
+        "Rotates VPN exit IPs across campaigns",
+        "Single VPN provider \u2014 attributable via subscription records",
+        "OpSec failure: webmail provider leaked real IP in headers"
+      ]
+    },
+    "content": {
+      "subject_themes": [
+        "zzzzteana",
+        "fortean",
+        "times",
+        "online",
+        "bigfoot",
+        "feet",
+        "display",
+        "peabody",
+        "buffalo"
+      ],
+      "lure_types": [],
+      "from_domains": [
+        "frogstone.net"
+      ]
+    },
+    "mitre_mappings": [
+      {
+        "id": "T1566.001",
+        "name": "Spearphishing via Email",
+        "tactic": "Initial Access",
+        "confidence": 0.8,
+        "evidence": "3 phishing email(s) analysed"
+      },
+      {
+        "id": "T1078",
+        "name": "Valid Accounts (Webmail)",
+        "tactic": "Persistence",
+        "confidence": 0.7,
+        "evidence": "Sent via Unknown / Unidentified account"
+      }
+    ]
+  },
+  "ACTOR_007": {
+    "actor_id": "ACTOR_007",
+    "generated_at": "2026-03-06T17:28:57.276275",
+    "campaign_count": 2,
+    "confidence": 0.71,
+    "actor_label": "Unknown / Unidentified phisher, via internap holding llc",
+    "sophistication": "novice",
+    "likely_motivation": "unknown",
+    "fingerprint_summary": "VPN:internap holding llc | MAIL:Unknown / Unidentified | REALIP:206.191.151.102",
+    "distinguishing_signals": [
+      "Consistently active 12:00\u201316:00 local",
+      "VPN provider: internap holding llc",
+      "Real IP(s) leaked by webmail: 206.191.151.102",
+      "Sends via Unknown / Unidentified"
+    ],
+    "temporal": {
+      "timezone_offset": null,
+      "timezone_region": null,
+      "likely_country": null,
+      "peak_send_hour": 14,
+      "active_window": "12:00\u201316:00 local",
+      "active_window_type": "business hours",
+      "prefers_weekday": true,
+      "cadence_label": "monthly",
+      "campaign_count": 2
+    },
+    "infrastructure": {
+      "vpn_providers": [
+        "internap holding llc"
+      ],
+      "primary_webmail": "Unknown / Unidentified",
+      "origin_ips": [
+        "206.191.151.102"
+      ],
+      "vpn_exit_ips": [
+        "206.191.151.2"
+      ],
+      "opsec_score": 35,
+      "opsec_label": "amateur",
+      "opsec_notes": [
+        "Uses VPN (internap holding llc)",
+        "Single VPN provider \u2014 attributable via subscription records",
+        "OpSec failure: webmail provider leaked real IP in headers"
+      ]
+    },
+    "content": {
+      "subject_themes": [
+        "curse",
+        "india",
+        "socialism",
+        "slaughter",
+        "name"
+      ],
+      "lure_types": [],
+      "from_domains": [
+        "evergo.net"
+      ]
+    },
+    "mitre_mappings": [
+      {
+        "id": "T1566.001",
+        "name": "Spearphishing via Email",
+        "tactic": "Initial Access",
+        "confidence": 0.75,
+        "evidence": "2 phishing email(s) analysed"
+      },
+      {
+        "id": "T1090.003",
+        "name": "Multi-hop Proxy (VPN)",
+        "tactic": "Command and Control",
+        "confidence": 0.9,
+        "evidence": "VPN detected: internap holding llc"
+      },
+      {
+        "id": "T1078",
+        "name": "Valid Accounts (Webmail)",
+        "tactic": "Persistence",
+        "confidence": 0.7,
+        "evidence": "Sent via Unknown / Unidentified account"
+      }
+    ]
+  },
+  "ACTOR_008": {
+    "actor_id": "ACTOR_008",
+    "generated_at": "2026-03-06T17:28:57.276324",
+    "campaign_count": 2,
+    "confidence": 0.64,
+    "actor_label": "Outlook / Hotmail (Microsoft) phisher",
+    "sophistication": "novice",
+    "likely_motivation": "unknown",
+    "fingerprint_summary": "MAIL:Outlook / Hotmail (Microsoft) | REALIP:61.241.154.250",
+    "distinguishing_signals": [
+      "Consistently active 00:00\u201304:00 local",
+      "Real IP(s) leaked by webmail: 61.241.154.250, 200.75.120.56",
+      "Sends via Outlook / Hotmail (Microsoft)"
+    ],
+    "temporal": {
+      "timezone_offset": null,
+      "timezone_region": null,
+      "likely_country": null,
+      "peak_send_hour": 1,
+      "active_window": "00:00\u201304:00 local",
+      "active_window_type": "overnight / late night",
+      "prefers_weekday": true,
+      "cadence_label": "weekly",
+      "campaign_count": 2
+    },
+    "infrastructure": {
+      "vpn_providers": [],
+      "primary_webmail": "Outlook / Hotmail (Microsoft)",
+      "origin_ips": [
+        "61.241.154.250",
+        "200.75.120.56"
+      ],
+      "vpn_exit_ips": [
+        "61.241.154.250",
+        "200.75.120.56"
+      ],
+      "opsec_score": 40,
+      "opsec_label": "amateur",
+      "opsec_notes": [
+        "Rotates VPN exit IPs across campaigns",
+        "Single VPN provider \u2014 attributable via subscription records"
+      ]
+    },
+    "content": {
+      "subject_themes": [
+        "interest",
+        "rates",
+        "forty",
+        "lows",
+        "ebay",
+        "debt",
+        "free"
+      ],
+      "lure_types": [],
+      "from_domains": [
+        "hotmail.com"
+      ]
+    },
+    "mitre_mappings": [
+      {
+        "id": "T1566.001",
+        "name": "Spearphishing via Email",
+        "tactic": "Initial Access",
+        "confidence": 0.75,
+        "evidence": "2 phishing email(s) analysed"
+      },
+      {
+        "id": "T1078",
+        "name": "Valid Accounts (Webmail)",
+        "tactic": "Persistence",
+        "confidence": 0.7,
+        "evidence": "Sent via Outlook / Hotmail (Microsoft) account"
+      }
+    ]
+  },
+  "ACTOR_009": {
+    "actor_id": "ACTOR_009",
+    "generated_at": "2026-03-06T17:28:57.276414",
+    "campaign_count": 2,
+    "confidence": 0.675,
+    "actor_label": "Unknown / Unidentified phisher, via yahoo! inc.",
+    "sophistication": "intermediate",
+    "likely_motivation": "credential_harvest / PII collection",
+    "fingerprint_summary": "VPN:yahoo! inc. | MAIL:Unknown / Unidentified | REALIP:24.98.25.152",
+    "distinguishing_signals": [
+      "Consistently active 16:00\u201320:00 local",
+      "VPN provider: yahoo! inc.",
+      "Real IP(s) leaked by webmail: 24.98.25.152",
+      "Sends via Unknown / Unidentified",
+      "Lure types: job",
+      "Impersonates: amazon"
+    ],
+    "temporal": {
+      "timezone_offset": null,
+      "timezone_region": null,
+      "likely_country": null,
+      "peak_send_hour": 17,
+      "active_window": "16:00\u201320:00 local",
+      "active_window_type": "business hours",
+      "prefers_weekday": true,
+      "cadence_label": "sporadic",
+      "campaign_count": 2
+    },
+    "infrastructure": {
+      "vpn_providers": [
+        "yahoo! inc."
+      ],
+      "primary_webmail": "Unknown / Unidentified",
+      "origin_ips": [
+        "24.98.25.152"
+      ],
+      "vpn_exit_ips": [
+        "24.98.25.152"
+      ],
+      "opsec_score": 45,
+      "opsec_label": "intermediate",
+      "opsec_notes": [
+        "Uses VPN (yahoo! inc.)",
+        "Single VPN provider \u2014 attributable via subscription records"
+      ]
+    },
+    "content": {
+      "subject_themes": [
+        "special",
+        "affiliate",
+        "offers",
+        "amazon",
+        "free",
+        "excerpt",
+        "baby",
+        "makers",
+        "loser",
+        "choosers"
+      ],
+      "lure_types": [
+        "job"
+      ],
+      "from_domains": [
+        "books",
+        "amazon.com"
+      ]
+    },
+    "mitre_mappings": [
+      {
+        "id": "T1566.001",
+        "name": "Spearphishing via Email",
+        "tactic": "Initial Access",
+        "confidence": 0.75,
+        "evidence": "2 phishing email(s) analysed"
+      },
+      {
+        "id": "T1090.003",
+        "name": "Multi-hop Proxy (VPN)",
+        "tactic": "Command and Control",
+        "confidence": 0.9,
+        "evidence": "VPN detected: yahoo! inc."
+      },
+      {
+        "id": "T1036",
+        "name": "Masquerading / Brand Impersonation",
+        "tactic": "Defense Evasion",
+        "confidence": 0.8,
+        "evidence": "Impersonated: amazon"
+      },
+      {
+        "id": "T1078",
+        "name": "Valid Accounts (Webmail)",
+        "tactic": "Persistence",
+        "confidence": 0.7,
+        "evidence": "Sent via Unknown / Unidentified account"
+      }
+    ]
+  },
+  "ACTOR_010": {
+    "actor_id": "ACTOR_010",
+    "generated_at": "2026-03-06T17:28:57.276461",
+    "campaign_count": 2,
+    "confidence": 0.64,
+    "actor_label": "Unknown / Unidentified phisher",
+    "sophistication": "novice",
+    "likely_motivation": "unknown",
+    "fingerprint_summary": "MAIL:Unknown / Unidentified | REALIP:66.218.67.196",
+    "distinguishing_signals": [
+      "Consistently active 08:00\u201312:00 local",
+      "Real IP(s) leaked by webmail: 66.218.67.196",
+      "Sends via Unknown / Unidentified"
+    ],
+    "temporal": {
+      "timezone_offset": null,
+      "timezone_region": null,
+      "likely_country": null,
+      "peak_send_hour": 12,
+      "active_window": "08:00\u201312:00 local",
+      "active_window_type": "business hours",
+      "prefers_weekday": true,
+      "cadence_label": "sporadic",
+      "campaign_count": 2
+    },
+    "infrastructure": {
+      "vpn_providers": [],
+      "primary_webmail": "Unknown / Unidentified",
+      "origin_ips": [
+        "66.218.67.196"
+      ],
+      "vpn_exit_ips": [
+        "66.218.67.196"
+      ],
+      "opsec_score": 20,
+      "opsec_label": "amateur",
+      "opsec_notes": [
+        "Single VPN provider \u2014 attributable via subscription records"
+      ]
+    },
+    "content": {
+      "subject_themes": [
+        "zzzzteana",
+        "alexander",
+        "pravda",
+        "reports",
+        "cities",
+        "moon"
+      ],
+      "lure_types": [],
+      "from_domains": [
+        "cursor-system.com",
+        "swirly.com"
+      ]
+    },
+    "mitre_mappings": [
+      {
+        "id": "T1566.001",
+        "name": "Spearphishing via Email",
+        "tactic": "Initial Access",
+        "confidence": 0.75,
+        "evidence": "2 phishing email(s) analysed"
+      },
+      {
+        "id": "T1078",
+        "name": "Valid Accounts (Webmail)",
+        "tactic": "Persistence",
+        "confidence": 0.7,
+        "evidence": "Sent via Unknown / Unidentified account"
+      }
+    ]
+  },
+  "ACTOR_011": {
+    "actor_id": "ACTOR_011",
+    "generated_at": "2026-03-06T17:28:57.276504",
+    "campaign_count": 2,
+    "confidence": 0.64,
+    "actor_label": "Unknown / Unidentified phisher",
+    "sophistication": "novice",
+    "likely_motivation": "unknown",
+    "fingerprint_summary": "MAIL:Unknown / Unidentified | REALIP:66.218.66.95",
+    "distinguishing_signals": [
+      "Consistently active 12:00\u201316:00 local",
+      "Real IP(s) leaked by webmail: 66.218.66.95, 66.218.67.198",
+      "Sends via Unknown / Unidentified"
+    ],
+    "temporal": {
+      "timezone_offset": null,
+      "timezone_region": null,
+      "likely_country": null,
+      "peak_send_hour": 14,
+      "active_window": "12:00\u201316:00 local",
+      "active_window_type": "business hours",
+      "prefers_weekday": true,
+      "cadence_label": "sporadic",
+      "campaign_count": 2
+    },
+    "infrastructure": {
+      "vpn_providers": [],
+      "primary_webmail": "Unknown / Unidentified",
+      "origin_ips": [
+        "66.218.66.95",
+        "66.218.67.198"
+      ],
+      "vpn_exit_ips": [
+        "66.218.66.95",
+        "66.218.67.198"
+      ],
+      "opsec_score": 40,
+      "opsec_label": "amateur",
+      "opsec_notes": [
+        "Rotates VPN exit IPs across campaigns",
+        "Single VPN provider \u2014 attributable via subscription records"
+      ]
+    },
+    "content": {
+      "subject_themes": [
+        "zzzzteana",
+        "please",
+        "give",
+        "generously",
+        "betamax",
+        "finally",
+        "laid",
+        "rest"
+      ],
+      "lure_types": [],
+      "from_domains": [
+        "r2-dvd.org"
+      ]
+    },
+    "mitre_mappings": [
+      {
+        "id": "T1566.001",
+        "name": "Spearphishing via Email",
+        "tactic": "Initial Access",
+        "confidence": 0.75,
+        "evidence": "2 phishing email(s) analysed"
+      },
+      {
+        "id": "T1078",
+        "name": "Valid Accounts (Webmail)",
+        "tactic": "Persistence",
+        "confidence": 0.7,
+        "evidence": "Sent via Unknown / Unidentified account"
+      }
+    ]
+  },
+  "ACTOR_012": {
+    "actor_id": "ACTOR_012",
+    "generated_at": "2026-03-06T17:28:57.276588",
+    "campaign_count": 2,
+    "confidence": 0.64,
+    "actor_label": "Unknown / Unidentified phisher",
+    "sophistication": "novice",
+    "likely_motivation": "unknown",
+    "fingerprint_summary": "MAIL:Unknown / Unidentified | REALIP:208.57.45.218",
+    "distinguishing_signals": [
+      "Consistently active 20:00\u201324:00 local",
+      "Real IP(s) leaked by webmail: 208.57.45.218",
+      "Sends via Unknown / Unidentified"
+    ],
+    "temporal": {
+      "timezone_offset": null,
+      "timezone_region": null,
+      "likely_country": null,
+      "peak_send_hour": 23,
+      "active_window": "20:00\u201324:00 local",
+      "active_window_type": "overnight / late night",
+      "prefers_weekday": true,
+      "cadence_label": "daily / burst",
+      "campaign_count": 2
+    },
+    "infrastructure": {
+      "vpn_providers": [],
+      "primary_webmail": "Unknown / Unidentified",
+      "origin_ips": [
+        "208.57.45.218"
+      ],
+      "vpn_exit_ips": [
+        "208.57.0.14",
+        "208.57.0.10"
+      ],
+      "opsec_score": 30,
+      "opsec_label": "amateur",
+      "opsec_notes": [
+        "Rotates VPN exit IPs across campaigns",
+        "Single VPN provider \u2014 attributable via subscription records",
+        "OpSec failure: webmail provider leaked real IP in headers"
+      ]
+    },
+    "content": {
+      "subject_themes": [
+        "chicago",
+        "meeting",
+        "site",
+        "spam"
+      ],
+      "lure_types": [],
+      "from_domains": [
+        "purplehotel.com"
+      ]
+    },
+    "mitre_mappings": [
+      {
+        "id": "T1566.001",
+        "name": "Spearphishing via Email",
+        "tactic": "Initial Access",
+        "confidence": 0.75,
+        "evidence": "2 phishing email(s) analysed"
+      },
+      {
+        "id": "T1078",
+        "name": "Valid Accounts (Webmail)",
+        "tactic": "Persistence",
+        "confidence": 0.7,
+        "evidence": "Sent via Unknown / Unidentified account"
+      }
+    ]
+  },
+  "ACTOR_013": {
+    "actor_id": "ACTOR_013",
+    "generated_at": "2026-03-06T17:28:57.276635",
+    "campaign_count": 2,
+    "confidence": 0.675,
+    "actor_label": "Yahoo Mail phisher, via AWS",
+    "sophistication": "intermediate",
+    "likely_motivation": "unknown",
+    "fingerprint_summary": "VPN:AWS | MAIL:Yahoo Mail | REALIP:100.226.45.87",
+    "distinguishing_signals": [
+      "Consistently active 08:00\u201312:00 local",
+      "VPN provider: AWS",
+      "Real IP(s) leaked by webmail: 100.226.45.87, 64.31.161.243",
+      "Sends via Yahoo Mail",
+      "Lure types: urgency"
+    ],
+    "temporal": {
+      "timezone_offset": null,
+      "timezone_region": null,
+      "likely_country": null,
+      "peak_send_hour": 9,
+      "active_window": "08:00\u201312:00 local",
+      "active_window_type": "business hours",
+      "prefers_weekday": false,
+      "cadence_label": "daily / burst",
+      "campaign_count": 2
+    },
+    "infrastructure": {
+      "vpn_providers": [
+        "AWS"
+      ],
+      "primary_webmail": "Yahoo Mail",
+      "origin_ips": [
+        "100.226.45.87",
+        "64.31.161.243"
+      ],
+      "vpn_exit_ips": [
+        "64.31.161.243",
+        "150.212.52.22"
+      ],
+      "opsec_score": 55,
+      "opsec_label": "intermediate",
+      "opsec_notes": [
+        "Uses VPN (AWS)",
+        "Rotates VPN exit IPs across campaigns",
+        "Single VPN provider \u2014 attributable via subscription records",
+        "OpSec failure: webmail provider leaked real IP in headers"
+      ]
+    },
+    "content": {
+      "subject_themes": [
+        "urgent",
+        "assistance",
+        "confidential",
+        "approved"
+      ],
+      "lure_types": [
+        "urgency"
+      ],
+      "from_domains": [
+        "yahoo.com"
+      ]
+    },
+    "mitre_mappings": [
+      {
+        "id": "T1566.001",
+        "name": "Spearphishing via Email",
+        "tactic": "Initial Access",
+        "confidence": 0.75,
+        "evidence": "2 phishing email(s) analysed"
+      },
+      {
+        "id": "T1090.003",
+        "name": "Multi-hop Proxy (VPN)",
+        "tactic": "Command and Control",
+        "confidence": 0.9,
+        "evidence": "VPN detected: AWS"
+      },
+      {
+        "id": "T1078",
+        "name": "Valid Accounts (Webmail)",
+        "tactic": "Persistence",
+        "confidence": 0.7,
+        "evidence": "Sent via Yahoo Mail account"
+      },
+      {
+        "id": "T1204",
+        "name": "User Execution (Social Engineering)",
+        "tactic": "Execution",
+        "confidence": 0.75,
+        "evidence": "Urgency language used to drive clicks"
+      }
+    ]
+  },
+  "ACTOR_014": {
+    "actor_id": "ACTOR_014",
+    "generated_at": "2026-03-06T17:28:57.277100",
+    "campaign_count": 2,
+    "confidence": 0.64,
+    "actor_label": "Unknown / Unidentified phisher",
+    "sophistication": "novice",
+    "likely_motivation": "unknown",
+    "fingerprint_summary": "MAIL:Unknown / Unidentified | REALIP:129.215.34.86",
+    "distinguishing_signals": [
+      "Consistently active 12:00\u201316:00 local",
+      "Real IP(s) leaked by webmail: 129.215.34.86",
+      "Sends via Unknown / Unidentified"
+    ],
+    "temporal": {
+      "timezone_offset": null,
+      "timezone_region": null,
+      "likely_country": null,
+      "peak_send_hour": 15,
+      "active_window": "12:00\u201316:00 local",
+      "active_window_type": "business hours",
+      "prefers_weekday": true,
+      "cadence_label": "weekly",
+      "campaign_count": 2
+    },
+    "infrastructure": {
+      "vpn_providers": [],
+      "primary_webmail": "Unknown / Unidentified",
+      "origin_ips": [
+        "129.215.34.86"
+      ],
+      "vpn_exit_ips": [
+        "129.215.34.86"
+      ],
+      "opsec_score": 20,
+      "opsec_label": "amateur",
+      "opsec_notes": [
+        "Single VPN provider \u2014 attributable via subscription records"
+      ]
+    },
+    "content": {
+      "subject_themes": [
+        "zzzzteana",
+        "nothing",
+        "like",
+        "mama",
+        "used",
+        "make",
+        "wacky",
+        "imam"
+      ],
+      "lure_types": [],
+      "from_domains": [
+        "ee.ed.ac.uk"
+      ]
+    },
+    "mitre_mappings": [
+      {
+        "id": "T1566.001",
+        "name": "Spearphishing via Email",
+        "tactic": "Initial Access",
+        "confidence": 0.75,
+        "evidence": "2 phishing email(s) analysed"
+      },
+      {
+        "id": "T1078",
+        "name": "Valid Accounts (Webmail)",
+        "tactic": "Persistence",
+        "confidence": 0.7,
+        "evidence": "Sent via Unknown / Unidentified account"
+      }
+    ]
+  },
+  "ACTOR_015": {
+    "actor_id": "ACTOR_015",
+    "generated_at": "2026-03-06T17:28:57.277142",
+    "campaign_count": 2,
+    "confidence": 0.64,
+    "actor_label": "Unknown / Unidentified phisher",
+    "sophistication": "novice",
+    "likely_motivation": "unknown",
+    "fingerprint_summary": "MAIL:Unknown / Unidentified | REALIP:207.172.11.147",
+    "distinguishing_signals": [
+      "Consistently active 00:00\u201304:00 local",
+      "Real IP(s) leaked by webmail: 207.172.11.147, 66.44.42.51",
+      "Sends via Unknown / Unidentified",
+      "Lure types: delivery"
+    ],
+    "temporal": {
+      "timezone_offset": null,
+      "timezone_region": null,
+      "likely_country": null,
+      "peak_send_hour": 3,
+      "active_window": "00:00\u201304:00 local",
+      "active_window_type": "overnight / late night",
+      "prefers_weekday": true,
+      "cadence_label": "weekly",
+      "campaign_count": 2
+    },
+    "infrastructure": {
+      "vpn_providers": [],
+      "primary_webmail": "Unknown / Unidentified",
+      "origin_ips": [
+        "207.172.11.147",
+        "66.44.42.51"
+      ],
+      "vpn_exit_ips": [
+        "66.92.157.3"
+      ],
+      "opsec_score": 10,
+      "opsec_label": "amateur",
+      "opsec_notes": [
+        "Single VPN provider \u2014 attributable via subscription records",
+        "OpSec failure: webmail provider leaked real IP in headers"
+      ]
+    },
+    "content": {
+      "subject_themes": [
+        "alsa",
+        "almost",
+        "made",
+        "easy",
+        "some",
+        "null",
+        "eyecandy",
+        "packages"
+      ],
+      "lure_types": [
+        "delivery"
+      ],
+      "from_domains": [
+        "aminvestments.com"
+      ]
+    },
+    "mitre_mappings": [
+      {
+        "id": "T1566.001",
+        "name": "Spearphishing via Email",
+        "tactic": "Initial Access",
+        "confidence": 0.75,
+        "evidence": "2 phishing email(s) analysed"
+      },
+      {
+        "id": "T1078",
+        "name": "Valid Accounts (Webmail)",
+        "tactic": "Persistence",
+        "confidence": 0.7,
+        "evidence": "Sent via Unknown / Unidentified account"
+      }
+    ]
+  },
+  "ACTOR_016": {
+    "actor_id": "ACTOR_016",
+    "generated_at": "2026-03-06T17:28:57.277187",
+    "campaign_count": 2,
+    "confidence": 0.64,
+    "actor_label": "Unknown / Unidentified phisher",
+    "sophistication": "novice",
+    "likely_motivation": "unknown",
+    "fingerprint_summary": "MAIL:Unknown / Unidentified | REALIP:202.9.153.244",
+    "distinguishing_signals": [
+      "Consistently active 08:00\u201312:00 local",
+      "Real IP(s) leaked by webmail: 202.9.153.244, 202.9.154.217",
+      "Sends via Unknown / Unidentified"
+    ],
+    "temporal": {
+      "timezone_offset": null,
+      "timezone_region": null,
+      "likely_country": null,
+      "peak_send_hour": 9,
+      "active_window": "08:00\u201312:00 local",
+      "active_window_type": "business hours",
+      "prefers_weekday": true,
+      "cadence_label": "weekly",
+      "campaign_count": 2
+    },
+    "infrastructure": {
+      "vpn_providers": [],
+      "primary_webmail": "Unknown / Unidentified",
+      "origin_ips": [
+        "202.9.153.244",
+        "202.9.154.217"
+      ],
+      "vpn_exit_ips": [
+        "202.9.153.244",
+        "202.9.154.217"
+      ],
+      "opsec_score": 40,
+      "opsec_label": "amateur",
+      "opsec_notes": [
+        "Rotates VPN exit IPs across campaigns",
+        "Single VPN provider \u2014 attributable via subscription records"
+      ]
+    },
+    "content": {
+      "subject_themes": [
+        "debt",
+        "aver",
+        "program",
+        "skyxtgm",
+        "shop",
+        "loan",
+        "lenders",
+        "best",
+        "rate"
+      ],
+      "lure_types": [],
+      "from_domains": [
+        "flashmail.com"
+      ]
+    },
+    "mitre_mappings": [
+      {
+        "id": "T1566.001",
+        "name": "Spearphishing via Email",
+        "tactic": "Initial Access",
+        "confidence": 0.75,
+        "evidence": "2 phishing email(s) analysed"
+      },
+      {
+        "id": "T1078",
+        "name": "Valid Accounts (Webmail)",
+        "tactic": "Persistence",
+        "confidence": 0.7,
+        "evidence": "Sent via Unknown / Unidentified account"
+      }
+    ]
+  },
+  "ACTOR_017": {
+    "actor_id": "ACTOR_017",
+    "generated_at": "2026-03-06T17:28:57.277271",
+    "campaign_count": 2,
+    "confidence": 0.675,
+    "actor_label": "Yahoo Mail phisher, via yahoo! inc.",
+    "sophistication": "intermediate",
+    "likely_motivation": "unknown",
+    "fingerprint_summary": "VPN:yahoo! inc. | MAIL:Yahoo Mail | REALIP:193.251.130.111",
+    "distinguishing_signals": [
+      "Consistently active 12:00\u201316:00 local",
+      "VPN provider: yahoo! inc.",
+      "Real IP(s) leaked by webmail: 193.251.130.111, 64.110.29.20",
+      "Sends via Yahoo Mail",
+      "Lure types: urgency"
+    ],
+    "temporal": {
+      "timezone_offset": null,
+      "timezone_region": null,
+      "likely_country": null,
+      "peak_send_hour": 15,
+      "active_window": "12:00\u201316:00 local",
+      "active_window_type": "business hours",
+      "prefers_weekday": true,
+      "cadence_label": "weekly",
+      "campaign_count": 2
+    },
+    "infrastructure": {
+      "vpn_providers": [
+        "yahoo! inc."
+      ],
+      "primary_webmail": "Yahoo Mail",
+      "origin_ips": [
+        "193.251.130.111",
+        "64.110.29.20"
+      ],
+      "vpn_exit_ips": [
+        "193.251.130.111",
+        "64.110.29.20"
+      ],
+      "opsec_score": 55,
+      "opsec_label": "intermediate",
+      "opsec_notes": [
+        "Uses VPN (yahoo! inc.)",
+        "Rotates VPN exit IPs across campaigns",
+        "Single VPN provider \u2014 attributable via subscription records",
+        "OpSec failure: webmail provider leaked real IP in headers"
+      ]
+    },
+    "content": {
+      "subject_themes": [
+        "need",
+        "urgent",
+        "capable",
+        "assistance",
+        "business"
+      ],
+      "lure_types": [
+        "urgency"
+      ],
+      "from_domains": [
+        "yahoo.fr"
+      ]
+    },
+    "mitre_mappings": [
+      {
+        "id": "T1566.001",
+        "name": "Spearphishing via Email",
+        "tactic": "Initial Access",
+        "confidence": 0.75,
+        "evidence": "2 phishing email(s) analysed"
+      },
+      {
+        "id": "T1090.003",
+        "name": "Multi-hop Proxy (VPN)",
+        "tactic": "Command and Control",
+        "confidence": 0.9,
+        "evidence": "VPN detected: yahoo! inc."
+      },
+      {
+        "id": "T1078",
+        "name": "Valid Accounts (Webmail)",
+        "tactic": "Persistence",
+        "confidence": 0.7,
+        "evidence": "Sent via Yahoo Mail account"
+      },
+      {
+        "id": "T1204",
+        "name": "User Execution (Social Engineering)",
+        "tactic": "Execution",
+        "confidence": 0.75,
+        "evidence": "Urgency language used to drive clicks"
+      }
+    ]
+  },
+  "ACTOR_018": {
+    "actor_id": "ACTOR_018",
+    "generated_at": "2026-03-06T17:28:57.277323",
+    "campaign_count": 2,
+    "confidence": 0.64,
+    "actor_label": "Unknown / Unidentified phisher",
+    "sophistication": "novice",
+    "likely_motivation": "unknown",
+    "fingerprint_summary": "MAIL:Unknown / Unidentified | REALIP:210.214.94.76",
+    "distinguishing_signals": [
+      "Consistently active 12:00\u201316:00 local",
+      "Real IP(s) leaked by webmail: 210.214.94.76, 210.214.94.112",
+      "Sends via Unknown / Unidentified"
+    ],
+    "temporal": {
+      "timezone_offset": null,
+      "timezone_region": null,
+      "likely_country": null,
+      "peak_send_hour": 14,
+      "active_window": "12:00\u201316:00 local",
+      "active_window_type": "business hours",
+      "prefers_weekday": true,
+      "cadence_label": "weekly",
+      "campaign_count": 2
+    },
+    "infrastructure": {
+      "vpn_providers": [],
+      "primary_webmail": "Unknown / Unidentified",
+      "origin_ips": [
+        "210.214.94.76",
+        "210.214.94.112"
+      ],
+      "vpn_exit_ips": [
+        "210.214.94.76",
+        "210.214.94.112"
+      ],
+      "opsec_score": 30,
+      "opsec_label": "amateur",
+      "opsec_notes": [
+        "Rotates VPN exit IPs across campaigns",
+        "Single VPN provider \u2014 attributable via subscription records",
+        "OpSec failure: webmail provider leaked real IP in headers"
+      ]
+    },
+    "content": {
+      "subject_themes": [
+        "find",
+        "right",
+        "mortgage",
+        "lender",
+        "afpe",
+        "marketplace",
+        "where",
+        "lenders",
+        "compete",
+        "business"
+      ],
+      "lure_types": [],
+      "from_domains": [
+        "eudoramail.com"
+      ]
+    },
+    "mitre_mappings": [
+      {
+        "id": "T1566.001",
+        "name": "Spearphishing via Email",
+        "tactic": "Initial Access",
+        "confidence": 0.75,
+        "evidence": "2 phishing email(s) analysed"
+      },
+      {
+        "id": "T1078",
+        "name": "Valid Accounts (Webmail)",
+        "tactic": "Persistence",
+        "confidence": 0.7,
+        "evidence": "Sent via Unknown / Unidentified account"
+      }
+    ]
+  },
+  "ACTOR_019": {
+    "actor_id": "ACTOR_019",
+    "generated_at": "2026-03-06T17:28:57.277388",
+    "campaign_count": 2,
+    "confidence": 0.64,
+    "actor_label": "Unknown / Unidentified phisher",
+    "sophistication": "novice",
+    "likely_motivation": "unknown",
+    "fingerprint_summary": "MAIL:Unknown / Unidentified | REALIP:205.206.231.19",
+    "distinguishing_signals": [
+      "Consistently active 16:00\u201320:00 local",
+      "Real IP(s) leaked by webmail: 205.206.231.19",
+      "Sends via Unknown / Unidentified"
+    ],
+    "temporal": {
+      "timezone_offset": null,
+      "timezone_region": null,
+      "likely_country": null,
+      "peak_send_hour": 14,
+      "active_window": "16:00\u201320:00 local",
+      "active_window_type": "business hours",
+      "prefers_weekday": true,
+      "cadence_label": "daily / burst",
+      "campaign_count": 2
+    },
+    "infrastructure": {
+      "vpn_providers": [],
+      "primary_webmail": "Unknown / Unidentified",
+      "origin_ips": [
+        "205.206.231.19"
+      ],
+      "vpn_exit_ips": [
+        "205.206.231.19"
+      ],
+      "opsec_score": 20,
+      "opsec_label": "amateur",
+      "opsec_notes": [
+        "Single VPN provider \u2014 attributable via subscription records"
+      ]
+    },
+    "content": {
+      "subject_themes": [
+        "secure",
+        "sofware"
+      ],
+      "lure_types": [],
+      "from_domains": [
+        "iscubed.com",
+        "netwindows.org"
+      ]
+    },
+    "mitre_mappings": [
+      {
+        "id": "T1566.001",
+        "name": "Spearphishing via Email",
+        "tactic": "Initial Access",
+        "confidence": 0.75,
+        "evidence": "2 phishing email(s) analysed"
+      },
+      {
+        "id": "T1078",
+        "name": "Valid Accounts (Webmail)",
+        "tactic": "Persistence",
+        "confidence": 0.7,
+        "evidence": "Sent via Unknown / Unidentified account"
+      }
+    ]
+  }
+}

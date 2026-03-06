@@ -154,7 +154,7 @@ class HeaderExtractor:
         self.patterns = {
             "ipv4_only": re.compile(r'\[(\d+\.\d+\.\d+\.\d+)\]|(?:^|\bfrom\s+)(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(?!\])', re.IGNORECASE),
             "ipv6_with_brackets": re.compile(r'\[([a-fA-F0-9:]+)\]', re.IGNORECASE),  # IPv6 in brackets
-            "ipv6_loose": re.compile(r'\b([a-fA-F0-9]{1,4}(?::[a-fA-F0-9]{1,4}){2,7})\b', re.IGNORECASE),  # IPv6 without brackets — requires ≥2 colons
+            "ipv6_loose": re.compile(r'\b([a-fA-F0-9]{1,4}(?::[a-fA-F0-9]{1,4}){2,7})\b', re.IGNORECASE),
             "protocol": re.compile(r'with\s+(ESMTP|SMTP|HTTP|HTTPS|LMTP)', re.IGNORECASE),
             "by_clause": re.compile(r'by\s+(\S+)', re.IGNORECASE),
         }
@@ -342,40 +342,25 @@ class HeaderExtractor:
         return bool(re.match(r'^\d+\.\d+\.\d+\.\d+$', address))
     
     def _is_valid_ipv6(self, address: str) -> bool:
-        """Validate IPv6 address format — rejects timestamps and other false positives."""
-        import re as _re
-        if not address or ':' not in address:
+        """Validate IPv6 address format — rejects timestamps."""
+        import ipaddress
+        if not address or address.count(':') < 2:
             return False
-
-        # Must have at least 2 colons (timestamps like 01:38:44 have exactly 2
-        # but are caught by the next check)
-        if address.count(':') < 2:
-            return False
-
-        # Reject HH:MM:SS and HH:MM timestamps — segments are exactly 2 digits
-        # e.g. "01:38:44" → ["01","38","44"] — all length 2, all decimal
+        # Reject HH:MM:SS timestamps — all segments are ≤2 decimal digits
         segments = address.split(':')
         if all(len(s) <= 2 and s.isdigit() for s in segments):
             return False
-
-        # All characters must be hex or colon
+        # Each segment must be 1–4 hex chars
         if not all(c in '0123456789abcdefABCDEF:' for c in address):
             return False
-
-        # Each segment must be 1–4 hex characters (standard IPv6 group size)
-        # Allow empty segments only for :: notation
         non_empty = [s for s in segments if s]
         if not all(1 <= len(s) <= 4 for s in non_empty):
             return False
-
-        # Use Python's own IPv6 parser as final check
         try:
-            import ipaddress
             ipaddress.IPv6Address(address)
             return True
         except ValueError:
             return False
-
 
 # ============================================================================
 # STAGE 2: IP CLASSIFICATION
@@ -3714,22 +3699,79 @@ class CompletePipeline:
                 if self.verbose:
                     print(f"  [WARNING] Geolocation enrichment failed: {e}")
         
+        # ── WEBMAIL EXTRACTION (before Bayesian — feeds it real_ip signal) ──
+        webmail_extraction = None
+        if WEBMAIL_V2_AVAILABLE:
+            try:
+                with open(email_file, 'r', errors='ignore') as _wf:
+                    _raw = _wf.read()
+                webmail_extraction = run_webmail_extraction(_raw, verbose=self.verbose)
+                if webmail_extraction and webmail_extraction.real_ip_found:
+                    print(f"  [WEBMAIL] Real IP leaked: {webmail_extraction.real_ip} "
+                          f"via {webmail_extraction.leak_header} "
+                          f"(conf: {webmail_extraction.confidence:.0%})")
+                    # If webmail found a higher-confidence real IP, geolocate it
+                    if (webmail_extraction.confidence >= 0.80 and
+                            self.geolocation_enricher and
+                            webmail_extraction.real_ip):
+                        try:
+                            wm_geo = self.geolocation_enricher.enrich_multiple_ips(
+                                [webmail_extraction.real_ip]
+                            )
+                            if wm_geo:
+                                geolocation_results = geolocation_results or {}
+                                geolocation_results.update(wm_geo)
+                        except Exception:
+                            pass
+            except Exception as _e:
+                if self.verbose:
+                    print(f"  [WARNING] Webmail extraction failed: {_e}")
+
+        # ── BAYESIAN ATTRIBUTION (routes aci_adjusted_prob into result) ───
+        bayesian_attribution_result = None
+        if self.bayesian_attribution:
+            try:
+                # Build a temporary result object so SignalExtractor can read
+                # webmail_extraction — it needs it to extract real_ip_country signal
+                _tmp = CompletePipelineResult(
+                    header_analysis       = header_analysis,
+                    classifications       = classifications,
+                    proxy_analysis        = proxy_analysis,
+                    enrichment_results    = enrichment_results,
+                    correlation_analysis  = correlation_analysis,
+                    threat_intelligence   = threat_intelligence,
+                    geolocation_results   = geolocation_results,
+                    attribution_analysis  = attribution_analysis,
+                    real_ip_analysis      = real_ip_analysis,
+                    vpn_backtrack_analysis= vpn_backtrack_analysis,
+                    webmail_extraction    = webmail_extraction,
+                )
+                bayesian_attribution_result = self.bayesian_attribution.attribute(_tmp)
+                print(f"\n  [BAYESIAN] Region: {bayesian_attribution_result.primary_region} | "
+                      f"ACI-adjusted prob: {bayesian_attribution_result.aci_adjusted_prob:.1%} | "
+                      f"Tier: {bayesian_attribution_result.tier_label}")
+            except Exception as _e:
+                if self.verbose:
+                    print(f"  [WARNING] Bayesian attribution failed: {_e}")
+
         # Create result
         result = CompletePipelineResult(
-            header_analysis=header_analysis,
-            classifications=classifications,
-            proxy_analysis=proxy_analysis,
-            enrichment_results=enrichment_results,
-            correlation_analysis=correlation_analysis,
-            threat_intelligence=threat_intelligence,
-            geolocation_results=geolocation_results,
-            attribution_analysis=attribution_analysis,
-            real_ip_analysis=real_ip_analysis,
-            vpn_backtrack_analysis=vpn_backtrack_analysis
+            header_analysis       = header_analysis,
+            classifications       = classifications,
+            proxy_analysis        = proxy_analysis,
+            enrichment_results    = enrichment_results,
+            correlation_analysis  = correlation_analysis,
+            threat_intelligence   = threat_intelligence,
+            geolocation_results   = geolocation_results,
+            attribution_analysis  = attribution_analysis,
+            real_ip_analysis      = real_ip_analysis,
+            vpn_backtrack_analysis= vpn_backtrack_analysis,
+            webmail_extraction    = webmail_extraction,
+            bayesian_attribution  = bayesian_attribution_result,
         )
-        
+
         print("\n[STAGE COMPLETE] All stages finished successfully")
-        
+
         return result
     
     def _geolocate_ipv6_block(self, ipv6_address: str) -> str:
