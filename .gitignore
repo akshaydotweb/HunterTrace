@@ -3,6 +3,8 @@ mails
 .env
 
 report
+reports 
+results
 ht_output
 
 __pycache__
