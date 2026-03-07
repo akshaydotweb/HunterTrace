@@ -273,19 +273,70 @@ class ActorProfiler:
 
     # ── Temporal ─────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _extract_tz_offset(date_str: str) -> Optional[str]:
+        """
+        Extract timezone offset from an ISO-8601 date string.
+
+        Handles both colon form (+05:30) produced by datetime.isoformat()
+        and no-colon form (+0530) sometimes seen in raw email headers.
+        Returns canonical no-colon form e.g. '+0530', '-0400', '+0000'.
+        Returns None for UTC-naive strings or unparseable input.
+        """
+        if not date_str or date_str in ("None", ""):
+            return None
+        # Colon form: +HH:MM or -HH:MM at end of string
+        m = re.search(r'([+-])(\d{2}):(\d{2})$', str(date_str).strip())
+        if m:
+            sign, hh, mm = m.group(1), m.group(2), m.group(3)
+            return f"{sign}{hh}{mm}"
+        # No-colon form: +HHMM or -HHMM
+        m = re.search(r'([+-])(\d{4})$', str(date_str).strip())
+        if m:
+            return m.group(0)
+        # Z suffix = UTC
+        if str(date_str).strip().endswith('Z'):
+            return "+0000"
+        return None
+
     def _build_temporal(self, cluster, fps) -> TemporalPattern:
-        tz_off  = cluster.consensus_timezone
-        # Strip region from combined string if stored as "offset (region)"
+        # ── Timezone offset ───────────────────────────────────────────────
+        # Priority: fp.timezone_offset (already extracted) → extract from
+        # email date string directly (fixes isoformat +HH:MM colon mismatch)
+        tz_off = cluster.consensus_timezone
         if tz_off and '(' in tz_off:
             tz_off = tz_off.split('(')[0].strip()
 
+        # If consensus_timezone is None/empty, extract from individual dates
+        if not tz_off or tz_off in ("None", ""):
+            raw_offsets = []
+            for fp in fps:
+                # Try fp.timezone_offset first
+                off = getattr(fp, 'timezone_offset', None)
+                if not off or str(off) in ("None", ""):
+                    # Fall back to extracting from email_date string
+                    off = self._extract_tz_offset(str(getattr(fp, 'email_date', '') or ''))
+                if off and str(off) not in ("None", ""):
+                    raw_offsets.append(str(off))
+            if raw_offsets:
+                # Consensus = most common offset
+                tz_off = max(set(raw_offsets), key=raw_offsets.count)
+
+        # Normalise: strip any residual "None" string
+        if tz_off in ("None", ""):
+            tz_off = None
+
         tz_reg  = None
         for fp in fps:
-            if fp.timezone_region:
+            if getattr(fp, 'timezone_region', None):
                 tz_reg = fp.timezone_region
                 break
 
         country = cluster.likely_country
+        # If cluster.likely_country is None/string-None, try to derive from
+        # origin IPs via geo_map (passed through cluster if available)
+        if not country or str(country) == "None":
+            country = None
 
         # Send hour distribution
         hours = [fp.send_hour_local for fp in fps if fp.send_hour_local is not None]

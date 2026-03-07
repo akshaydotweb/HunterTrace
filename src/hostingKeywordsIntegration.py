@@ -87,16 +87,34 @@ def _fetch_peeringdb_networks() -> Dict[str, set]:
 
 def get_hosting_keywords(fetch_online: bool = True) -> dict:
     """
-    Get hosting classification keywords
-    
-    Args:
-        fetch_online: If True, fetch fresh data from online sources. If False, use hardcoded only.
-    
-    Returns:
-        dict with 'datacenter', 'residential', 'hosting' keys containing keyword lists
+    Get hosting classification keywords.
+    Results are cached to disk (hosting_keywords_cache.json) so PeeringDB is
+    only fetched once — eliminating run-to-run variance from 429 rate limits.
     """
-    
+    import json as _json
+    from pathlib import Path as _Path
+
     global _keywords_cache
+
+    # ── Disk cache — read once, reuse forever ────────────────────────────────
+    _CACHE_FILE = _Path(__file__).parent / "hosting_keywords_cache.json"
+    _CACHE_MAX_AGE_DAYS = 7   # re-fetch after 7 days
+
+    if fetch_online and not _keywords_cache:
+        if _CACHE_FILE.exists():
+            try:
+                import time as _time
+                age_days = (_time.time() - _CACHE_FILE.stat().st_mtime) / 86400
+                if age_days < _CACHE_MAX_AGE_DAYS:
+                    cached = _json.loads(_CACHE_FILE.read_text())
+                    if all(k in cached for k in ("datacenter", "residential", "hosting")):
+                        _keywords_cache = cached
+                        print(f"[[+]] Hosting keywords loaded from cache "
+                              f"({int(age_days*24)}h old)")
+                        return {k: sorted(list(set(v)))
+                                for k, v in _keywords_cache.items()}
+            except Exception:
+                pass   # corrupt cache — will re-fetch below
     
     # Hardcoded known providers (always available as fallback)
     known_providers = {
@@ -185,11 +203,21 @@ def get_hosting_keywords(fetch_online: bool = True) -> dict:
             print(f"[!] Online fetch failed, using hardcoded keywords: {e}")
     
     # Convert sets to sorted lists for consistency
-    return {
+    final = {
         "datacenter": sorted(list(result["datacenter"])),
         "residential": sorted(list(result["residential"])),
         "hosting": sorted(list(result["hosting"])),
     }
+
+    # ── Write disk cache so next run is deterministic ─────────────────────────
+    if fetch_online:
+        try:
+            _CACHE_FILE.write_text(_json.dumps(final, indent=2))
+            _keywords_cache = final
+        except Exception:
+            pass
+
+    return final
 
 
 def classify_hosting_by_keywords(organization_name: str, keywords: dict = None) -> dict:
