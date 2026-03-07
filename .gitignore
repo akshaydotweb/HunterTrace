@@ -1,6 +1,18 @@
 .venv 
 mails
 .env
-.DS_Store
+.DS_Stores
+
+report
+reports 
+results
+ht_output
 
 __pycache__
+
+hosting_keywords_cache.json
+
+autoCorpusBuilder.py
+datasetCreator.py
+runEval.py
+testSuite.py
