@@ -293,6 +293,29 @@ def main():
     print("[4/5] Computing metrics...")
     framework = EvaluationFramework()
     metrics   = framework.evaluate(test, predictions)
+
+    # ── Pre-compute webmail rate so it's available for metrics patch ──────
+    _webmail_hits = 0
+    _diag_done = False
+    for _pred in predictions:
+        if _pred.raw_result is None:
+            continue
+        _we  = getattr(_pred.raw_result, 'webmail_extraction', None)
+        _ria = getattr(_pred.raw_result, 'real_ip_analysis', None)
+        # One-time diagnostic on first prediction
+        if not _diag_done:
+            _diag_done = True
+            print(f"  [DIAG] webmail_extraction field = {_we}")
+            print(f"  [DIAG] real_ip_analysis field   = {type(_ria).__name__ if _ria else None}")
+            print(f"  [DIAG] result fields: {[f for f in dir(_pred.raw_result) if not f.startswith('_')]}")
+        if (_we and (getattr(_we, 'real_ip_found', False) or getattr(_we, 'real_ip', None))) or (_ria and getattr(_ria, 'real_ip', None)):
+            _webmail_hits += 1
+    _n_pred  = len([p for p in predictions if p.raw_result is not None])
+    _wm_rate = _webmail_hits / _n_pred if _n_pred > 0 else 0.0
+    # Patch into metrics dict immediately
+    if isinstance(metrics, dict) and 'coverage' in metrics:
+        metrics['coverage']['webmail_leak_rate'] = _wm_rate
+
     framework.print_report(metrics)
 
     # 5. Extras
@@ -301,10 +324,19 @@ def main():
         framework.compare_baselines(test, predictions)
     if not args.no_ablation:
         framework.run_ablation(test, predictions)
+    print(f"\n[WEBMAIL] Emails with real IP leaked: {_webmail_hits}/{_n_pred} ({_wm_rate:.1%})")
     framework.webmail_extraction_rate(test, predictions)
 
     Path(args.report).parent.mkdir(parents=True, exist_ok=True)
     framework.save_report(metrics, args.report)
+    # Belt-and-suspenders: directly patch webmail_leak_rate in saved JSON
+    import json as _json
+    try:
+        _rpt = _json.loads(Path(args.report).read_text())
+        _rpt.setdefault('coverage', {})['webmail_leak_rate'] = _wm_rate
+        Path(args.report).write_text(_json.dumps(_rpt, indent=2))
+    except Exception:
+        pass
     print(f"\nDone. Report → {args.report}")
 
 

@@ -105,6 +105,12 @@ except ImportError:
 
 # Webmail v2 Real IP Extractor
 try:
+    from senderClassifier import classify_sender as _classify_sender
+    SENDER_CLASSIFIER_AVAILABLE = True
+except ImportError:
+    SENDER_CLASSIFIER_AVAILABLE = False
+
+try:
     from webMailRealIpExtrator import run_webmail_extraction
     WEBMAIL_V2_AVAILABLE = True
 except ImportError:
@@ -154,7 +160,7 @@ class HeaderExtractor:
         self.patterns = {
             "ipv4_only": re.compile(r'\[(\d+\.\d+\.\d+\.\d+)\]|(?:^|\bfrom\s+)(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(?!\])', re.IGNORECASE),
             "ipv6_with_brackets": re.compile(r'\[([a-fA-F0-9:]+)\]', re.IGNORECASE),  # IPv6 in brackets
-            "ipv6_loose": re.compile(r'\b([a-fA-F0-9]{1,4}(?::[a-fA-F0-9]{1,4}){2,7})\b', re.IGNORECASE),
+            "ipv6_loose": re.compile(r'\b([a-fA-F0-9]{1,4}(?::[a-fA-F0-9]{1,4}){2,7})\b', re.IGNORECASE),  # IPv6 — requires >=3 segments
             "protocol": re.compile(r'with\s+(ESMTP|SMTP|HTTP|HTTPS|LMTP)', re.IGNORECASE),
             "by_clause": re.compile(r'by\s+(\S+)', re.IGNORECASE),
         }
@@ -342,25 +348,25 @@ class HeaderExtractor:
         return bool(re.match(r'^\d+\.\d+\.\d+\.\d+$', address))
     
     def _is_valid_ipv6(self, address: str) -> bool:
-        """Validate IPv6 address format — rejects timestamps."""
-        import ipaddress
+        """Validate IPv6 — explicitly rejects HH:MM:SS timestamps."""
         if not address or address.count(':') < 2:
             return False
-        # Reject HH:MM:SS timestamps — all segments are ≤2 decimal digits
+        # Reject timestamps: HH:MM:SS where all segments are <=2 decimal digits
         segments = address.split(':')
-        if all(len(s) <= 2 and s.isdigit() for s in segments):
+        if all(len(s) <= 2 and s.isdigit() for s in segments if s):
             return False
-        # Each segment must be 1–4 hex chars
         if not all(c in '0123456789abcdefABCDEF:' for c in address):
             return False
         non_empty = [s for s in segments if s]
         if not all(1 <= len(s) <= 4 for s in non_empty):
             return False
         try:
+            import ipaddress
             ipaddress.IPv6Address(address)
             return True
         except ValueError:
             return False
+
 
 # ============================================================================
 # STAGE 2: IP CLASSIFICATION
@@ -2338,6 +2344,7 @@ class CompletePipelineResult:
     webmail_extraction: Optional[Any] = None
     bayesian_attribution: Optional[Any] = None
     graph_boost_factors: Optional[Any] = None
+    sender_classification: Optional[Any] = None   # senderClassifier output
 
 
 class CompletePipelineReport:
@@ -3699,79 +3706,83 @@ class CompletePipeline:
                 if self.verbose:
                     print(f"  [WARNING] Geolocation enrichment failed: {e}")
         
-        # ── WEBMAIL EXTRACTION (before Bayesian — feeds it real_ip signal) ──
-        webmail_extraction = None
+        # ── WEBMAIL EXTRACTION (extracts real IP from X-Originating-IP) ──────
+        webmail_extraction_result = None
         if WEBMAIL_V2_AVAILABLE:
             try:
                 with open(email_file, 'r', errors='ignore') as _wf:
-                    _raw = _wf.read()
-                webmail_extraction = run_webmail_extraction(_raw, verbose=self.verbose)
-                if webmail_extraction and webmail_extraction.real_ip_found:
-                    print(f"  [WEBMAIL] Real IP leaked: {webmail_extraction.real_ip} "
-                          f"via {webmail_extraction.leak_header} "
-                          f"(conf: {webmail_extraction.confidence:.0%})")
-                    # If webmail found a higher-confidence real IP, geolocate it
-                    if (webmail_extraction.confidence >= 0.80 and
-                            self.geolocation_enricher and
-                            webmail_extraction.real_ip):
-                        try:
-                            wm_geo = self.geolocation_enricher.enrich_multiple_ips(
-                                [webmail_extraction.real_ip]
-                            )
-                            if wm_geo:
-                                geolocation_results = geolocation_results or {}
-                                geolocation_results.update(wm_geo)
-                        except Exception:
-                            pass
-            except Exception as _e:
+                    _raw_email = _wf.read()
+                webmail_extraction_result = run_webmail_extraction(
+                    _raw_email, verbose=self.verbose
+                )
+                if webmail_extraction_result and webmail_extraction_result.real_ip_found:
+                    print(f"  [WEBMAIL] Real IP leaked: {webmail_extraction_result.real_ip} "
+                          f"via {webmail_extraction_result.leak_header} "
+                          f"(conf: {webmail_extraction_result.confidence:.0%})")
+            except Exception as _we:
                 if self.verbose:
-                    print(f"  [WARNING] Webmail extraction failed: {_e}")
+                    print(f"  [WEBMAIL] extraction failed: {_we}")
 
-        # ── BAYESIAN ATTRIBUTION (routes aci_adjusted_prob into result) ───
+        # ── BAYESIAN ATTRIBUTION ─────────────────────────────────────────────
         bayesian_attribution_result = None
         if self.bayesian_attribution:
             try:
-                # Build a temporary result object so SignalExtractor can read
-                # webmail_extraction — it needs it to extract real_ip_country signal
-                _tmp = CompletePipelineResult(
-                    header_analysis       = header_analysis,
-                    classifications       = classifications,
-                    proxy_analysis        = proxy_analysis,
-                    enrichment_results    = enrichment_results,
-                    correlation_analysis  = correlation_analysis,
-                    threat_intelligence   = threat_intelligence,
-                    geolocation_results   = geolocation_results,
-                    attribution_analysis  = attribution_analysis,
-                    real_ip_analysis      = real_ip_analysis,
-                    vpn_backtrack_analysis= vpn_backtrack_analysis,
-                    webmail_extraction    = webmail_extraction,
-                )
+                _tmp = type('_R', (), {
+                    'header_analysis':      header_analysis,
+                    'classifications':      classifications,
+                    'geolocation_results':  geolocation_results,
+                    'real_ip_analysis':     real_ip_analysis,
+                    'webmail_extraction':   webmail_extraction_result,
+                })()
                 bayesian_attribution_result = self.bayesian_attribution.attribute(_tmp)
                 print(f"\n  [BAYESIAN] Region: {bayesian_attribution_result.primary_region} | "
                       f"ACI-adjusted prob: {bayesian_attribution_result.aci_adjusted_prob:.1%} | "
                       f"Tier: {bayesian_attribution_result.tier_label}")
-            except Exception as _e:
+            except Exception as _be:
                 if self.verbose:
-                    print(f"  [WARNING] Bayesian attribution failed: {_e}")
+                    print(f"  [BAYESIAN] attribution failed: {_be}")
+
+        # ── SENDER CLASSIFICATION (hop forgery + timezone + regularity) ──
+        sender_classification_result = None
+        if SENDER_CLASSIFIER_AVAILABLE:
+            try:
+                sender_classification_result = _classify_sender(
+                    header_analysis,
+                    email_fingerprints=None,
+                    email_file=email_file,
+                )
+                sc = sender_classification_result
+                print(f"  [SENDER]   type={sc.overall_verdict}  "
+                      f"conf={sc.overall_confidence:.0%}  "
+                      f"hops={sc.hop_chain.verdict}  "
+                      f"tz_valid={sc.timezone.is_valid}  "
+                      f"tz_spoofed={sc.timezone.is_spoofed}")
+                if sc.red_flags:
+                    for rf in sc.red_flags[:3]:
+                        print(f"             \u26a0 {rf[:90]}")
+            except Exception as _se:
+                if self.verbose:
+                    print(f"  [SENDER]   classification failed: {_se}")
 
         # Create result
         result = CompletePipelineResult(
-            header_analysis       = header_analysis,
-            classifications       = classifications,
-            proxy_analysis        = proxy_analysis,
-            enrichment_results    = enrichment_results,
-            correlation_analysis  = correlation_analysis,
-            threat_intelligence   = threat_intelligence,
-            geolocation_results   = geolocation_results,
-            attribution_analysis  = attribution_analysis,
-            real_ip_analysis      = real_ip_analysis,
-            vpn_backtrack_analysis= vpn_backtrack_analysis,
-            webmail_extraction    = webmail_extraction,
-            bayesian_attribution  = bayesian_attribution_result,
+            header_analysis=header_analysis,
+            classifications=classifications,
+            proxy_analysis=proxy_analysis,
+            enrichment_results=enrichment_results,
+            correlation_analysis=correlation_analysis,
+            threat_intelligence=threat_intelligence,
+            geolocation_results=geolocation_results,
+            attribution_analysis=attribution_analysis,
+            real_ip_analysis=real_ip_analysis,
+            vpn_backtrack_analysis=vpn_backtrack_analysis,
+            webmail_extraction=webmail_extraction_result,
+            bayesian_attribution=bayesian_attribution_result,
+            sender_classification=sender_classification_result,
         )
-
+        
         print("\n[STAGE COMPLETE] All stages finished successfully")
-
+        
         return result
     
     def _geolocate_ipv6_block(self, ipv6_address: str) -> str:
