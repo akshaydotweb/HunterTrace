@@ -7,6 +7,12 @@
   </tr>
 </table>
 
+![Python](https://img.shields.io/badge/Python-3.8+-blue?logo=python&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-green)
+![Security](https://img.shields.io/badge/Security-Forensics-red)
+![Threat Intel](https://img.shields.io/badge/Threat-Intelligence-orange)
+![OSINT](https://img.shields.io/badge/OSINT-Tool-purple)
+
 ## Overview
 This project is a comprehensive attacker identification and attribution system for forensic analysis of email threats. It traces real attacker IPs, detects VPN/proxy obfuscation, and provides campaign correlation and reporting.
 
