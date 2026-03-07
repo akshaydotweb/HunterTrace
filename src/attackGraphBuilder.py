@@ -43,6 +43,9 @@ USAGE:
 
 import json
 import html as html_module
+import re
+import time
+import urllib.request
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -53,6 +56,81 @@ try:
     NX_AVAILABLE = True
 except ImportError:
     NX_AVAILABLE = False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# IP GEOLOCATION  (ip-api.com — free, no key required, 45 req/min limit)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_geo_cache: Dict[str, dict] = {}   # in-process cache — avoids duplicate calls
+
+_PRIVATE_PREFIXES = (
+    "10.", "127.", "0.", "::1",
+    "172.16.", "172.17.", "172.18.", "172.19.", "172.20.",
+    "172.21.", "172.22.", "172.23.", "172.24.", "172.25.",
+    "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.",
+    "192.168.",
+)
+
+def _geolocate_ip(ip: str) -> dict:
+    """
+    Geolocate a single public IP via ip-api.com.
+    Returns dict with: country, countryCode, regionName, city, lat, lon, isp, org
+    Returns {} for private/reserved IPs or on any network error.
+    Sleeps 1.4 s between live calls to stay within 45 req/min.
+    """
+    if not ip:
+        return {}
+    ip = str(ip).strip()
+    if ip in _geo_cache:
+        return _geo_cache[ip]
+    if any(ip.startswith(p) for p in _PRIVATE_PREFIXES):
+        _geo_cache[ip] = {}
+        return {}
+    try:
+        fields = "status,country,countryCode,regionName,city,lat,lon,isp,org,query"
+        url = f"http://ip-api.com/json/{ip}?fields={fields}"
+        req = urllib.request.Request(url, headers={"User-Agent": "HunterTrace/3"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+        if data.get("status") == "success":
+            _geo_cache[ip] = data
+            time.sleep(1.4)   # respect 45 req/min
+            return data
+        _geo_cache[ip] = {}
+        return {}
+    except Exception:
+        _geo_cache[ip] = {}
+        return {}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TIMEZONE EXTRACTION FROM ISO DATE STRINGS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _extract_tz_from_date(date_str: str) -> Optional[str]:
+    """
+    Extract timezone offset from an ISO-8601 date string.
+    Handles both colon form (+05:30) from datetime.isoformat()
+    and no-colon form (+0530) from raw email headers.
+    Returns canonical colon form e.g. '+05:30', '-04:00', '+00:00'.
+    Returns None for tz-naive strings.
+    """
+    if not date_str or str(date_str) in ("None", ""):
+        return None
+    s = str(date_str).strip()
+    # Colon form: ±HH:MM at end
+    m = re.search(r'([+-]\d{2}:\d{2})$', s)
+    if m:
+        return m.group(1)
+    # No-colon form: ±HHMM at end
+    m = re.search(r'([+-])(\d{2})(\d{2})$', s)
+    if m:
+        return f"{m.group(1)}{m.group(2)}:{m.group(3)}"
+    # Z suffix
+    if s.endswith('Z'):
+        return "+00:00"
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -170,12 +248,22 @@ class AttackGraphBuilder:
             aid = cluster.actor_id
             prof = profiles.get(aid)
 
+            # Resolve likely_country: cluster value → real IP geo fallback
+            likely_country = cluster.likely_country
+            if not likely_country or str(likely_country) == "None":
+                for fp in cluster.fingerprints:
+                    if fp.real_ip and fp.real_ip != fp.origin_ip:
+                        geo = _geolocate_ip(fp.real_ip)
+                        if geo.get("country"):
+                            likely_country = geo["country"]
+                            break
+
             actor_label = (prof.actor_label if prof else
-                           f"{aid}\n{cluster.likely_country or '?'}")
+                           f"{aid}\n{likely_country or '?'}")
             meta = {
                 "campaign_count":  cluster.campaign_count,
                 "confidence":      f"{cluster.confidence:.0%}",
-                "likely_country":  cluster.likely_country,
+                "likely_country":  likely_country,
                 "first_seen":      cluster.first_seen,
                 "last_seen":       cluster.last_seen,
             }
@@ -197,11 +285,18 @@ class AttackGraphBuilder:
                 eid = f"email:{fp.email_file}"
                 email_label = (fp.email_subject[:35] + "…"
                                if len(fp.email_subject) > 35 else fp.email_subject)
+                # Extract tz from the date string directly.
+                # fp.timezone_offset is often None because campaignCorrelator's
+                # regex expects +HHMM but datetime.isoformat() produces +HH:MM.
+                date_str = str(fp.email_date or "")
+                tz_val = (str(fp.timezone_offset)
+                          if fp.timezone_offset and str(fp.timezone_offset) != "None"
+                          else _extract_tz_from_date(date_str))
                 add_node(eid, email_label, "email", size=22, meta={
-                    "from":     fp.email_from,
-                    "subject":  fp.email_subject,
-                    "date":     str(fp.email_date or ""),
-                    "tz":       fp.timezone_offset,
+                    "from":    fp.email_from,
+                    "subject": fp.email_subject,
+                    "date":    date_str,
+                    "tz":      tz_val,
                 })
                 add_edge(aid, eid, "sent_via", 1.0, "sent")
 
@@ -221,13 +316,28 @@ class AttackGraphBuilder:
                         add_node(prov_id, fp.vpn_provider, "vpn_provider", size=28)
                         add_edge(vpn_id, prov_id, "used_provider", 0.8, "service")
 
-                # Real IP node (highest value — webmail leaked)
+                # Real IP node (highest value — webmail-leaked)
+                # Geolocate each unique real IP so lat/lon/country are embedded
+                # in the node metadata and available to the map visualisation.
                 if fp.real_ip and fp.real_ip != fp.origin_ip:
                     rip_id = f"realip:{fp.real_ip}"
-                    add_node(rip_id, f"REAL IP\n{fp.real_ip}", "ip_real", size=32, meta={
-                        "ip":     fp.real_ip,
-                        "source": fp.real_ip_source,
-                    })
+                    if rip_id not in nodes:   # geolocate only once per unique IP
+                        geo = _geolocate_ip(fp.real_ip)
+                        city_cc = (f"\n{geo['city']}, {geo['countryCode']}"
+                                   if geo.get("city") and geo.get("countryCode") else "")
+                        add_node(rip_id, f"REAL IP\n{fp.real_ip}{city_cc}",
+                                 "ip_real", size=32, meta={
+                            "ip":          fp.real_ip,
+                            "source":      fp.real_ip_source,
+                            "lat":         geo.get("lat"),
+                            "lon":         geo.get("lon"),
+                            "country":     geo.get("country"),
+                            "countryCode": geo.get("countryCode"),
+                            "city":        geo.get("city"),
+                            "region":      geo.get("regionName"),
+                            "isp":         geo.get("isp"),
+                            "org":         geo.get("org"),
+                        })
                     add_edge(eid, rip_id, "leaked_real_ip", 1.0, "LEAKED")
                     add_edge(aid, rip_id, "leaked_real_ip", 1.0, "true origin")
 
@@ -303,12 +413,13 @@ class AttackGraphBuilder:
 
       nodes_json = json.dumps([
           {
-              "id": n.id,
+              "id":    n.id,
               "label": n.label,
-              "type": n.type,
+              "type":  n.type,
               "color": n.color,
-              "size": n.size,
-              "meta": {k: str(v) for k, v in n.metadata.items()},
+              "size":  n.size,
+              "meta":  {k: str(v) if v is not None else None
+                        for k, v in n.metadata.items()},
           }
           for n in graph.nodes
       ], indent=2)
@@ -317,13 +428,56 @@ class AttackGraphBuilder:
           {
               "source": e.source,
               "target": e.target,
-              "rel": e.relationship,
-              "color": e.color,
+              "rel":    e.relationship,
+              "color":  e.color,
               "weight": e.weight,
-              "label": e.label,
+              "label":  e.label,
           }
           for e in graph.edges
       ], indent=2)
+
+      # ── Geo points for world map (real IPs only, must have lat/lon) ──────
+      geo_points = []
+      for n in graph.nodes:
+          if n.type == "ip_real":
+              lat = n.metadata.get("lat")
+              lon = n.metadata.get("lon")
+              if lat and lon and str(lat) not in ("None", "") \
+                              and str(lon) not in ("None", ""):
+                  geo_points.append({
+                      "ip":          n.metadata.get("ip", ""),
+                      "lat":         float(lat),
+                      "lon":         float(lon),
+                      "country":     n.metadata.get("country", ""),
+                      "countryCode": n.metadata.get("countryCode", ""),
+                      "city":        n.metadata.get("city", ""),
+                      "isp":         n.metadata.get("isp", ""),
+                      "source":      n.metadata.get("source", ""),
+                  })
+      geo_points_json = json.dumps(geo_points, indent=2)
+
+      # ── Timezone data for heatmap (email nodes with tz + date) ───────────
+      tz_data = []
+      for n in graph.nodes:
+          if n.type == "email":
+              tz  = n.metadata.get("tz")
+              dt  = n.metadata.get("date", "")
+              if tz and str(tz) not in ("None", "") and dt:
+                  try:
+                      # Parse hour-of-day and day-of-week from date string
+                      # Strip tz suffix for datetime parsing
+                      dt_clean = re.sub(r'[+-]\d{2}:\d{2}$', '', str(dt)).rstrip('Z')
+                      parsed   = datetime.fromisoformat(dt_clean)
+                      tz_data.append({
+                          "tz":     str(tz),
+                          "hour":   parsed.hour,
+                          "dow":    parsed.weekday(),   # 0=Mon … 6=Sun
+                          "date":   str(dt),
+                          "actor":  n.id.split(":")[0] if ":" in n.id else "",
+                      })
+                  except Exception:
+                      pass
+      tz_data_json = json.dumps(tz_data, indent=2)
 
       meta = graph.metadata
 
@@ -338,16 +492,18 @@ class AttackGraphBuilder:
       template = Path("./src/html/attackerGraph.html").read_text(encoding="utf-8")
       html = (
           template
-          .replace("__NODES_JSON__", nodes_json)
-          .replace("__EDGES_JSON__", edges_json)
-          .replace("{{TOTAL_ACTORS}}", str(meta.get("total_actors", 0)))
-          .replace("{{TOTAL_EMAILS}}", str(meta.get("total_emails", 0)))
-          .replace("{{TOTAL_NODES}}", str(meta.get("node_count", 0)))
-          .replace("{{TOTAL_EDGES}}", str(meta.get("edge_count", 0)))
-          .replace("{{GENERATED_AT}}", meta.get("generated_at", "")[:16])
-          .replace("{{LEGEND_ITEMS}}", legend_html)
+          .replace("__NODES_JSON__",     nodes_json)
+          .replace("__EDGES_JSON__",     edges_json)
+          .replace("__GEO_POINTS_JSON__", geo_points_json)
+          .replace("__TZ_DATA_JSON__",   tz_data_json)
+          .replace("{{TOTAL_ACTORS}}",   str(meta.get("total_actors", 0)))
+          .replace("{{TOTAL_EMAILS}}",   str(meta.get("total_emails", 0)))
+          .replace("{{TOTAL_NODES}}",    str(meta.get("node_count", 0)))
+          .replace("{{TOTAL_EDGES}}",    str(meta.get("edge_count", 0)))
+          .replace("{{GENERATED_AT}}",   meta.get("generated_at", "")[:16])
+          .replace("{{LEGEND_ITEMS}}",   legend_html)
       )
-      
+
       Path(output_path).write_text(html, encoding="utf-8")
       return str(Path(output_path).resolve())
     # ─────────────────────────────────────────────────────────────────────
