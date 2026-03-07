@@ -1,0 +1,699 @@
+{
+  "timestamp": "2026-03-06T16:52:01.648046",
+  "total_emails": 180,
+  "total_actors": 20,
+  "singleton_emails": [
+    "0021dc35526a.eml",
+    "02496799d315.eml",
+    "0a39874dcc18.eml",
+    "0ac493e7b9d3.eml",
+    "0afdfdd904eb.eml",
+    "0cdda9695ab8.eml",
+    "0d3d5440d443.eml",
+    "0fe14b475ef6.eml",
+    "10e941b51bc5.eml",
+    "15aec396f5e4.eml",
+    "16f4c0827828.eml",
+    "17de35e027e1.eml",
+    "18ee57404a92.eml",
+    "198c8a6d8d86.eml",
+    "19a9f5aaab31.eml",
+    "1c6b22a72a2d.eml",
+    "2177e2fa11f7.eml",
+    "2285fa290ebf.eml",
+    "25ec5eff4b4e.eml",
+    "272a689a7abb.eml",
+    "28236003d896.eml",
+    "28ce59280c74.eml",
+    "2bae2f8b996b.eml",
+    "2bcd535b32a8.eml",
+    "2f0ff3a768cb.eml",
+    "33a364f81b1c.eml",
+    "343db4e2e18b.eml",
+    "35bdb589f0d3.eml",
+    "378f41b66af2.eml",
+    "3e3faa4ea3bd.eml",
+    "3f799a89ff59.eml",
+    "404cfcf31a2e.eml",
+    "4588568bb373.eml",
+    "466068d7873a.eml",
+    "4c8bcaf434ce.eml",
+    "4d94f6ce4940.eml",
+    "4f6b0422202e.eml",
+    "52a210e1485b.eml",
+    "56d1c710d554.eml",
+    "5a0accf6e356.eml",
+    "5ba8544956da.eml",
+    "5bb249904d6a.eml",
+    "5c587f974519.eml",
+    "632deaf19794.eml",
+    "640562c2bbdc.eml",
+    "657f204d6857.eml",
+    "6646bdebb289.eml",
+    "6a1c88505e2b.eml",
+    "6b7d65c464b5.eml",
+    "6c4441fb2243.eml",
+    "6d8f590ce19b.eml",
+    "712e401a3acc.eml",
+    "73a48b2e558d.eml",
+    "76db6f5ba873.eml",
+    "76f4a5ff02d5.eml",
+    "77005fb46933.eml",
+    "7749716f9d7c.eml",
+    "77c1e31e907e.eml",
+    "77d2ba540cf9.eml",
+    "782e796488f7.eml",
+    "79bfa880867d.eml",
+    "7a0e5e571e77.eml",
+    "7b4df4675f12.eml",
+    "7cdd2483dc2b.eml",
+    "7d2cb3dcfad2.eml",
+    "80bb3636f3b5.eml",
+    "81ecfc9b82b9.eml",
+    "824a7a9ebee6.eml",
+    "82be11950df2.eml",
+    "86018d85d1b3.eml",
+    "87a821ee3a12.eml",
+    "880c140c236a.eml",
+    "9936a49b8312.eml",
+    "9ceb0ba55e5f.eml",
+    "9d40bc2307f5.eml",
+    "9e8ac8a06a84.eml",
+    "a2ff303130a3.eml",
+    "a482b1c73dc3.eml",
+    "a9635547b829.eml",
+    "aab468ddf9eb.eml",
+    "aafdfc38911f.eml",
+    "b17d1358bb3c.eml",
+    "b2b53c572e12.eml",
+    "b3ffb1aa2e3b.eml",
+    "b79a4bc7e595.eml",
+    "bb8d618bd509.eml",
+    "bbe07b686d71.eml",
+    "bdbf17544e02.eml",
+    "c13214345d83.eml",
+    "c4537c60b9a2.eml",
+    "c49d6572dae4.eml",
+    "c6ea4a76c5bf.eml",
+    "cb5b0e619909.eml",
+    "ce471a0ead25.eml",
+    "cf57af4b811f.eml",
+    "d0906e973372.eml",
+    "d16b698a9fc2.eml",
+    "d4e8912161a0.eml",
+    "da3e4d35e75e.eml",
+    "de328ba1d1cb.eml",
+    "e40f600947ec.eml",
+    "e8d85b386ada.eml",
+    "ea539ac55adb.eml",
+    "f4a2bc06e0ed.eml",
+    "f5bc529d8a3a.eml",
+    "f6f663c0e24b.eml",
+    "f70160393978.eml",
+    "f87656169d9a.eml",
+    "f8882e82ce04.eml",
+    "f98aa88f551c.eml",
+    "f992f86f7ca9.eml",
+    "fa9bf308d24e.eml",
+    "fb05185b4719.eml",
+    "fcc4b06b1756.eml",
+    "ff15a1c11974.eml",
+    "ff1949616bfa.eml"
+  ],
+  "actor_clusters": [
+    {
+      "actor_id": "ACTOR_001",
+      "emails": [
+        "16aa7266be5a.eml",
+        "1b2a45dab4c5.eml",
+        "2309ec3c198a.eml",
+        "35e8500e640d.eml",
+        "4f8dadd1e80d.eml",
+        "55bb159e036a.eml",
+        "748bd59aba9c.eml",
+        "7562dbf6a4cb.eml",
+        "a8ff9e831337.eml",
+        "b50cd88255de.eml",
+        "b7fd54f61f57.eml",
+        "fc3b3b0a99a8.eml"
+      ],
+      "confidence": 0.64,
+      "likely_country": null,
+      "consensus_timezone": null,
+      "consensus_vpn": null,
+      "consensus_webmail": "Unknown / Unidentified",
+      "send_window": "12:00\u201316:00 local",
+      "first_seen": "2002-08-28T09:24:34+01:00",
+      "last_seen": "2002-10-08T15:51:16+01:00",
+      "ttps": [
+        "T1566 \u2013 Phishing via Unknown / Unidentified",
+        "Send window: 12:00\u201316:00 local"
+      ],
+      "all_vpn_ips": [
+        "217.35.23.133",
+        "217.36.22.4",
+        "217.35.11.51",
+        "217.36.8.232"
+      ],
+      "all_origin_ips": [
+        "217.35.23.133",
+        "217.36.22.4",
+        "217.35.11.51",
+        "217.36.8.232"
+      ]
+    },
+    {
+      "actor_id": "ACTOR_002",
+      "emails": [
+        "134071333cdb.eml",
+        "471e7fcb606a.eml",
+        "61ebb0ada420.eml",
+        "6f26d9354f06.eml",
+        "7794db5ef0f5.eml",
+        "c0cf5048c514.eml",
+        "dc5e80866b0a.eml",
+        "e1d7faa7cf51.eml"
+      ],
+      "confidence": 0.64,
+      "likely_country": null,
+      "consensus_timezone": null,
+      "consensus_vpn": null,
+      "consensus_webmail": "Outlook / Hotmail (Microsoft)",
+      "send_window": "12:00\u201316:00 local",
+      "first_seen": "2002-08-24T15:00:15+00:00",
+      "last_seen": "2002-10-08T15:45:28+01:00",
+      "ttps": [
+        "T1566 \u2013 Phishing via Outlook / Hotmail (Microsoft)",
+        "Send window: 12:00\u201316:00 local"
+      ],
+      "all_vpn_ips": [
+        "200.241.240.183",
+        "64.4.36.89",
+        "14.42.188.81",
+        "194.130.102.81",
+        "64.4.22.46",
+        "216.30.74.2",
+        "217.34.194.18",
+        "200.251.234.66"
+      ],
+      "all_origin_ips": [
+        "200.241.240.183",
+        "194.29.209.49",
+        "194.130.102.81",
+        "216.30.74.2",
+        "4.63.110.224",
+        "207.202.171.254",
+        "217.34.194.18",
+        "200.251.234.66"
+      ]
+    },
+    {
+      "actor_id": "ACTOR_003",
+      "emails": [
+        "335e5a16a883.eml",
+        "5e2a1c287540.eml",
+        "64e3cb297ed7.eml",
+        "b0bc7a635f57.eml",
+        "bcb50a590e97.eml",
+        "d9c4afec2430.eml"
+      ],
+      "confidence": 0.64,
+      "likely_country": null,
+      "consensus_timezone": null,
+      "consensus_vpn": null,
+      "consensus_webmail": "Unknown / Unidentified",
+      "send_window": "08:00\u201312:00 local",
+      "first_seen": "2002-09-05T07:11:23+00:00",
+      "last_seen": "2002-10-04T21:45:33+00:00",
+      "ttps": [
+        "T1566 \u2013 Phishing via Unknown / Unidentified",
+        "Send window: 08:00\u201312:00 local"
+      ],
+      "all_vpn_ips": [
+        "66.92.157.3"
+      ],
+      "all_origin_ips": [
+        "66.44.40.158",
+        "4.64.17.23",
+        "4.64.17.47",
+        "66.92.157.2",
+        "66.44.42.81",
+        "4.64.218.140"
+      ]
+    },
+    {
+      "actor_id": "ACTOR_004",
+      "emails": [
+        "138031688f84.eml",
+        "1b635717aa2a.eml",
+        "b7cb07f544cd.eml"
+      ],
+      "confidence": 0.64,
+      "likely_country": null,
+      "consensus_timezone": null,
+      "consensus_vpn": null,
+      "consensus_webmail": "Yahoo Mail",
+      "send_window": "16:00\u201320:00 local",
+      "first_seen": "0102-08-29T19:49:31+03:00",
+      "last_seen": "2002-09-18T18:04:28-10:00",
+      "ttps": [
+        "T1566 \u2013 Phishing via Yahoo Mail",
+        "Send window: 16:00\u201320:00 local"
+      ],
+      "all_vpn_ips": [
+        "212.23.14.40",
+        "61.144.216.44",
+        "130.91.58.120"
+      ],
+      "all_origin_ips": [
+        "153.176.78.191",
+        "212.23.14.40",
+        "130.91.58.120"
+      ]
+    },
+    {
+      "actor_id": "ACTOR_005",
+      "emails": [
+        "2671cd7566d0.eml",
+        "7b60b28c3040.eml",
+        "a8703bfd65bf.eml"
+      ],
+      "confidence": 0.64,
+      "likely_country": null,
+      "consensus_timezone": null,
+      "consensus_vpn": null,
+      "consensus_webmail": "Unknown / Unidentified",
+      "send_window": "12:00\u201316:00 local",
+      "first_seen": "2002-09-03T21:03:40-04:00",
+      "last_seen": "2002-09-05T10:17:03+02:00",
+      "ttps": [
+        "T1566 \u2013 Phishing via Unknown / Unidentified",
+        "Send window: 12:00\u201316:00 local"
+      ],
+      "all_vpn_ips": [
+        "66.38.151.19"
+      ],
+      "all_origin_ips": [
+        "66.38.151.19"
+      ]
+    },
+    {
+      "actor_id": "ACTOR_006",
+      "emails": [
+        "3b57b63684c9.eml",
+        "7dd1bc94a8e2.eml",
+        "b5eb8782ce06.eml"
+      ],
+      "confidence": 0.64,
+      "likely_country": null,
+      "consensus_timezone": null,
+      "consensus_vpn": null,
+      "consensus_webmail": "Outlook / Hotmail (Microsoft)",
+      "send_window": "08:00\u201312:00 local",
+      "first_seen": "2002-08-28T08:45:25",
+      "last_seen": "2002-09-05T09:52:33-04:00",
+      "ttps": [
+        "T1566 \u2013 Phishing via Outlook / Hotmail (Microsoft)",
+        "Send window: 08:00\u201312:00 local"
+      ],
+      "all_vpn_ips": [
+        "213.121.94.124",
+        "64.4.18.192",
+        "66.218.67.137"
+      ],
+      "all_origin_ips": [
+        "213.121.94.124",
+        "66.92.145.79",
+        "62.172.206.50"
+      ]
+    },
+    {
+      "actor_id": "ACTOR_007",
+      "emails": [
+        "8f30618dfa4a.eml",
+        "9aff126907a4.eml",
+        "cd1007e2920a.eml"
+      ],
+      "confidence": 0.64,
+      "likely_country": null,
+      "consensus_timezone": null,
+      "consensus_vpn": null,
+      "consensus_webmail": "Unknown / Unidentified",
+      "send_window": "20:00\u201324:00 local",
+      "first_seen": "2002-08-27T23:38:48-05:00",
+      "last_seen": "2002-10-07T22:47:10-05:00",
+      "ttps": [
+        "T1566 \u2013 Phishing via Unknown / Unidentified",
+        "Send window: 20:00\u201324:00 local"
+      ],
+      "all_vpn_ips": [
+        "209.103.203.50",
+        "209.103.203.17"
+      ],
+      "all_origin_ips": [
+        "209.103.203.50",
+        "209.103.203.17"
+      ]
+    },
+    {
+      "actor_id": "ACTOR_008",
+      "emails": [
+        "1225310d4e24.eml",
+        "890c28135db0.eml"
+      ],
+      "confidence": 0.675,
+      "likely_country": null,
+      "consensus_timezone": null,
+      "consensus_vpn": "internap holding llc",
+      "consensus_webmail": "Unknown / Unidentified",
+      "send_window": "12:00\u201316:00 local",
+      "first_seen": "2002-08-27T14:14:18-07:00",
+      "last_seen": "2002-09-17T13:31:20-07:00",
+      "ttps": [
+        "T1090 \u2013 Proxy (internap holding llc)",
+        "T1566 \u2013 Phishing via Unknown / Unidentified",
+        "Send window: 12:00\u201316:00 local"
+      ],
+      "all_vpn_ips": [
+        "206.191.151.2"
+      ],
+      "all_origin_ips": [
+        "206.191.151.102"
+      ]
+    },
+    {
+      "actor_id": "ACTOR_009",
+      "emails": [
+        "1d3bd7acfa9d.eml",
+        "d1924185e74f.eml"
+      ],
+      "confidence": 0.64,
+      "likely_country": null,
+      "consensus_timezone": null,
+      "consensus_vpn": null,
+      "consensus_webmail": "Outlook / Hotmail (Microsoft)",
+      "send_window": "00:00\u201304:00 local",
+      "first_seen": "2002-08-27T03:45:51-16:00",
+      "last_seen": "2002-09-04T01:35:46-08:00",
+      "ttps": [
+        "T1566 \u2013 Phishing via Outlook / Hotmail (Microsoft)",
+        "Send window: 00:00\u201304:00 local"
+      ],
+      "all_vpn_ips": [
+        "200.75.120.56",
+        "61.241.154.250"
+      ],
+      "all_origin_ips": [
+        "200.75.120.56",
+        "61.241.154.250"
+      ]
+    },
+    {
+      "actor_id": "ACTOR_010",
+      "emails": [
+        "1e9d1cec6f7a.eml",
+        "c99a01a637ce.eml"
+      ],
+      "confidence": 0.64,
+      "likely_country": null,
+      "consensus_timezone": null,
+      "consensus_vpn": null,
+      "consensus_webmail": "Unknown / Unidentified",
+      "send_window": "16:00\u201320:00 local",
+      "first_seen": "2002-09-07T17:58:28",
+      "last_seen": "2002-09-09T17:20:53+00:00",
+      "ttps": [
+        "T1566 \u2013 Phishing via Unknown / Unidentified",
+        "Send window: 16:00\u201320:00 local"
+      ],
+      "all_vpn_ips": [
+        "24.98.25.152"
+      ],
+      "all_origin_ips": [
+        "24.98.25.152"
+      ]
+    },
+    {
+      "actor_id": "ACTOR_011",
+      "emails": [
+        "39b7a953bf2e.eml",
+        "62833ee7c4cd.eml"
+      ],
+      "confidence": 0.64,
+      "likely_country": null,
+      "consensus_timezone": null,
+      "consensus_vpn": null,
+      "consensus_webmail": "Unknown / Unidentified",
+      "send_window": "08:00\u201312:00 local",
+      "first_seen": "2002-08-22T12:46:18+01:00",
+      "last_seen": "2002-10-08T09:24:39-04:00",
+      "ttps": [
+        "T1566 \u2013 Phishing via Unknown / Unidentified",
+        "Send window: 08:00\u201312:00 local"
+      ],
+      "all_vpn_ips": [
+        "66.218.67.196"
+      ],
+      "all_origin_ips": [
+        "66.218.67.196"
+      ]
+    },
+    {
+      "actor_id": "ACTOR_012",
+      "emails": [
+        "48b5ae94cc8d.eml",
+        "57035eb6da5b.eml"
+      ],
+      "confidence": 0.64,
+      "likely_country": null,
+      "consensus_timezone": null,
+      "consensus_vpn": null,
+      "consensus_webmail": "Unknown / Unidentified",
+      "send_window": "12:00\u201316:00 local",
+      "first_seen": "2002-08-28T13:54:36+01:00",
+      "last_seen": "2002-10-08T14:20:39+01:00",
+      "ttps": [
+        "T1566 \u2013 Phishing via Unknown / Unidentified",
+        "Send window: 12:00\u201316:00 local"
+      ],
+      "all_vpn_ips": [
+        "66.218.66.95",
+        "66.218.67.198"
+      ],
+      "all_origin_ips": [
+        "66.218.66.95",
+        "66.218.67.198"
+      ]
+    },
+    {
+      "actor_id": "ACTOR_013",
+      "emails": [
+        "5577e0c071ac.eml",
+        "6f7d486301a0.eml"
+      ],
+      "confidence": 0.64,
+      "likely_country": null,
+      "consensus_timezone": null,
+      "consensus_vpn": null,
+      "consensus_webmail": "Unknown / Unidentified",
+      "send_window": "20:00\u201324:00 local",
+      "first_seen": "2002-08-27T22:06:34+01:00",
+      "last_seen": "2002-08-27T23:55:13+01:00",
+      "ttps": [
+        "T1566 \u2013 Phishing via Unknown / Unidentified",
+        "Send window: 20:00\u201324:00 local"
+      ],
+      "all_vpn_ips": [
+        "208.57.0.14",
+        "208.57.0.10"
+      ],
+      "all_origin_ips": [
+        "208.57.45.218"
+      ]
+    },
+    {
+      "actor_id": "ACTOR_014",
+      "emails": [
+        "569cff2d1bfa.eml",
+        "7e05f2cf2520.eml"
+      ],
+      "confidence": 0.64,
+      "likely_country": null,
+      "consensus_timezone": null,
+      "consensus_vpn": null,
+      "consensus_webmail": "Yahoo Mail",
+      "send_window": "08:00\u201312:00 local",
+      "first_seen": "2002-08-31T09:41:43-07:00",
+      "last_seen": "2002-09-01T08:00:47-01:00",
+      "ttps": [
+        "T1566 \u2013 Phishing via Yahoo Mail",
+        "Send window: 08:00\u201312:00 local"
+      ],
+      "all_vpn_ips": [
+        "64.31.161.243",
+        "150.212.52.22"
+      ],
+      "all_origin_ips": [
+        "100.226.45.87",
+        "64.31.161.243"
+      ]
+    },
+    {
+      "actor_id": "ACTOR_015",
+      "emails": [
+        "58cf86df6846.eml",
+        "87936d28127c.eml"
+      ],
+      "confidence": 0.64,
+      "likely_country": null,
+      "consensus_timezone": null,
+      "consensus_vpn": null,
+      "consensus_webmail": "Unknown / Unidentified",
+      "send_window": "12:00\u201316:00 local",
+      "first_seen": "2002-08-22T15:01:20+01:00",
+      "last_seen": "2002-08-28T14:14:45+01:00",
+      "ttps": [
+        "T1566 \u2013 Phishing via Unknown / Unidentified",
+        "Send window: 12:00\u201316:00 local"
+      ],
+      "all_vpn_ips": [
+        "129.215.34.86"
+      ],
+      "all_origin_ips": [
+        "129.215.34.86"
+      ]
+    },
+    {
+      "actor_id": "ACTOR_016",
+      "emails": [
+        "5be57a44ac42.eml",
+        "dccc1399273b.eml"
+      ],
+      "confidence": 0.64,
+      "likely_country": null,
+      "consensus_timezone": null,
+      "consensus_vpn": null,
+      "consensus_webmail": "Unknown / Unidentified",
+      "send_window": "00:00\u201304:00 local",
+      "first_seen": "2002-08-28T03:28:10+00:00",
+      "last_seen": "2002-09-02T01:03:30+00:00",
+      "ttps": [
+        "T1566 \u2013 Phishing via Unknown / Unidentified",
+        "Send window: 00:00\u201304:00 local"
+      ],
+      "all_vpn_ips": [
+        "66.92.157.3"
+      ],
+      "all_origin_ips": [
+        "207.172.11.147",
+        "66.44.42.51"
+      ]
+    },
+    {
+      "actor_id": "ACTOR_017",
+      "emails": [
+        "6f8cfd6b390a.eml",
+        "d7e75f2577e1.eml"
+      ],
+      "confidence": 0.64,
+      "likely_country": null,
+      "consensus_timezone": null,
+      "consensus_vpn": null,
+      "consensus_webmail": "Unknown / Unidentified",
+      "send_window": "08:00\u201312:00 local",
+      "first_seen": "2002-08-23T09:35:58-07:00",
+      "last_seen": "2002-08-26T09:49:55-07:00",
+      "ttps": [
+        "T1566 \u2013 Phishing via Unknown / Unidentified",
+        "Send window: 08:00\u201312:00 local"
+      ],
+      "all_vpn_ips": [
+        "202.9.153.244",
+        "202.9.154.217"
+      ],
+      "all_origin_ips": [
+        "202.9.153.244",
+        "202.9.154.217"
+      ]
+    },
+    {
+      "actor_id": "ACTOR_018",
+      "emails": [
+        "9a0ad317be61.eml",
+        "eec6eb89c98d.eml"
+      ],
+      "confidence": 0.64,
+      "likely_country": null,
+      "consensus_timezone": null,
+      "consensus_vpn": null,
+      "consensus_webmail": "Yahoo Mail",
+      "send_window": "12:00\u201316:00 local",
+      "first_seen": "2002-09-02T14:11:45+02:00",
+      "last_seen": "2002-09-08T15:29:20+02:00",
+      "ttps": [
+        "T1566 \u2013 Phishing via Yahoo Mail",
+        "Send window: 12:00\u201316:00 local"
+      ],
+      "all_vpn_ips": [
+        "64.110.29.20",
+        "193.251.130.111"
+      ],
+      "all_origin_ips": [
+        "64.110.29.20",
+        "193.251.130.111"
+      ]
+    },
+    {
+      "actor_id": "ACTOR_019",
+      "emails": [
+        "b8d573f87805.eml",
+        "bc940bd3c860.eml"
+      ],
+      "confidence": 0.64,
+      "likely_country": null,
+      "consensus_timezone": null,
+      "consensus_vpn": null,
+      "consensus_webmail": "Unknown / Unidentified",
+      "send_window": "12:00\u201316:00 local",
+      "first_seen": "2002-09-05T13:10:16-07:00",
+      "last_seen": "2002-09-09T14:36:18-07:00",
+      "ttps": [
+        "T1566 \u2013 Phishing via Unknown / Unidentified",
+        "Send window: 12:00\u201316:00 local"
+      ],
+      "all_vpn_ips": [
+        "210.214.94.76",
+        "210.214.94.112"
+      ],
+      "all_origin_ips": [
+        "210.214.94.76",
+        "210.214.94.112"
+      ]
+    },
+    {
+      "actor_id": "ACTOR_020",
+      "emails": [
+        "d320e916584f.eml",
+        "e1c5476c5cb4.eml"
+      ],
+      "confidence": 0.64,
+      "likely_country": null,
+      "consensus_timezone": null,
+      "consensus_vpn": null,
+      "consensus_webmail": "Unknown / Unidentified",
+      "send_window": "16:00\u201320:00 local",
+      "first_seen": "2002-09-19T14:44:22-07:00",
+      "last_seen": "2002-09-19T19:56:55-05:00",
+      "ttps": [
+        "T1566 \u2013 Phishing via Unknown / Unidentified",
+        "Send window: 16:00\u201320:00 local"
+      ],
+      "all_vpn_ips": [
+        "205.206.231.19"
+      ],
+      "all_origin_ips": [
+        "205.206.231.19"
+      ]
+    }
+  ]
+}
