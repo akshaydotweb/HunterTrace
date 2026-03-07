@@ -1,6 +1,7 @@
 .venv 
 mails
 .env
+.DS_Stores
 
 report
 reports 
