@@ -49,7 +49,7 @@ except ImportError:
 
 # Import geolocation enrichment module
 try:
-    from geolocationEnrichment import GeolocationEnricher, GeolocationData, format_coordinates, get_distance_between_points
+    from ..enrichment.geolocation import GeolocationEnricher, GeolocationData, format_coordinates, get_distance_between_points
     GEOLOCATION_AVAILABLE = True
 except ImportError:
     GEOLOCATION_AVAILABLE = False
@@ -63,14 +63,14 @@ except ImportError:
 
 # Import Real IP Extractor (VPN/Proxy bypass) - Basic version
 try:
-    from realIpExtractor import RealIPExtractor, extract_real_ip_summary
+    from ..extraction.basic import RealIPExtractor, extract_real_ip_summary
     REAL_IP_EXTRACTOR_AVAILABLE = True
 except ImportError:
     REAL_IP_EXTRACTOR_AVAILABLE = False
 
 # Import Advanced Real IP Extractor (11+ techniques from research paper)
 try:
-    from advancedRealIpExtractor import AdvancedRealIPExtractor, extract_real_ip_summary as extract_real_ip_summary_advanced
+    from ..extraction.advanced import AdvancedRealIPExtractor, extract_real_ip_summary as extract_real_ip_summary_advanced
     ADVANCED_REAL_IP_EXTRACTOR_AVAILABLE = True
 except ImportError:
     ADVANCED_REAL_IP_EXTRACTOR_AVAILABLE = False

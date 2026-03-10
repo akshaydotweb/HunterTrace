@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-HUNTЕРТRACE — EVALUATION FRAMEWORK
+HUNTЕRТRACE — EVALUATION FRAMEWORK
 =====================================
 
 Solves Issue #1 (No Evaluation Framework) from the evaluation audit.

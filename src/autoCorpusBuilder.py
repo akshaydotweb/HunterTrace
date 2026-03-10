@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-HUNTЕРТRACE — AUTOMATED CORPUS BUILDER v3
+HUNTЕRТRACE — AUTOMATED CORPUS BUILDER v3
 ==========================================
 Downloads real phishing/spam emails from multiple public sources,
 auto-labels each one via IP geolocation, writes corpus.json.

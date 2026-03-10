@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-HUNTЕРТRACE — TEST SUITE
+HUNTЕRТRACE — TEST SUITE
 ==========================
 
 Solves Issue #4 (No Unit Tests) from the evaluation audit.

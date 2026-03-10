@@ -43,7 +43,7 @@ from datetime import datetime
 # ============================================================================
 
 try:
-    from graphCentralityEngine import (
+    from ..graph.correlator import (
         InfrastructureGraphAnalyzer,
         integrate_graph_boost_into_attribution
     )
@@ -52,7 +52,7 @@ except ImportError:
     GRAPH_ENGINE_AVAILABLE = False
 
 try:
-    from attributionEngine import AttributionEngine
+    from ..graph.centrality import AttributionEngine
     ATTRIBUTION_ENGINE_V3_AVAILABLE = True
 except ImportError:
     ATTRIBUTION_ENGINE_V3_AVAILABLE = False
@@ -290,7 +290,7 @@ class HunterTraceV3:
             # Try to import from same directory
             _orig_path = sys.path.copy()
             sys.path.insert(0, str(Path(__file__).parent))
-            from hunterTrace import CompletePipeline
+            from pipeline import CompletePipeline
             self._pipeline_class = CompletePipeline
             sys.path = _orig_path
         except ImportError:

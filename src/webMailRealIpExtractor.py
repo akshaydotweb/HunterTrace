@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-HUNTЕРТRACE v2 - WEBMAIL REAL-IP EXTRACTION MODULE
+HUNTЕRТRACE v2 - WEBMAIL REAL-IP EXTRACTION MODULE
 ====================================================
 
 Author: HunterTrace v2
