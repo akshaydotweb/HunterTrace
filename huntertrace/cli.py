@@ -6,12 +6,27 @@ import argparse
 from pathlib import Path
 from .__version__ import __version__
 
+_LOGO_FILE = Path(__file__).resolve().parent / 'assets' / 'img' / 'hunterTrace_ascii_logo.txt'
+
+
+def _load_banner():
+    """Load ASCII logo and append version tag."""
+    try:
+        art = _LOGO_FILE.read_text(encoding='utf-8').rstrip('\n')
+        return f"\n{art}\n  HUNTERTRACE v{__version__}\n"
+    except Exception:
+        return f"\n  HUNTERTRACE v{__version__}\n"
+
+
 def main():
     """Main CLI entry point."""
+    banner = _load_banner()
+
     parser = argparse.ArgumentParser(
         prog='huntertrace',
         description=(
-            'HUNTЕRТRACE — Advanced Phishing Actor Attribution Engine\n'
+            f'{banner}\n'
+            'Advanced Phishing Actor Attribution Engine\n'
             '\n'
             'A 7-stage forensic pipeline that extracts real IP addresses from\n'
             'email headers, classifies VPN/proxy/webmail layers, enriches IPs\n'
@@ -98,6 +113,8 @@ def main():
         parser.print_help()
         return 0
     
+    print(banner)
+
     # Import here to avoid slow startup
     if args.command == 'analyze':
         from .core.pipeline import CompletePipeline
