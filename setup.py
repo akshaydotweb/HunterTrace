@@ -15,9 +15,9 @@ else:
         '__title__': 'huntertrace',
         '__version__': '1.0.0',
         '__author__': 'HUNTЕРТRACE Contributors',
-        '__author_email__': 'contact@huntertrace.io',
+        '__author_email__': 'akshayvmudaliar@gmail.com',
         '__description__': 'Advanced phishing actor attribution using Bayesian inference and graph analysis',
-        '__url__': 'https://github.com/yourusername/huntertrace',
+        '__url__': 'https://github.com/akshaydotweb/huntertrace',
     }
 
 # Read long description from README
@@ -38,10 +38,10 @@ setup(
     long_description_content_type='text/markdown',
     url=version['__url__'],
     project_urls={
-        'Documentation': 'https://github.com/yourusername/huntertrace/blob/main/docs',
-        'Source': 'https://github.com/yourusername/huntertrace',
-        'Tracker': 'https://github.com/yourusername/huntertrace/issues',
-        'Changelog': 'https://github.com/yourusername/huntertrace/blob/main/CHANGELOG.md',
+        'Documentation': 'https://github.com/akshaydotweb/huntertrace/blob/main/docs',
+        'Source': 'https://github.com/akshaydotweb/huntertrace',
+        'Tracker': 'https://github.com/akshaydotweb/huntertrace/issues',
+        'Changelog': 'https://github.com/akshaydotweb/huntertrace/blob/main/CHANGELOG.md',
     },
     packages=find_packages(exclude=['tests', 'tests.*', 'examples', 'docs']),
     classifiers=[
