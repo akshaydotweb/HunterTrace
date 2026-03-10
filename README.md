@@ -1,5 +1,9 @@
 # HUNTERTRACE
 
+<p align="center">
+  <img src="assets/hunterTraceLogo.png" alt="HunterTrace Logo" width="400">
+</p>
+
 > Advanced phishing actor attribution using multi-signal Bayesian inference and infrastructure graph analysis
 
 [![PyPI version](https://badge.fury.io/py/huntertrace.svg)](https://badge.fury.io/py/huntertrace)
