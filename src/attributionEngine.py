@@ -1021,17 +1021,23 @@ class AttributionEngine:
         self,
         profile,     # ActorTTPProfile from actorProfiler
         geo_map: Dict = None,
+        enrichment_map: Dict = None,
     ) -> AttributionResult:
         """
         Derive attribution directly from an ActorTTPProfile.
         Used as the final step in the v3 pipeline after campaign correlation.
         """
         geo_map  = geo_map or {}
+        enc      = enrichment_map or {}
         signals: Dict[str, Any]  = {}
         obfuscation: Dict[str, bool] = {k: False for k in ACI_LAYER_WEIGHTS}
 
         t = profile.temporal
         i = profile.infrastructure
+
+        # Derive observation count from profile campaign count
+        n_obs = max(1, getattr(profile, "campaign_count", 0) or
+                      getattr(t, "campaign_count", 0) or 1)
 
         if t.timezone_offset:
             signals["timezone_offset"] = t.timezone_offset
