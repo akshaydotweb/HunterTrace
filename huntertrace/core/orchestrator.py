@@ -1,0 +1,765 @@
+#!/usr/bin/env python3
+"""
+HUNTЕRТRACE v3 — MITRE MAPPER & V3 ORCHESTRATOR
+=================================================
+
+Two things in one file:
+
+1. MitreMapper
+   Auto-generates a structured MITRE ATT&CK Navigator layer JSON from
+   all ActorTTPProfiles in a campaign run. Drop it into MITRE Navigator
+   (https://mitre-attack.github.io/attack-navigator/) for a visual
+   kill-chain map.
+
+2. HunterTraceV3
+   The v3 orchestrator. Wraps the existing CompletePipeline (v1/v2)
+   and adds the full v3 campaign intelligence layer on top.
+
+   In single-email mode:  runs pipeline → extracts fingerprint → stores
+   In batch mode:         runs all emails → correlates → profiles → graphs
+   In report mode:        loads saved JSON reports → offline correlation
+
+USAGE:
+    # Full v3 batch run
+    from huntertrace.core.orchestrator import HunterTraceV3
+
+    v3 = HunterTraceV3(verbose=True)
+    v3.run_batch("/path/to/emails/")
+
+    # Load existing JSON reports and correlate offline
+    v3.correlate_from_json_dir("/path/to/reports/")
+"""
+
+import json
+import os
+import sys
+from pathlib import Path
+from dataclasses import dataclass, field
+from typing import Optional, List, Dict, Any
+from datetime import datetime
+
+# ============================================================================
+# GRAPH CENTRALITY INTEGRATION
+# ============================================================================
+
+try:
+    from huntertrace.graph.centrality import (
+        InfrastructureGraphAnalyzer,
+        integrate_graph_boost_into_attribution
+    )
+    GRAPH_ENGINE_AVAILABLE = True
+except ImportError:
+    GRAPH_ENGINE_AVAILABLE = False
+
+try:
+    from huntertrace.attribution.engine import AttributionEngine
+    ATTRIBUTION_ENGINE_V3_AVAILABLE = True
+except ImportError:
+    ATTRIBUTION_ENGINE_V3_AVAILABLE = False
+
+from collections import defaultdict
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MITRE ATT&CK NAVIGATOR LAYER GENERATOR
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Full technique metadata for the techniques HunterTrace can observe
+MITRE_TECHNIQUES = {
+    "T1566":     {"name": "Phishing",                        "tactic": "initial-access"},
+    "T1566.001": {"name": "Spearphishing Link",              "tactic": "initial-access"},
+    "T1566.002": {"name": "Spearphishing Attachment",        "tactic": "initial-access"},
+    "T1566.003": {"name": "Spearphishing via Service",       "tactic": "initial-access"},
+    "T1090":     {"name": "Proxy",                           "tactic": "command-and-control"},
+    "T1090.001": {"name": "Internal Proxy",                  "tactic": "command-and-control"},
+    "T1090.002": {"name": "External Proxy",                  "tactic": "command-and-control"},
+    "T1090.003": {"name": "Multi-hop Proxy",                 "tactic": "command-and-control"},
+    "T1036":     {"name": "Masquerading",                    "tactic": "defense-evasion"},
+    "T1036.005": {"name": "Match Legitimate Name or Location","tactic": "defense-evasion"},
+    "T1078":     {"name": "Valid Accounts",                  "tactic": "persistence"},
+    "T1078.004": {"name": "Cloud Accounts",                  "tactic": "persistence"},
+    "T1589":     {"name": "Gather Victim Identity Info",     "tactic": "reconnaissance"},
+    "T1589.001": {"name": "Credentials",                     "tactic": "reconnaissance"},
+    "T1589.002": {"name": "Email Addresses",                 "tactic": "reconnaissance"},
+    "T1204":     {"name": "User Execution",                  "tactic": "execution"},
+    "T1204.001": {"name": "Malicious Link",                  "tactic": "execution"},
+    "T1598":     {"name": "Phishing for Information",        "tactic": "reconnaissance"},
+    "T1114":     {"name": "Email Collection",                "tactic": "collection"},
+    "T1071":     {"name": "Application Layer Protocol",      "tactic": "command-and-control"},
+    "T1071.003": {"name": "Mail Protocols",                  "tactic": "command-and-control"},
+}
+
+# Tactic display order (ATT&CK kill chain order)
+TACTIC_ORDER = [
+    "reconnaissance", "resource-development", "initial-access",
+    "execution", "persistence", "privilege-escalation",
+    "defense-evasion", "credential-access", "discovery",
+    "lateral-movement", "collection", "command-and-control",
+    "exfiltration", "impact"
+]
+
+# Confidence → Navigator score (0–100)
+CONFIDENCE_TO_SCORE = {
+    (0.9, 1.0): 100,
+    (0.7, 0.9): 75,
+    (0.5, 0.7): 50,
+    (0.0, 0.5): 25,
+}
+
+
+class MitreMapper:
+    """
+    Generates MITRE ATT&CK Navigator layer JSON from actor profiles.
+
+    Output can be loaded directly into:
+      https://mitre-attack.github.io/attack-navigator/
+    """
+
+    def generate_layer(
+        self,
+        actor_profiles: List,       # List[ActorTTPProfile]
+        layer_name: str = "HunterTrace v3 — Campaign Analysis",
+        description: str = ""
+    ) -> dict:
+        """Generate a Navigator layer dict from all actor profiles."""
+
+        techniques_seen: Dict[str, Dict] = {}   # tid → aggregated data
+
+        for prof in actor_profiles:
+            for mapping in prof.mitre_mappings:
+                tid = mapping.technique_id
+                if tid not in techniques_seen:
+                    techniques_seen[tid] = {
+                        "techniqueID": tid,
+                        "score":       0,
+                        "comment":     "",
+                        "actors":      [],
+                        "color":       "",
+                        "enabled":     True,
+                        "showSubtechniques": True,
+                    }
+                # Aggregate score (highest confidence wins)
+                score = self._confidence_to_score(mapping.confidence)
+                if score > techniques_seen[tid]["score"]:
+                    techniques_seen[tid]["score"] = score
+                # Append actor + evidence comment
+                techniques_seen[tid]["actors"].append(prof.actor_id)
+                comment_line = f"[{prof.actor_id}] {mapping.evidence}"
+                if comment_line not in techniques_seen[tid]["comment"]:
+                    techniques_seen[tid]["comment"] += comment_line + "\n"
+
+        # Set colours by score
+        for tid, data in techniques_seen.items():
+            data["color"] = self._score_to_color(data["score"])
+
+        # Build Navigator layer
+        layer = {
+            "name":        layer_name,
+            "versions":    {"attack": "14", "navigator": "4.9", "layer": "4.5"},
+            "domain":      "enterprise-attack",
+            "description": description or f"Generated by HunterTrace v3 on {datetime.now().strftime('%Y-%m-%d')}",
+            "filters":     {"platforms": ["Linux", "Windows", "macOS", "Network", "PRE"]},
+            "sorting":     0,
+            "layout":      {"layout": "side", "showID": True, "showName": True},
+            "hideDisabled": False,
+            "techniques":  list(techniques_seen.values()),
+            "gradient": {
+                "colors": ["#ffffff", "#ff6666"],
+                "minValue": 0,
+                "maxValue": 100,
+            },
+            "legendItems": [
+                {"label": "Observed (high conf)",   "color": "#E63946"},
+                {"label": "Observed (medium conf)",  "color": "#F4A261"},
+                {"label": "Observed (low conf)",     "color": "#E9C46A"},
+            ],
+            "metadata":    [],
+            "links":       [],
+            "showTacticRowBackground": True,
+            "tacticRowBackground":     "#1d3557",
+        }
+
+        return layer
+
+    def export_layer(self, actor_profiles: List, output_path: str,
+                     layer_name: str = "HunterTrace v3") -> str:
+        layer = self.generate_layer(actor_profiles, layer_name)
+        Path(output_path).write_text(json.dumps(layer, indent=2))
+        return output_path
+
+    def print_summary(self, actor_profiles: List):
+        """Print a text summary of all observed MITRE techniques."""
+        all_mappings = []
+        for prof in actor_profiles:
+            for m in prof.mitre_mappings:
+                all_mappings.append((m.technique_id, m.technique_name,
+                                     m.tactic, m.confidence, prof.actor_id))
+
+        # Deduplicate by tid
+        seen = {}
+        for tid, name, tactic, conf, actor in all_mappings:
+            if tid not in seen or conf > seen[tid][2]:
+                seen[tid] = (name, tactic, conf, actor)
+
+        print("\n[v3] MITRE ATT&CK Coverage")
+        print("=" * 70)
+        print(f"  {'ID':<14} {'Tactic':<22} {'Technique':<35} Conf")
+        print("  " + "-" * 68)
+
+        # Sort by tactic order
+        def tactic_key(item):
+            t = item[1][1]
+            return TACTIC_ORDER.index(t) if t in TACTIC_ORDER else 99
+
+        for tid, (name, tactic, conf, actor) in sorted(seen.items(), key=tactic_key):
+            print(f"  {tid:<14} {tactic:<22} {name:<35} {conf:.0%}")
+        print("=" * 70)
+
+    def _confidence_to_score(self, conf: float) -> int:
+        for (lo, hi), score in CONFIDENCE_TO_SCORE.items():
+            if lo <= conf <= hi:
+                return score
+        return 25
+
+    def _score_to_color(self, score: int) -> str:
+        if score >= 75:
+            return "#E63946"
+        elif score >= 50:
+            return "#F4A261"
+        else:
+            return "#E9C46A"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# V3 ORCHESTRATOR
+# ─────────────────────────────────────────────────────────────────────────────
+
+class HunterTraceV3:
+    """
+    v3 Orchestrator — wraps CompletePipeline + adds full campaign intelligence.
+
+    Modes:
+      run_batch(mail_dir)       — process .eml files + full v3 correlation
+      correlate_from_json_dir() — offline correlation from saved JSON reports
+      add_result(file, result)  — manual ingestion for custom pipelines
+    """
+
+    def __init__(self, verbose: bool = False, skip_enrichment: bool = False,
+                 output_dir: str = "."):
+        self.verbose        = verbose
+        self.skip_enrichment= skip_enrichment
+        self.output_dir     = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Import v3 modules
+        try:
+            from huntertrace.analysis.campaignCorrelator import CampaignCorrelator
+            self.correlator = CampaignCorrelator(verbose=verbose)
+        except ImportError as e:
+            raise RuntimeError(f"campaignCorrelator.py not found: {e}")
+
+        try:
+            from huntertrace.analysis.actorProfiler import ActorProfiler
+            self.profiler = ActorProfiler()
+        except ImportError as e:
+            raise RuntimeError(f"actorProfiler.py not found: {e}")
+
+        try:
+            from huntertrace.graph.builder import AttackGraphBuilder
+            self.graph_builder = AttackGraphBuilder()
+        except ImportError as e:
+            raise RuntimeError(f"attackGraphBuilder.py not found: {e}")
+
+        self.mitre_mapper = MitreMapper()
+
+        # Import attribution engine (Bayesian ACI + tier system)
+        try:
+            from huntertrace.attribution.engine import AttributionEngine, integrate_with_v3
+            self._attribution_engine    = AttributionEngine(verbose=verbose)
+            self._integrate_attribution = integrate_with_v3
+        except ImportError as e:
+            if verbose:
+                print(f"[v3] attributionEngine.py not found — "
+                      f"Bayesian attribution unavailable: {e}")
+            self._attribution_engine    = None
+            self._integrate_attribution = None
+
+        # Import v1/v2 pipeline (optional — not needed for offline mode)
+        self._pipeline_class = None
+        try:
+            # Try to import from same directory
+            _orig_path = sys.path.copy()
+            sys.path.insert(0, str(Path(__file__).parent))
+            from huntertrace.core.pipeline import CompletePipeline
+            self._pipeline_class = CompletePipeline
+            sys.path = _orig_path
+        except ImportError:
+            if verbose:
+                print("[v3] hunterTrace.py not found — offline-only mode")
+
+        # State
+        self._results:       Dict[str, Any] = {}   # file → CompletePipelineResult
+        self._report:        Any = None
+        self._profiles:      Dict[str, Any] = {}   # actor_id → ActorTTPProfile
+        self._graph:         Any = None
+        self._attribution:   Dict[str, Any] = {}   # actor_id → AttributionResult
+
+    # ─────────────────────────────────────────────────────────────────────
+    # PUBLIC API
+    # ─────────────────────────────────────────────────────────────────────
+
+    def run_batch(self, mail_dir: str) -> "V3Report":
+        """
+        Full v3 batch run:
+          1. Process each .eml via CompletePipeline (v1+v2)
+          2. Ingest into correlator
+          3. Correlate → actor clusters
+          4. Profile each actor
+          5. Build attack graph
+          6. Generate MITRE layer
+          7. Write all outputs
+        """
+        mail_path = Path(mail_dir)
+        eml_files = sorted(mail_path.glob("*.eml"))
+
+        if not eml_files:
+            print(f"[v3] No .eml files found in {mail_dir}")
+            return None
+
+        if not self._pipeline_class:
+            print("[v3] ERROR: hunterTrace.py required for batch run")
+            return None
+
+        print(f"\n{'='*70}")
+        print(f"  HUNTЕРТRACE v3 — BATCH CAMPAIGN ANALYSIS")
+        print(f"  Processing {len(eml_files)} email(s)")
+        print(f"{'='*70}\n")
+
+        pipeline = self._pipeline_class(
+            verbose=self.verbose,
+            skip_enrichment=self.skip_enrichment,
+        )
+
+        for i, eml_file in enumerate(eml_files, 1):
+            print(f"\n[{i}/{len(eml_files)}] {eml_file.name}")
+            print("-" * 50)
+            try:
+                result = pipeline.run(str(eml_file))
+                if result:
+                    self._results[eml_file.name] = result
+                    self.correlator.ingest(eml_file.name, result)
+                    print(f"  ✓ Ingested into v3 correlator")
+                    # Feed into attribution engine for per-email signal accumulation
+                    if self._attribution_engine:
+                        # We don't know the actor_id yet (assigned post-correlation)
+                        # so we store the result — attribution is done post-correlation
+                        pass
+                else:
+                    print(f"  ✗ Pipeline returned no result")
+            except Exception as e:
+                print(f"  ✗ Failed: {e}")
+                if self.verbose:
+                    import traceback; traceback.print_exc()
+
+        return self._run_v3_analysis()
+
+    def correlate_from_json_dir(self, json_dir: str) -> "V3Report":
+        """
+        Offline correlation — ingest saved hunterTrace JSON reports.
+        No .eml files or pipeline run needed.
+        """
+        json_path = Path(json_dir)
+        json_files = sorted(json_path.glob("*.json"))
+
+        if not json_files:
+            print(f"[v3] No .json files found in {json_dir}")
+            return None
+
+        print(f"\n[v3] Offline correlation from {len(json_files)} JSON report(s)")
+
+        for jf in json_files:
+            try:
+                with open(jf) as f:
+                    report = json.load(f)
+                fp = self.correlator.ingest_json(jf.stem, report)
+                if fp:
+                    print(f"  ✓ {jf.name}  tz={fp.timezone_offset}  "
+                          f"vpn={fp.vpn_provider}")
+            except Exception as e:
+                print(f"  ✗ {jf.name}: {e}")
+
+        return self._run_v3_analysis()
+
+    def add_result(self, email_file: str, pipeline_result) -> None:
+        """Manually add a single pipeline result (for custom pipeline wrappers)."""
+        self._results[email_file] = pipeline_result
+        self.correlator.ingest(email_file, pipeline_result)
+
+    # ─────────────────────────────────────────────────────────────────────
+    # INTERNAL
+    # ─────────────────────────────────────────────────────────────────────
+
+    def _run_v3_analysis(self) -> "V3Report":
+        """Run correlation → profiling → graph → MITRE after ingestion."""
+
+        # Step 1: Correlate
+        print(f"\n{'='*70}")
+        print("  [v3 STEP 1] Campaign Correlation")
+        print(f"{'='*70}")
+        self._report = self.correlator.correlate()
+        print(self._report.summary())
+
+        # Step 2: Profile each actor
+        print(f"\n{'='*70}")
+        print("  [v3 STEP 2] Actor Profiling")
+        print(f"{'='*70}")
+        for cluster in self._report.actor_clusters:
+            profile = self.profiler.build(cluster)
+            self._profiles[cluster.actor_id] = profile
+            print(profile.analyst_brief())
+
+        # Step 2.5: Bayesian Attribution Engine
+        print(f"\n{'='*70}")
+        print("  [v3 STEP 2.5] Bayesian Attribution (ACI + Tier)")
+        print(f"{'='*70}")
+        if self._attribution_engine and self._profiles:
+            # Build geolocation map from all pipeline results
+            geo_map = {}
+            for result in self._results.values():
+                geo = getattr(result, "geolocation_results", None) or {}
+                geo_map.update(geo)
+
+            # Longitudinal accumulation:
+            # For each actor cluster, feed its emails into the engine in order.
+            # This updates the posterior incrementally — exactly how Bayesian
+            # inference should work: each new email refines the existing posterior.
+            for cluster in self._report.actor_clusters:
+                actor_id = cluster.actor_id
+                profile  = self._profiles.get(actor_id)
+
+                if profile:
+                    # Primary path: attribute from the full TTP profile
+                    # (uses consensus timezone/country/infra from all emails)
+                    ar = self._attribution_engine.attribute_from_profile(
+                        profile, geo_map
+                    )
+                else:
+                    # Fallback: accumulate directly from fingerprints
+                    for fp in cluster.fingerprints:
+                        self._attribution_engine.update_campaign_from_fingerprint(
+                            actor_id, fp, geo_map
+                        )
+                    ar = self._attribution_engine.finalize_campaign(actor_id)
+
+                self._attribution[actor_id] = ar
+                print(f"\n  [{actor_id}]")
+                print(ar.analyst_brief())
+        else:
+            if not self._attribution_engine:
+                print("  [SKIP] attributionEngine.py not available")
+            else:
+                print("  [SKIP] No actor profiles to attribute")
+
+        # Step 3: Build attack graph
+        print(f"\n{'='*70}")
+        print("  [v3 STEP 3] Attack Graph")
+        print(f"{'='*70}")
+        self._graph = self.graph_builder.build(self._report, self._profiles)
+        self.graph_builder.print_stats(self._graph)
+
+        # Step 4: MITRE mapping
+        print(f"\n{'='*70}")
+        print("  [v3 STEP 4] MITRE ATT&CK Mapping")
+        print(f"{'='*70}")
+        self.mitre_mapper.print_summary(list(self._profiles.values()))
+
+        # Step 5: Write outputs
+        self._write_outputs()
+
+        report = V3Report(
+            correlation          = self._report,
+            actor_profiles       = self._profiles,
+            attack_graph         = self._graph,
+            output_dir           = str(self.output_dir),
+            attribution_results  = self._attribution if self._attribution else None,
+        )
+
+        print(f"\n{'='*70}")
+        print(f"  [v3] ALL OUTPUTS WRITTEN TO: {self.output_dir}/")
+        print(f"{'='*70}\n")
+
+        return report
+
+    def _write_outputs(self):
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        # 1. Correlation JSON
+        corr_path = self.output_dir / f"v3_correlation_{ts}.json"
+        corr_data = {
+            "timestamp":       self._report.timestamp,
+            "total_emails":    self._report.total_emails,
+            "total_actors":    self._report.total_actors,
+            "singleton_emails":self._report.singleton_emails,
+            "actor_clusters": [
+                {
+                    "actor_id":           c.actor_id,
+                    "emails":             c.emails,
+                    "confidence":         c.confidence,
+                    "likely_country":     c.likely_country,
+                    "consensus_timezone": c.consensus_timezone,
+                    "consensus_vpn":      c.consensus_vpn_provider,
+                    "consensus_webmail":  c.consensus_webmail,
+                    "send_window":        c.consensus_send_window,
+                    "first_seen":         c.first_seen,
+                    "last_seen":          c.last_seen,
+                    "ttps":               c.ttps,
+                    "all_vpn_ips":        c.all_vpn_ips,
+                    "all_origin_ips":     c.all_origin_ips,
+                }
+                for c in self._report.actor_clusters
+            ],
+        }
+        corr_path.write_text(json.dumps(corr_data, indent=2))
+        print(f"  → Correlation:  {corr_path.name}")
+
+        # 2. Actor profiles JSON
+        if self._profiles:
+            prof_path = self.output_dir / f"v3_actor_profiles_{ts}.json"
+            prof_data = {
+                actor_id: prof.to_dict()
+                for actor_id, prof in self._profiles.items()
+            }
+            prof_path.write_text(json.dumps(prof_data, indent=2))
+            print(f"  → Profiles:     {prof_path.name}")
+
+            # 3. MITRE Navigator layer
+            mitre_path = self.output_dir / f"v3_mitre_layer_{ts}.json"
+            self.mitre_mapper.export_layer(
+                list(self._profiles.values()),
+                str(mitre_path),
+                f"HunterTrace v3 — {self._report.total_emails} email(s), "
+                f"{self._report.total_actors} actor(s)"
+            )
+            print(f"  → MITRE layer:  {mitre_path.name}")
+
+            # 3b. Bayesian attribution results JSON
+            if self._attribution:
+                attr_path = self.output_dir / f"v3_attribution_{ts}.json"
+                attr_data = {
+                    actor_id: result.to_dict()
+                    for actor_id, result in self._attribution.items()
+                }
+                attr_path.write_text(json.dumps(attr_data, indent=2))
+                print(f"  → Attribution:  {attr_path.name}  "
+                      f"(Bayesian ACI + tier results)")
+
+        # 4. Attack graph HTML
+        if self._graph:
+            graph_path = self.output_dir / f"v3_attack_graph_{ts}.html"
+            self.graph_builder.export_html(self._graph, str(graph_path))
+            print(f"  → Graph HTML:   {graph_path.name}  (open in browser)")
+
+            # 5. Graph JSON
+            graph_json_path = self.output_dir / f"v3_attack_graph_{ts}.json"
+            self.graph_builder.export_json(self._graph, str(graph_json_path))
+            print(f"  → Graph JSON:   {graph_json_path.name}")
+
+            # 6. GraphML (Gephi/Maltego)
+            if hasattr(self._graph, 'nx_graph') and self._graph.nx_graph:
+                try:
+                    gml_path = self.output_dir / f"v3_attack_graph_{ts}.graphml"
+                    self.graph_builder.export_graphml(self._graph, str(gml_path))
+                    print(f"  → GraphML:      {gml_path.name}  (Gephi/Maltego)")
+                except Exception:
+                    pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# V3 REPORT CONTAINER
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class V3Report:
+    """Container for all v3 outputs."""
+    correlation:         Any     # CorrelationReport
+    actor_profiles:      Dict    # actor_id → ActorTTPProfile
+    attack_graph:        Any     # AttackGraph
+    output_dir:          str
+    attribution_results: Dict = None  # actor_id → AttributionResult (from attributionEngine)
+
+    def print_executive_summary(self):
+        c = self.correlation
+        print("\n" + "=" * 70)
+        print("  HUNTЕРТRACE v3 — EXECUTIVE SUMMARY")
+        print("=" * 70)
+        print(f"  Emails analysed:       {c.total_emails}")
+        print(f"  Distinct threat actors:{c.total_actors}")
+        print(f"  Unattributed emails:   {len(c.singleton_emails)}")
+        print()
+        for actor_id, prof in self.actor_profiles.items():
+            print(f"  [{actor_id}] {prof.actor_label}")
+            print(f"    Campaigns:  {prof.campaign_count}")
+            print(f"    Confidence: {prof.confidence:.0%}")
+            print(f"    Motivation: {prof.likely_motivation}")
+            print(f"    OpSec:      {prof.infrastructure.opsec_label} "
+                  f"({prof.infrastructure.opsec_score}/100)")
+            if prof.temporal.likely_country:
+                print(f"    Country:    {prof.temporal.likely_country}")
+            # Bayesian attribution tier (if available)
+            if self.attribution_results and actor_id in self.attribution_results:
+                ar = self.attribution_results[actor_id]
+                print(f"    Attribution: Tier {ar.tier} ({ar.tier_label}) | "
+                      f"{ar.primary_region} | ACI={ar.aci.final_aci:.2f} | "
+                      f"{ar.aci_adjusted_prob:.0%} ACI-adjusted")
+            print(f"    MITRE:      "
+                  f"{', '.join(m.technique_id for m in prof.mitre_mappings)}")
+            print()
+        print(f"  Outputs saved to: {self.output_dir}/")
+        print("=" * 70)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLI ENTRY POINT
+# ─────────────────────────────────────────────────────────────────────────────
+
+def main():
+    """
+    HunterTrace v3 — Campaign Correlation & Actor Profiling
+
+    Usage
+    -----
+      Batch (process .eml files):
+        python hunterTraceV3.py batch /path/to/emails/ -o ./reports/
+
+      Offline (correlate from saved JSON reports):
+        python hunterTraceV3.py offline /path/to/json_reports/ -o ./reports/
+
+    Outputs (written to -o / --output directory)
+    -----
+      v3_correlation_<ts>.json      Actor clusters + signal matches
+      v3_actor_profiles_<ts>.json   Full TTP profiles per actor
+      v3_mitre_layer_<ts>.json      MITRE Navigator layer
+      v3_attack_graph_<ts>.html     Interactive D3.js graph
+      v3_attack_graph_<ts>.graphml  Gephi / Maltego import
+    """
+    import argparse, os, sys
+    from pathlib import Path
+
+    parser = argparse.ArgumentParser(
+        prog="hunterTraceV3.py",
+        description="HunterTrace v3 — Campaign Correlation & Actor Profiling",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+EXAMPLES
+  python hunterTraceV3.py batch   ./emails/        -o ./reports/
+  python hunterTraceV3.py batch   ./emails/        -o ./reports/ --abuseipdb-key abc123
+  python hunterTraceV3.py offline ./json_reports/  -o ./reports/
+  python hunterTraceV3.py batch   ./emails/        --skip-enrichment --verbose
+
+API KEYS (.env file, alongside this script or in cwd)
+  ABUSEIPDB_API_KEY=your_key
+  IPINFO_TOKEN=your_token
+  VIRUSTOTAL_API_KEY=your_key
+""",
+    )
+
+    parser.add_argument("mode", choices=["batch", "offline"], help="Run mode")
+    parser.add_argument("path", help="Email directory (batch) or JSON dir (offline)")
+    parser.add_argument(
+        "--output", "-o",
+        default="./v3_output",
+        metavar="DIR",
+        help="Output directory  (default: ./v3_output)",
+    )
+    parser.add_argument(
+        "--abuseipdb-key",
+        metavar="KEY",
+        dest="abuseipdb_key",
+        help="AbuseIPDB API key  (overrides ABUSEIPDB_API_KEY env / .env)",
+    )
+    parser.add_argument(
+        "--config",
+        metavar="FILE",
+        help="Config / .env file with API keys  (default: .env in cwd)",
+    )
+    parser.add_argument("--skip-enrichment", action="store_true",
+                        help="Skip WHOIS enrichment (faster, fully offline)")
+    parser.add_argument("--verbose", "-v", action="store_true",
+                        help="Print detailed per-stage output")
+    parser.add_argument("--quiet", "-q", action="store_true",
+                        help="Suppress stage output; show only final summary")
+
+    args = parser.parse_args()
+
+    if args.quiet and args.verbose:
+        parser.error("--quiet and --verbose are mutually exclusive")
+
+    # ── Load API keys from .env / env / flags ─────────────────────────────
+    cfg = {}
+    candidates = []
+    if args.config:
+        candidates.append(Path(args.config))
+    candidates.append(Path(".env"))
+    for fpath in candidates:
+        if fpath.is_file():
+            try:
+                for raw in fpath.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    line = raw.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if "=" in line:
+                        k, _, v = line.partition("=")
+                        cfg[k.strip()] = v.strip().strip('"').strip("'")
+            except Exception:
+                pass
+            break
+
+    for env_key in ("ABUSEIPDB_API_KEY", "IPINFO_TOKEN", "VIRUSTOTAL_API_KEY"):
+        val = os.getenv(env_key)
+        if val:
+            cfg[env_key] = val
+
+    if args.abuseipdb_key:
+        os.environ["ABUSEIPDB_API_KEY"] = args.abuseipdb_key
+    elif "ABUSEIPDB_API_KEY" in cfg:
+        os.environ["ABUSEIPDB_API_KEY"] = cfg["ABUSEIPDB_API_KEY"]
+    for k in ("IPINFO_TOKEN", "VIRUSTOTAL_API_KEY"):
+        if k in cfg:
+            os.environ[k] = cfg[k]
+
+    # ── Validate input path ───────────────────────────────────────────────
+    if not Path(args.path).exists():
+        print(f"[ERROR] Path not found: {args.path}")
+        sys.exit(1)
+
+    # ── Ensure output directory ───────────────────────────────────────────
+    output_dir = Path(args.output)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if not args.quiet:
+        print(f"\n  HunterTrace v3 — Campaign Intelligence")
+        print(f"  {'─' * 44}")
+        print(f"  Mode    : {args.mode}")
+        print(f"  Input   : {Path(args.path).resolve()}")
+        print(f"  Output  : {output_dir.resolve()}")
+        abuseipdb_val = os.getenv("ABUSEIPDB_API_KEY")
+        key_status = f"✓  ({abuseipdb_val[:6]}...)" if abuseipdb_val else "✗  (unset)"
+        print(f"  AbuseIPDB key: {key_status}")
+        print()
+
+    v3 = HunterTraceV3(
+        verbose=args.verbose and not args.quiet,
+        skip_enrichment=args.skip_enrichment,
+        output_dir=str(output_dir),
+    )
+
+    report = v3.run_batch(args.path) if args.mode == "batch" else v3.correlate_from_json_dir(args.path)
+
+    if report:
+        report.print_executive_summary()
+        if not args.quiet:
+            print(f"\n  Outputs written to: {output_dir.resolve()}/\n")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,18 +1,53 @@
-.venv 
-mails
+# ── Environment & Secrets ──
 .env
-.DS_Stores
+.env.*
+*.pem
+*.key
 
-report
-reports 
-results
-ht_output
+# ── Python ──
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
 
-__pycache__
+# ── Build / Distribution ──
+build/
+dist/
+*.egg-info/
+*.egg
+*.whl
+sdist/
+wheels/
 
+# ── Virtual Environments ──
+.venv/
+venv/
+env/
+
+# ── IDE / Editor ──
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ── Testing / Coverage ──
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.tox/
+
+# ── Project Outputs ──
+ht_output/
+reports/
+results/
 hosting_keywords_cache.json
 
-autoCorpusBuilder.py
-datasetCreator.py
-runEval.py
-testSuite.py
+# ── Mail data (not shipped) ──
+mails/
+
+# ── Legacy / Dev ──
+src/
+huntertrace-release/
