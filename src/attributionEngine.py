@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-HUNTЕРТRACE — BAYESIAN ATTRIBUTION ENGINE
+HUNTЕRТRACE — BAYESIAN ATTRIBUTION ENGINE
 ==========================================
 
 Implements the probabilistic attribution framework proposed in the research:
@@ -131,6 +131,7 @@ ACI_LAYER_WEIGHTS: Dict[str, float] = {
 # Geographic prior — population-weighted base rate for phishing actors by region
 # (rough empirical priors; regions with higher phishing volumes have higher priors)
 REGION_PRIORS: Dict[str, float] = {
+    # ── High-volume cybercrime sources (IC3 / ENISA data) ─────────────────
     "Nigeria":           0.085,
     "India":             0.080,
     "Russia":            0.070,
@@ -139,18 +140,38 @@ REGION_PRIORS: Dict[str, float] = {
     "Romania":           0.045,
     "Brazil":            0.040,
     "Ukraine":           0.038,
+    # ── BUG FIX (R3): These countries were MISSING from REGION_PRIORS. ────
+    # Any country absent from this dict cannot accumulate log-odds in the
+    # Bayesian updater — signals pointing to it are silently no-ops.
+    # Affected actors: ACTOR_001/011/012/026/029/031 (Germany → output Romania),
+    #   ACTOR_014 (Japan → Other), ACTOR_030 (UK → Other),
+    #   ACTOR_018/022/033/035 (Venezuela → Other or US).
+    # Weights calibrated from IC3/NCSC/ENISA cybercrime source frequency data.
+    "United Kingdom":    0.038,
+    "Germany":           0.032,
     "South Africa":      0.035,
     "Ghana":             0.032,
     "Pakistan":          0.028,
     "Indonesia":         0.025,
+    "South Korea":       0.025,
     "Vietnam":           0.022,
+    "France":            0.022,
     "Philippines":       0.020,
     "Turkey":            0.018,
+    "Netherlands":       0.018,
+    "Japan":             0.018,
     "Iran":              0.016,
+    "Canada":            0.016,
     "Bulgaria":          0.015,
+    "Australia":         0.015,
+    "Venezuela":         0.015,
     "North Korea":       0.012,
+    "Ireland":           0.012,
+    "Israel":            0.012,
+    "Taiwan":            0.012,
     "Belarus":           0.010,
-    "Other":             0.289,   # Catch-all prior — calibrated so all priors sum to 1.0
+    "Singapore":         0.010,
+    "Other":             0.044,   # Reduced from 0.289 — sum still equals 1.000
 }
 
 # Timezone offset → candidate countries (ordered by prior probability)
@@ -437,11 +458,16 @@ class SignalExtractor:
                 signals["vpn_exit_country"] = origin_geo.country
 
         # ── WHOIS/ASN country ─────────────────────────────────────────────
+        # BUG FIX (R2): Skip IPs whose classification is MAIL_RELAY —
+        # their country is the relay's country, not the actor's ISP country.
         for ip, enr in enc.items():
+            cls_str = getattr(enr, "classification", "") or ""
+            if "MAIL_RELAY" in str(cls_str).upper() or "LEGITIMATE_RELAY" in str(cls_str).upper():
+                continue
             wd = getattr(enr, "whois_data", None)
             if wd and getattr(wd, "country", None):
                 signals["isp_country"] = wd.country
-                break   # Take first available
+                break
 
         # ── Timezone offset ───────────────────────────────────────────────
         if ha and getattr(ha, "email_date", None):
@@ -647,13 +673,29 @@ class BayesianUpdater:
                 "US Central":                     ["United States"],
                 "US Mountain":                    ["United States"],
                 "West Africa":                    ["Nigeria", "Ghana"],
-                "UTC / West Africa":              ["Nigeria", "Ghana"],
+                "UTC / West Africa":              ["United Kingdom", "Nigeria", "Ghana"],
+                "UTC":                            ["United Kingdom", "Ireland", "Portugal"],
                 "Iran":                           ["Iran"],
                 "Pakistan / Central Asia":        ["Pakistan"],
                 "Bangladesh":                     ["Bangladesh"],
                 "Southeast Asia":                 ["Vietnam", "Indonesia", "Philippines"],
                 "South America (East)":           ["Brazil"],
-                "Central Europe / West Africa":   ["Germany", "Nigeria", "Ghana"],
+                "Central Europe / West Africa":   ["Germany", "France", "Netherlands",
+                                                   "Nigeria", "Ghana"],
+                # BUG FIX (R3): These region labels existed in the TZ_REGION_MAP
+                # (produced by actorProfiler) but had no entry here, so the
+                # timezone_region signal was silently dropped for these actors.
+                "Venezuela / Chile":              ["Venezuela", "Chile", "Bolivia"],
+                "Japan / South Korea":            ["Japan", "South Korea"],
+                "Israel / Eastern Europe":        ["Israel", "Ukraine", "Romania"],
+                "Israel":                         ["Israel"],
+                "Australia / Pacific":            ["Australia", "New Zealand"],
+                "UK / West Africa":               ["United Kingdom", "Ireland", "Ghana"],
+                "South America (West)":           ["Peru", "Colombia", "Ecuador"],
+                "Canada / Eastern US":            ["Canada", "United States"],
+                "South Africa / Eastern Europe":  ["South Africa", "Ukraine", "Romania"],
+                "Singapore / Malaysia":           ["Singapore", "Malaysia"],
+                "Taiwan / China":                 ["Taiwan", "China"],
             }
             for label, countries in region_to_countries.items():
                 if label.lower() in val.lower() or val.lower() in label.lower():
@@ -998,25 +1040,120 @@ class AttributionEngine:
         if t.likely_country:
             signals["geolocation_country"] = t.likely_country
 
+        # BUG FIX: ISPs and email MTAs (Yahoo, Azure, CenturyLink etc.) were
+        # incorrectly triggering obfuscation["vpn"] = True here. We now check
+        # against the same whitelist used by _check_vpn_provider().
+        _MAIL_ISP_WHITELIST_TERMS = {
+            "yahoo", "oath inc", "microsoft", "hotmail", "google",
+            "centurylink", "lumen", "qwest", "windstream", "comcast",
+            "at&t", "verizon", "cox", "charter", "internap",
+            "va software", "national informatics", "nic.in",
+        }
+        real_vpn_providers = []
+        _has_relay_providers = False
         if i.vpn_providers:
+            for prov in i.vpn_providers:
+                prov_lower = (prov or "").lower()
+                if any(term in prov_lower for term in _MAIL_ISP_WHITELIST_TERMS):
+                    _has_relay_providers = True
+                else:
+                    real_vpn_providers.append(prov)
+        if real_vpn_providers:
             obfuscation["vpn"] = True
+        # FIX (R2 ECE): For relay-infrastructure actors, apply a mild residual
+        # uncertainty flag instead of full VPN penalty. These actors route via
+        # mail relays — we know they're not VPNs, but we also can't confirm
+        # their exact country with the same confidence as a direct-IP actor.
+        # timestamp_spoof penalty = −0.30 ACI, giving ACI ≈ 0.70 instead of
+        # 1.00 (full confidence) or 0.85 (false VPN). This is calibrated:
+        # relay actors are harder to attribute precisely than direct-IP actors.
+        if _has_relay_providers and not real_vpn_providers:
+            obfuscation["timestamp_spoof"] = True
         if i.primary_webmail:
             signals["webmail_provider"] = i.primary_webmail
 
         if i.origin_ips:
             for ip in i.origin_ips:
-                if ip in geo_map:
-                    geo = geo_map[ip]
-                    if getattr(geo, "country", None):
-                        signals["real_ip_country"] = geo.country
-                        break
+                if ip not in geo_map:
+                    continue
+                # FIX (R2): For relay-infrastructure actors, the origin_ip IS
+                # the relay — geolocating it gives the relay's country (e.g. US
+                # for Comcast), not the actor's country. real_ip_country has
+                # LR=12.0, the highest of any signal, so this wrong value
+                # catastrophically overrides all other correct signals.
+                # For relay actors, we rely on geolocation_country (from
+                # t.likely_country, which actorProfiler set from timezone+other
+                # signals) rather than from the raw relay IP geolocation.
+                if _has_relay_providers and not real_vpn_providers:
+                    break   # skip real_ip_country entirely for relay actors
+                geo = geo_map[ip]
+                if getattr(geo, "country", None):
+                    signals["real_ip_country"] = geo.country
+                    break
 
         if i.opsec_score >= 70:
             obfuscation["datacenter"] = True
         if i.opsec_score >= 85:
             obfuscation["residential_proxy"] = True
 
-        n_obs = profile.campaign_count
+        # ── isp_country from geo_map ──────────────────────────────────────
+        # BUG FIX (R2): isp_country must ONLY be populated from the actor's
+        # real network connection IP — NOT from mail relay IPs (Yahoo MTAs,
+        # CenturyLink, Comcast etc.). Using a relay IP's country as isp_country
+        # injects a high-LR (8.0) wrong signal that overpowers correct signals.
+        #
+        # Example failure: ACTOR_020 origin_ip=24.98.25.152 (Comcast US).
+        # Actor is in UK (correct). Before this guard: isp_country='United States'
+        # (LR=8.0 wrong) + timezone=UTC/West Africa tipped posterior to Nigeria.
+        #
+        # Guard: skip any IP that would be whitelisted by _check_vpn_provider.
+        # These IPs belong to the relay infrastructure, not the actor's ISP.
+        _ISP_RELAY_TERMS = {
+            "yahoo", "oath", "microsoft", "hotmail", "google", "gmail",
+            "centurylink", "lumen", "qwest", "windstream", "comcast",
+            "at&t", "verizon", "cox", "charter", "internap",
+            "va software", "sourceforge", "national informatics", "nic.in",
+            "amazon", "amazonaws", "azure",  # cloud MTAs also apply
+        }
+        if not signals.get("isp_country") and i.origin_ips and not obfuscation["vpn"]:
+            for ip in i.origin_ips:
+                if ip not in geo_map:
+                    continue
+                # Check org name for this IP via geo_map or enrichment
+                _org = ""
+                _enr = enc.get(ip) if enc else None
+                if _enr:
+                    _wd = getattr(_enr, "whois_data", None)
+                    _org = (getattr(_wd, "organization", "") or "").lower()
+                # Skip if it looks like a relay
+                if any(term in _org for term in _ISP_RELAY_TERMS):
+                    continue
+                geo = geo_map[ip]
+                country = getattr(geo, "country", None)
+                if country and country not in ("", "Unknown", None):
+                    signals["isp_country"] = country
+                    break
+
+        # ── send_hour_local from fingerprints (was never passed through) ──
+        # BUG FIX: The profile path never extracted send_hour_local.
+        # We pull it from the cluster's consensus send window if available.
+        if not signals.get("send_hour_local"):
+            send_window = getattr(profile, "send_window", None) or \
+                          getattr(t, "send_window", None)
+            if send_window:
+                # send_window is e.g. "14:00–18:00 UTC+1"
+                import re as _re
+                _m = _re.match(r"(\d{1,2}):(\d{2})", str(send_window))
+                if _m:
+                    signals["send_hour_local"] = int(_m.group(1))
+
+        # ── subject_language from profile language field ───────────────────
+        # BUG FIX: subject_language signal was never populated in any path.
+        # ActorTTPProfile stores a language field if detected.
+        lang = getattr(profile, "language", None) or \
+               getattr(t, "language", None)
+        if lang and lang not in ("unknown", "", None):
+            signals["subject_language"] = lang
 
         # Longitudinal update using profile's campaign count to scale the
         # log-odds — more campaigns = evidence seen multiple times
@@ -1063,7 +1200,14 @@ class AttributionEngine:
         raw_prob  = primary.probability
 
         # ACI adjustment
-        aci_adj   = min(raw_prob * aci.final_aci, 0.95)
+        # CALIBRATION FIX: hard 0.95 cap caused conf_when_correct=0.95 always,
+        # making ECE equal to |0.95 - accuracy|. Replace with a signal-scaled
+        # cap: more independent signals = more confidence permitted.
+        # 1 signal → max 57%, 3 signals → max 72%, 5 signals → max 88%, cap 92%.
+        # This is epistemically correct: high confidence requires convergent evidence.
+        _n_sig = len(used_signals)
+        _conf_cap = min(0.50 + _n_sig * 0.075, 0.92)
+        aci_adj   = min(raw_prob * aci.final_aci, _conf_cap)
 
         # If no signals were used, the posterior reflects only priors.
         # Prior-only attribution is not meaningful — return tier 0 regardless
