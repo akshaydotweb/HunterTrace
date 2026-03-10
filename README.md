@@ -1,4 +1,4 @@
-# HUNTЕRТRACE
+# HUNTERTRACE
 
 > Advanced phishing actor attribution using multi-signal Bayesian inference and infrastructure graph analysis
 
@@ -8,127 +8,187 @@
 
 ## Overview
 
-HUNTЕРТRACE identifies the geographic location of phishing attackers with **73% accuracy**, even when they use VPNs or proxies. It achieves this through:
+HUNTERTRACE is an open-source phishing attribution engine that identifies the **geographic origin of phishing actors** with **73% accuracy** — even when they operate behind VPNs, proxies, or Tor. With infrastructure graph analysis enabled, accuracy reaches **82%**.
 
-- **Multi-Signal Attribution**: Combines 8+ signals (IP, timezone, webmail leaks, etc.)
-- **Bayesian Inference**: Probabilistic attribution with confidence tiers (0-4)
-- **Graph Analysis**: Infrastructure reuse detection (+9% accuracy boost)
-- **VPN Bypass**: 12 techniques including webmail provider leak detection
+Traditional email forensics relies on IP geolocation alone (~31% accuracy). HUNTERTRACE fuses **8+ orthogonal signals** through Bayesian inference:
+
+| Signal | Source | VPN-Resistant |
+|--------|--------|:---:|
+| Webmail IP leaks | X-Originating-IP, X-Sender-IP headers | Yes |
+| Timezone offset | Date header / Received chain | Yes |
+| Language fingerprint | Content-Type charset, Subject encoding | Yes |
+| Infrastructure reuse | Graph centrality across campaigns | Yes |
+| Hop chain forgery | Received header consistency | Partial |
+| VPN exit node mapping | ASN + hosting provider classification | N/A |
+| SPF/DKIM/DMARC | Authentication results | Partial |
+| Webmail provider | Header fingerprinting (Gmail/Yahoo/Outlook) | Yes |
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    HUNTERTRACE PIPELINE                     │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  Stage 1: Header Extraction (RFC 2822 parsing)              │
+│      ↓                                                      │
+│  Webmail IP Leak Detection (X-Originating-IP extraction)    │
+│      ↓                                                      │
+│  Stage 2: IP Classification (VPN/Tor/Proxy/Residential)     │
+│      ↓                                                      │
+│  Stage 3A: Enrichment (WHOIS, ASN, hosting provider)        │
+│      ↓                                                      │
+│  VPN Backtrack Analysis (12 bypass techniques)              │
+│      ↓                                                      │
+│  Real IP Extraction (strips proxy layers)                   │
+│      ↓                                                      │
+│  Stage 3B: Threat Intelligence                              │
+│  Stage 3C: Correlation Analysis                             │
+│      ↓                                                      │
+│  Stage 4: Geolocation (city-level, IPv4 + IPv6)             │
+│      ↓                                                      │
+│  Stage 5: Attribution Analysis (evidence packaging)         │
+│      ↓                                                      │
+│  Bayesian Multi-Signal Fusion (ACI confidence scoring)      │
+│      ↓                                                      │
+│  Sender Classification (hop forgery + timezone analysis)    │
+│      ↓                                                      │
+│  Output: JSON report + text summary + attack graph HTML     │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ## Quick Start
 
 ### Installation
+
 ```bash
 pip install huntertrace
 ```
 
-### Basic Usage
+### Python API
+
 ```python
 from huntertrace import HunterTrace
 
-# Analyze single email
-ht = HunterTrace()
-result = ht.analyze_email("phishing.eml")
-print(f"Region: {result.primary_region}")
-print(f"Confidence: {result.confidence_score:.1%}")
+# Run the full 7-stage pipeline
+pipeline = HunterTrace(verbose=True)
+result = pipeline.run("phishing.eml")
+
+# Generate text report
+report = result.generate_report()
+print(report.generate_text_report())
+
+# Access Bayesian attribution
+bayes = result.bayesian_attribution
+if bayes:
+    print(f"Region: {bayes.primary_region}")
+    print(f"Confidence: {bayes.aci_adjusted_prob:.1%}")
+    print(f"Tier: {bayes.tier} — {bayes.tier_label}")
 ```
 
 ### Command Line
+
 ```bash
-# Single email
-huntertrace analyze phishing.eml
+# Single email analysis
+huntertrace analyze phishing.eml --verbose
 
 # Batch processing
-huntertrace batch emails/ --output results/
+huntertrace batch emails/ -o results/
 
-# Campaign analysis
-huntertrace campaign emails/ --output campaign_report/
+# Campaign correlation (cross-email actor linking)
+huntertrace campaign emails/ -o campaign_report/
 ```
 
 ## Performance
 
-| Method | Accuracy |
-|--------|----------|
-| IP Geolocation Only | 31% |
-| Timezone Only | 52% |
-| HUNTЕРТRACE (Bayesian) | 73% |
-| HUNTЕРТRACE (+ Graph) | 82% |
+Evaluated on a corpus of phishing emails with known ground-truth origins:
 
-## Key Features
+| Method | Region Accuracy | Notes |
+|--------|:-:|---|
+| IP Geolocation Only | 31% | Baseline |
+| Timezone Only | 52% | VPN-resistant but coarse |
+| **HUNTERTRACE (Bayesian)** | **73%** | Multi-signal fusion |
+| **HUNTERTRACE (+ Graph)** | **82%** | With infrastructure reuse detection |
 
-### 1. Webmail Provider Leak Detection
-Gmail, Yahoo, and Outlook leak sender's real IP in email headers (67% extraction rate)
+## Key Techniques
 
-### 2. Timezone-Based VPN Bypass
-Date header timezone reveals location regardless of VPN
+### Webmail Provider IP Leak Detection
+Gmail, Yahoo, and Outlook inject the sender's real IP into headers like `X-Originating-IP` and `X-Sender-IP`. HUNTERTRACE detects these leaks with a **67% extraction rate** across webmail-originated phishing emails.
 
-### 3. Infrastructure Graph Centrality
-Detects actor infrastructure reuse patterns for confidence boost
+### Timezone-Based VPN Bypass
+The `Date:` header timezone offset reveals the sender's local time regardless of VPN usage. Combined with `Received:` chain timing analysis, this provides a VPN-resistant geographic signal.
 
-### 4. Bayesian Multi-Signal Fusion
-Combines 8+ signals with likelihood ratios for probabilistic attribution
+### Infrastructure Graph Centrality
+When analyzing multiple emails (batch/campaign mode), HUNTERTRACE builds an infrastructure reuse graph and applies centrality metrics to identify shared attacker infrastructure — providing a **+9% accuracy boost**.
 
-### 5. Campaign Correlation
-Cross-email actor identification and behavioral fingerprinting
+### Bayesian Multi-Signal Fusion
+All signals are combined using likelihood ratios and Bayesian updating. The Adversarial Confidence Index (ACI) adjusts for evasion attempts, producing calibrated confidence tiers (0–4).
+
+### VPN Backtrack Analysis
+12 techniques to identify the real origin behind VPN/proxy layers, including ASN classification, exit node fingerprinting, and webmail header correlation.
+
+## Project Structure
+
+```
+huntertrace/
+├── core/           # Main pipeline + orchestrator
+├── extraction/     # IP extraction (basic, advanced, VPN backtrack, webmail)
+├── enrichment/     # Geolocation, WHOIS, hosting provider, IP classification
+├── attribution/    # Bayesian engine + evidence analysis
+├── analysis/       # Campaign correlator, sender classifier, actor profiler
+├── graph/          # Attack graph builder, centrality engine
+├── forensics/      # Header forensic scanner
+├── cli.py          # Command-line interface
+└── assets/         # HTML templates, logos
+```
+
+## Requirements
+
+- Python 3.8+
+- networkx >= 2.6
+- numpy >= 1.20
+- requests >= 2.25
+
+### Optional Dependencies
+
+```bash
+# Graph community detection (for campaign analysis)
+pip install huntertrace[graph]
+
+# WHOIS enrichment
+pip install huntertrace[whois]
+
+# Everything
+pip install huntertrace[all]
+```
 
 ## Documentation
 
 - [Installation Guide](docs/INSTALLATION.md)
 - [Usage Guide](docs/USAGE.md)
-- [API Reference](docs/API.md)
-- [Technical Details](docs/TECHNICAL.md)
-
-## Novel Contributions
-
-1. **Webmail IP Leak Taxonomy**: First systematic study of provider-specific leaks
-2. **Timezone Attribution**: Timezone as primary signal (not auxiliary)
-3. **Graph Centrality**: First application to email forensics
-
-## Requirements
-
-- Python 3.8+
-- networkx
-- numpy
-- requests
-
-## Installation Options
-```bash
-# Basic installation
-pip install huntertrace
-
-# With graph analysis
-pip install huntertrace[graph]
-
-# With all features
-pip install huntertrace[all]
-
-# Development tools
-pip install huntertrace[dev]
-```
+- [Changelog](CHANGELOG.md)
 
 ## Citation
 
-If you use HUNTЕРТRACE in your research:
+If you use HUNTERTRACE in your research:
+
 ```bibtex
-@software{huntertrace2025,
-  author = {Your Name},
-  title = {HUNTЕРТRACE: Advanced Phishing Actor Attribution},
-  year = {2025},
-  url = {https://github.com/yourusername/huntertrace}
+@software{huntertrace2026,
+  author = {Akshay V},
+  title = {HUNTERTRACE: Advanced Phishing Actor Attribution Using Multi-Signal Bayesian Inference},
+  year = {2026},
+  url = {https://github.com/akshaydotweb/huntertrace}
 }
 ```
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file
-
-## Contributing
-
-Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md)
+MIT License — see [LICENSE](LICENSE)
 
 ## Disclaimer
 
-This tool is for legitimate security research and law enforcement only. Always obtain proper authorization before analyzing emails.
+This tool is intended for **legitimate security research, incident response, and law enforcement** use only. Always obtain proper authorization before analyzing emails. The authors are not responsible for misuse.
 
 ## Contact
 
