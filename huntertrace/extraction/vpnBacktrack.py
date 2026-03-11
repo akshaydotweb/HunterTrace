@@ -140,6 +140,18 @@ class RealIPBacktracker:
         # Technique 1: Extract first-hop ISP IP
         first_hop_signal = self._extract_first_hop_isp(email_headers)
         if first_hop_signal:
+            # If the first-hop IP is the VPN endpoint itself, its geolocation
+            # is the VPN exit country — not the attacker's real location.
+            if first_hop_signal.real_ip == vpn_endpoint_ip:
+                first_hop_signal = RealIPSignal(
+                    method=first_hop_signal.method,
+                    real_ip=first_hop_signal.real_ip,
+                    real_country=None,
+                    confidence=first_hop_signal.confidence * 0.5,
+                    evidence=first_hop_signal.evidence + [
+                        "[WARN] First-hop IP equals VPN endpoint — country is VPN exit, not real origin"
+                    ]
+                )
             signals.append(first_hop_signal)
         
         # Technique 2: Timezone correlation with location
@@ -325,15 +337,18 @@ class RealIPBacktracker:
                 if 'unknown' in first_hop.lower():
                     evidence.append("[WARNING] Unknown/obfuscated hostname in first hop")
                 
-                # NOTE: Don't return country from first-hop geolocation
-                # First hop is often mail relay, not attacker's location
-                # Use other techniques (timezone, behavioral) for real location
+                # Geolocate first-hop IP to provide a country signal.
+                # First hop can be attacker's ISP or a mail relay — confidence
+                # is moderate (0.65) since it may be the relay, not the origin.
+                first_hop_country = self._geolocate_ip(first_hop_ip)
+                if first_hop_country and first_hop_country != "Unknown":
+                    evidence.append(f"First hop geolocated to: {first_hop_country}")
                 
                 return RealIPSignal(
                     method=BacktrackMethod.FIRST_HOP_ISP,
                     real_ip=first_hop_ip,
-                    real_country=None,  # Don't geolocate first hop - it's usually a mail relay
-                    confidence=0.92,  # VERY HIGH confidence - email headers are immutable at send time
+                    real_country=first_hop_country if first_hop_country != "Unknown" else None,
+                    confidence=0.65,
                     evidence=evidence
                 )
         else:
@@ -924,35 +939,41 @@ class RealIPBacktracker:
     
     def _detect_compromised_server(self, received_headers: List[str], from_domain: str, dkim_domain: str) -> Dict:
         """
-        COUNTER-TECHNIQUE 1: Detect if email from compromised legitimate server
-        Attacker hacks e.g. company.com mail server, sends phishing from there
+        COUNTER-TECHNIQUE 1: Detect if email from compromised legitimate server.
+        Checks domain alignment, relay chain length, and timezone variance.
         """
         
         evidence = []
         risk_score = 0.0
         
-        # Check for domain mismatch
-        if from_domain != dkim_domain:
+        # Check for domain mismatch (only meaningful if both are present)
+        if from_domain and dkim_domain and from_domain != dkim_domain:
             evidence.append(f"[WARNING] DOMAIN MISMATCH: From: {from_domain} != DKIM: {dkim_domain}")
-            evidence.append("   This could indicate compromised server spoofing!")
             risk_score += 0.3
+        elif from_domain and not dkim_domain:
+            evidence.append("[INFO] No DKIM signing domain — cannot verify domain alignment")
+            risk_score += 0.1
         
         # Check for unusual relay chains
         if len(received_headers) > 5:
             evidence.append(f"[WARNING] UNUSUAL RELAY CHAIN: {len(received_headers)} hops detected")
-            evidence.append("   Longer chains indicate possible mail server compromise")
             risk_score += 0.2
         
+        # Check for "unknown" hostnames in interior hops (sign of compromised server)
+        unknown_count = sum(1 for h in received_headers if 'unknown' in h.lower()[:60])
+        if unknown_count >= 2:
+            evidence.append(f"[WARNING] {unknown_count} hops have 'unknown' hostnames")
+            risk_score += 0.15
+        
         # Check for timezone anomalies across servers
-        timezones = []
+        timezones = set()
         for header in received_headers:
             tz_match = re.search(r'([+-]\d{4})', header)
             if tz_match:
-                timezones.append(tz_match.group(1))
+                timezones.add(tz_match.group(1))
         
-        if timezones and len(set(timezones)) > 1:
-            evidence.append(f"[WARNING] TIMEZONE VARIANCE: {set(timezones)}")
-            evidence.append("   Different servers have conflicting timezones - possible compromise")
+        if len(timezones) > 2:
+            evidence.append(f"[WARNING] TIMEZONE VARIANCE: {timezones}")
             risk_score += 0.25
         
         return {
@@ -963,68 +984,86 @@ class RealIPBacktracker:
     
     def _check_multi_ip_consistency(self, received_headers: List[str]) -> Dict:
         """
-        COUNTER-TECHNIQUE 2: Detect decoy VPN with hidden real connection
-        Analyze ALL IPs in Received chain, not just first one
+        COUNTER-TECHNIQUE 2: Detect decoy VPN / proxy chain anomalies.
+        Checks for private→public IP jumps, duplicate IPs, and chain gaps.
         """
         
         evidence = []
         all_ips = []
-        countries = set()
+        private_count = 0
+        public_count = 0
         
         # Extract all IPs from Received headers
         for header in received_headers:
-            ip_match = re.search(r'\[(\d+\.\d+\.\d+\.\d+)\]|\[([0-9a-f:]+)\]', header)
+            ip_match = re.search(r'\[(\d+\.\d+\.\d+\.\d+)\]', header)
             if ip_match:
-                ip = ip_match.group(1) or ip_match.group(2)
+                ip = ip_match.group(1)
                 all_ips.append(ip)
-                country = self._geolocate_ip(ip)
-                countries.add(country)
+                if self._is_private_ip(ip):
+                    private_count += 1
+                else:
+                    public_count += 1
         
-        evidence.append(f"IPs found: {len(all_ips)} servers in chain")
-        evidence.append(f"Countries: {', '.join(sorted(countries))}")
+        evidence.append(f"IPs in chain: {len(all_ips)} ({public_count} public, {private_count} private)")
         
-        # Check for geographic inconsistency (decoy attack)
-        if len(countries) > 1 and 'Unknown' not in countries:
-            evidence.append("[WARNING] GEOGRAPHIC MISMATCH: IPs from different countries")
-            evidence.append("   Possible decoy VPN with hidden real connection!")
+        # Check for private→public jumps (attacker's NAT leaked)
+        if private_count > 0 and public_count > 0:
+            evidence.append("[INFO] Mix of private and public IPs — NAT traversal detected")
+        
+        # Check for duplicate IPs (looping / misconfigured proxy)
+        unique_ips = set(all_ips)
+        if len(unique_ips) < len(all_ips):
+            evidence.append("[WARNING] Duplicate IPs in routing chain — possible proxy loop")
             return {"consistency_ok": False, "evidence": evidence, "all_ips": all_ips}
+        
+        # Check for suspiciously short chain (single hop through VPN)
+        if len(all_ips) == 1 and public_count == 1:
+            evidence.append("[INFO] Single-hop chain — direct VPN exit, no intermediate relays")
         
         return {"consistency_ok": True, "evidence": evidence, "all_ips": all_ips}
     
     def _analyze_tor_detection(self, first_hop_ip: str, headers: str) -> Dict:
         """
-        COUNTER-TECHNIQUE 3: Detect if using Tor hidden service
-        Identify Tor exit nodes and onion services
+        COUNTER-TECHNIQUE 3: Detect if using Tor hidden service.
+        Uses reverse-DNS heuristics and header markers.
         """
         
         evidence = []
         tor_confidence = 0.0
         
-        # Known Tor exit node ranges (sample)
-        tor_exit_ranges = [
-            "192.241.",  # Tor exit node hosting
-            "45.142.",   # Nightshade exit nodes
-            "198.50.",   # Tor Project infrastructure
-        ]
+        # 1. Reverse-DNS: many Tor exit relays have recognisable PTR records
+        try:
+            ptr = socket.getfqdn(first_hop_ip)
+            ptr_lower = ptr.lower()
+            tor_ptr_keywords = ["tor", "exit", "relay", "onion", "torexit"]
+            if any(kw in ptr_lower for kw in tor_ptr_keywords):
+                evidence.append(f"[WARNING] Tor-related PTR record: {ptr}")
+                tor_confidence = max(tor_confidence, 0.75)
+        except Exception:
+            pass
         
-        # Check if IP is known Tor exit node
-        for tor_range in tor_exit_ranges:
-            if first_hop_ip.startswith(tor_range):
-                evidence.append(f"[WARNING] TOR EXIT NODE DETECTED: {first_hop_ip}")
-                evidence.append("   Attacker using Tor hidden service for anonymity")
-                tor_confidence = 0.8
+        # 2. Check for .onion domain references in headers/body
+        if '.onion' in headers.lower():
+            evidence.append("[WARNING] .ONION DOMAIN DETECTED in email")
+            tor_confidence = max(tor_confidence, 0.70)
+        
+        # 3. Known Tor project infrastructure ASN prefixes
+        tor_infra_prefixes = [
+            "199.249.230.",   # Tor Project /24
+            "204.13.164.",    # Tor Project /24
+            "171.25.193.",    # DFRI Tor exit nodes
+        ]
+        for prefix in tor_infra_prefixes:
+            if first_hop_ip.startswith(prefix):
+                evidence.append(f"[WARNING] TOR PROJECT INFRASTRUCTURE IP: {first_hop_ip}")
+                tor_confidence = max(tor_confidence, 0.85)
                 break
         
-        # Check for .onion domain (Tor hidden service)
-        if '.onion' in headers.lower():
-            evidence.append("[WARNING] .ONION DOMAIN DETECTED")
-            evidence.append("   Email references Tor hidden service")
-            tor_confidence = max(tor_confidence, 0.7)
-        
-        # Check for Tor browser fingerprints in User-Agent
-        if 'Mozilla' in headers and 'Firefox' in headers and 'Windows NT' not in headers:
-            evidence.append("[!] TOR BROWSER DETECTED: Unusual User-Agent signature")
-            tor_confidence = max(tor_confidence, 0.5)
+        # 4. Tor Browser user-agent fingerprint (round version, no OS)
+        headers_lower = headers.lower()
+        if 'torbrowser' in headers_lower or 'tor browser' in headers_lower:
+            evidence.append("[!] TOR BROWSER detected in User-Agent")
+            tor_confidence = max(tor_confidence, 0.60)
         
         return {
             "uses_tor": tor_confidence > 0.5,
@@ -1111,570 +1150,34 @@ class RealIPBacktracker:
     
     def _geolocate_ip(self, ip: str) -> Optional[str]:
         """
-        Quick geolocation using ASN/BGP data
-        Returns likely country based on IP allocation
+        Geolocate an IP using the real geolocation enricher (ip-api / ipwho.is).
+        Falls back to a lightweight HTTP lookup if the enricher is unavailable.
         """
-        
-        # Simplified mapping of IP ranges to countries
-        ip_country_map = {
-            "45.14.71": "Japan",  # NordVPN Japan endpoint - but country is Japan
-            "209.85": "United States",  # Google
-            "103.": "India",
-            "202.": "Japan",
-            "61.": "Australia",
-            "185.": "Europe",
-        }
-        
-        for prefix, country in ip_country_map.items():
-            if ip.startswith(prefix):
-                return country
-        
-        return "Unknown"
+        if not ip or ip == "unknown":
+            return "Unknown"
 
-
-
-class BacktrackingMethod(Enum):
-    """Methods for backtracking real IP"""
-    DNS_LEAK = "dns_leak"
-    WEBRTC_LEAK = "webrtc_leak"
-    TOR_FINGERPRINT = "tor_fingerprint"
-    KILL_SWITCH_FAIL = "kill_switch_failure"
-    P2P_LEAK = "p2p_leak"
-    EMAIL_METADATA = "email_metadata"
-    ML_TRAFFIC_FP = "ml_traffic_fingerprint"
-    TIMING_ANALYSIS = "timing_analysis"
-    BEHAVIORAL = "behavioral_pattern"
-    PROVIDER_VULN = "provider_vulnerability"
-    TOPOLOGY_INFERENCE = "network_topology"
-    CORRELATED_ACCOUNT = "correlated_account"
-
-
-@dataclass
-class BacktrackingSignal:
-    """Signal indicating potential real IP"""
-    method: BacktrackingMethod
-    real_ip: Optional[str]
-    confidence: float  # 0.0-1.0
-    evidence: List[str]
-    timestamp: Optional[str] = None
-
-
-@dataclass
-class VPNAnalysis:
-    """Complete VPN analysis with backtracking results"""
-    vpn_provider: str
-    vpn_endpoint_ip: str
-    detected_vpn_confidence: float
-    backtracking_signals: List[BacktrackingSignal]
-    likely_real_ip: Optional[str]
-    backtracking_confidence: float  # 0.0-1.0
-    recommended_actions: List[str]
-    law_enforcement_notes: str
-
-
-class VPNBacktrackAnalyzer:
-    """Analyze VPN usage and attempt to backtrack real IP"""
-    
-    def __init__(self, verbose: bool = False):
-        self.verbose = verbose
-        self.known_vpn_providers = {
-            "NordVPN": {"exit_countries": 60, "kill_switch": True, "leak_risk": 0.05},
-            "ExpressVPN": {"exit_countries": 94, "kill_switch": True, "leak_risk": 0.03},
-            "Surfshark": {"exit_countries": 100, "kill_switch": True, "leak_risk": 0.04},
-            "ProtonVPN": {"exit_countries": 67, "kill_switch": True, "leak_risk": 0.06},
-            "CyberGhost": {"exit_countries": 89, "kill_switch": True, "leak_risk": 0.07},
-        }
-    
-    def analyze_vpn_backtrack(
-        self,
-        vpn_endpoint_ip: str,
-        vpn_provider: str,
-        email_from: str,
-        email_headers: Dict,
-        email_body: str = "",
-        timestamp: Optional[str] = None
-    ) -> VPNAnalysis:
-        """
-        Attempt to backtrack real IP using multiple techniques
-        """
-        
-        backtracking_signals = []
-        
-        # Technique 1: DNS Leak Analysis
-        dns_signal = self._analyze_dns_leaks(email_headers)
-        if dns_signal:
-            backtracking_signals.append(dns_signal)
-        
-        # Technique 2: Email Headers Metadata Analysis
-        metadata_signal = self._analyze_email_metadata(email_headers, email_from)
-        if metadata_signal:
-            backtracking_signals.append(metadata_signal)
-        
-        # Technique 3: Tor Exit Node Fingerprinting
-        if vpn_provider.lower() == "tor" or "onion" in vpn_provider.lower():
-            tor_signal = self._analyze_tor_exit_node(vpn_endpoint_ip, email_headers)
-            if tor_signal:
-                backtracking_signals.append(tor_signal)
-        
-        # Technique 4: Email Artifact Analysis
-        artifact_signal = self._analyze_email_artifacts(email_headers, email_body)
-        if artifact_signal:
-            backtracking_signals.append(artifact_signal)
-        
-        # Technique 5: Behavioral Pattern Recognition
-        behavior_signal = self._analyze_behavioral_patterns(email_headers, email_from)
-        if behavior_signal:
-            backtracking_signals.append(behavior_signal)
-        
-        # Technique 6: Timezone & Location Correlation
-        timezone_signal = self._analyze_timezone_location(email_headers, timestamp)
-        if timezone_signal:
-            backtracking_signals.append(timezone_signal)
-        
-        # Technique 7: VPN Provider Vulnerability Analysis
-        vuln_signal = self._analyze_provider_vulnerabilities(vpn_provider)
-        if vuln_signal:
-            backtracking_signals.append(vuln_signal)
-        
-        # Determine likely real IP and confidence
-        likely_real_ip = self._synthesize_results(backtracking_signals)
-        backtracking_confidence = self._calculate_overall_confidence(backtracking_signals)
-        
-        # Generate recommendations for law enforcement
-        actions = self._generate_backtrack_actions(backtracking_signals, vpn_provider)
-        le_notes = self._generate_law_enforcement_notes(vpn_provider, backtracking_signals)
-        
-        # Calibrate VPN detection confidence based on how the provider was identified:
-        # - Known VPN org name from live ASN lookup → high confidence (0.90)
-        # - IP prefix in verified table              → moderate (0.70)
-        # - Tor exit list match                      → high (0.92)
-        # - Passed in by caller with no evidence     → low (0.50)
-        if vpn_provider.lower() in ("tor", "tor exit") or "onion" in vpn_provider.lower():
-            _vpn_det_conf = 0.92
-        elif any(kw in vpn_provider.lower() for kw in
-                 ["nordvpn","expressvpn","surfshark","protonvpn","mullvad",
-                  "cyberghost","pia","tunnelbear","windscribe","ipvanish"]):
-            _vpn_det_conf = 0.88
-        elif vpn_provider not in ("", "Unknown", "unknown"):
-            _vpn_det_conf = 0.70
-        else:
-            _vpn_det_conf = 0.50
-
-        analysis = VPNAnalysis(
-            vpn_provider=vpn_provider,
-            vpn_endpoint_ip=vpn_endpoint_ip,
-            detected_vpn_confidence=_vpn_det_conf,
-            backtracking_signals=backtracking_signals,
-            likely_real_ip=likely_real_ip,
-            backtracking_confidence=backtracking_confidence,
-            recommended_actions=actions,
-            law_enforcement_notes=le_notes
-        )
-        
-        return analysis
-    
-    def _analyze_dns_leaks(self, email_headers: Dict) -> Optional[BacktrackingSignal]:
-        """
-        Technique 1: Detect DNS leaks in email headers
-        DNS queries may reveal real IP if VPN kill switch failed
-        """
-        
-        # Look for Received-SPF, DKIM-Signature headers
-        spf_header = email_headers.get("Received-SPF", "")
-        dkim_header = email_headers.get("DKIM-Signature", "")
-        
-        evidence = []
-        potential_ip = None
-        
-        # Extract SPF authenticated IP
-        spf_pattern = r'ip[6]?=([0-9a-fA-F:.]+)'
-        spf_matches = re.findall(spf_pattern, str(spf_header))
-        if spf_matches:
-            for ip in spf_matches:
-                if not self._is_private_ip(ip) and ip != "127.0.0.1":
-                    potential_ip = ip
-                    evidence.append(f"SPF authenticated IP: {ip}")
-        
-        # Check for multiple Received headers from different IPs
-        received_headers = email_headers.get("Received", [])
-        if isinstance(received_headers, list) and len(received_headers) > 1:
-            ips = self._extract_ips_from_received(received_headers)
-            if len(ips) > 1:
-                # Real IP might be first in chain (before VPN)
-                first_ip = ips[0]
-                if not self._is_private_ip(first_ip):
-                    evidence.append(f"First hop in chain: {first_ip} (before VPN)")
-                    potential_ip = first_ip
-        
-        if potential_ip and evidence:
-            return BacktrackingSignal(
-                method=BacktrackingMethod.DNS_LEAK,
-                real_ip=potential_ip,
-                confidence=0.70,
-                evidence=evidence
-            )
-        
-        return None
-    
-    def _analyze_email_metadata(self, email_headers: Dict, email_from: str) -> Optional[BacktrackingSignal]:
-        """
-        Technique 2: Analyze email metadata for real IP clues
-        X-Originating-IP, X-Mailer, X-Priority headers may reveal real IP
-        """
-        
-        evidence = []
-        potential_ip = None
-        
-        # Check X-Originating-IP header
-        x_orig_ip = email_headers.get("X-Originating-IP", "")
-        if x_orig_ip:
-            ip_pattern = r'\[([0-9a-fA-F:.]+)\]'
-            matches = re.findall(ip_pattern, str(x_orig_ip))
-            if matches:
-                potential_ip = matches[0]
-                evidence.append(f"X-Originating-IP header: {potential_ip}")
-        
-        # Check X-Mailer header for OS/client info
-        x_mailer = email_headers.get("X-Mailer", "")
-        if x_mailer:
-            evidence.append(f"Client identifier: {x_mailer}")
-            if "Linux" in str(x_mailer):
-                evidence.append("Suggests Linux-based VPN client")
-            elif "Windows" in str(x_mailer):
-                evidence.append("Suggests Windows OS (correlate with timezone)")
-        
-        # Check Microsoft authentication headers
-        auth_results = email_headers.get("Authentication-Results", "")
-        if auth_results and "spf=pass" in str(auth_results).lower():
-            evidence.append("SPF pass indicates authenticated sending")
-        
-        if potential_ip or evidence:
-            confidence = 0.65 if potential_ip else 0.40
-            return BacktrackingSignal(
-                method=BacktrackingMethod.EMAIL_METADATA,
-                real_ip=potential_ip,
-                confidence=confidence,
-                evidence=evidence
-            )
-        
-        return None
-    
-    def _analyze_tor_exit_node(self, exit_node_ip: str, email_headers: Dict) -> Optional[BacktrackingSignal]:
-        """
-        Technique 3: Fingerprint Tor exit nodes to identify real IP
-        Tor users often leak real IP through browser behavior
-        """
-        
-        evidence = []
-        
-        # Check for Tor browser user agent patterns
-        user_agent = email_headers.get("User-Agent", "")
-        if user_agent:
-            evidence.append(f"User-Agent: {user_agent[:50]}")
-            if "Tor" in str(user_agent) or "Tails" in str(user_agent):
-                evidence.append("Tor browser detected")
-        
-        # WebRTC leak indicators
-        if "WebRTC" in str(email_headers):
-            evidence.append("Potential WebRTC leak in connection")
-        
-        # Tor exit relay characteristics
-        evidence.append(f"Tor exit node analysis: {exit_node_ip}")
-        evidence.append("Real IP hidden by Tor network - forensics required")
-        
-        return BacktrackingSignal(
-            method=BacktrackingMethod.TOR_FINGERPRINT,
-            real_ip=None,
-            confidence=0.20,  # Low confidence - Tor is designed to hide IP
-            evidence=evidence
-        )
-    
-    def _analyze_email_artifacts(self, email_headers: Dict, email_body: str) -> Optional[BacktrackingSignal]:
-        """
-        Technique 4: Detect artifacts in email that reveal real IP
-        Embedded images, tracking pixels may expose real IP
-        """
-        
-        evidence = []
-        
-        # Check for embedded tracking pixels
-        img_pattern = r'<img[^>]+src=["\']([^"\']+)["\']'
-        images = re.findall(img_pattern, email_body)
-        if images:
-            evidence.append(f"Detected {len(images)} embedded images (may contain tracking IPs)")
-            for img in images[:3]:
-                if "http" in img:
-                    evidence.append(f"  Image URL: {img[:60]}...")
-        
-        # Check for embedded links (beacons)
-        beacon_pattern = r'href=["\']http[^"\']*["\']'
-        beacons = re.findall(beacon_pattern, email_body)
-        if beacons:
-            evidence.append(f"Found {len(beacons)} external links (tracking beacons)")
-        
-        # Check for embedded videos/objects
-        if "<video" in email_body or "<object" in email_body:
-            evidence.append("Embedded media detected (potential IP leak vector)")
-        
-        if evidence:
-            return BacktrackingSignal(
-                method=BacktrackingMethod.P2P_LEAK,
-                real_ip=None,
-                confidence=0.30,
-                evidence=evidence
-            )
-        
-        return None
-    
-    def _analyze_behavioral_patterns(self, email_headers: Dict, email_from: str) -> Optional[BacktrackingSignal]:
-        """
-        Technique 5: Behavioral pattern recognition
-        VPN usage + specific behavior may indicate real location
-        """
-        
-        evidence = []
-        
-        # Check email sending time
-        date_header = email_headers.get("Date", "")
-        if date_header:
-            evidence.append(f"Email sent at: {date_header}")
-            evidence.append("Timing analysis: Compare with sender's typical activity")
-        
-        # Check for geolocation inconsistencies
-        received_headers = email_headers.get("Received", [])
-        if isinstance(received_headers, list):
-            evidence.append(f"Multiple relay points: {len(received_headers)} hops")
-            if len(received_headers) > 3:
-                evidence.append("Complex path may indicate sophisticated setup")
-        
-        # From address pattern
-        if "@gmail.com" in email_from or "@outlook.com" in email_from:
-            evidence.append("Using free webmail service")
-            evidence.append("Likely personal account (not corporate)")
-        
-        if evidence:
-            return BacktrackingSignal(
-                method=BacktrackingMethod.BEHAVIORAL,
-                real_ip=None,
-                confidence=0.35,
-                evidence=evidence
-            )
-        
-        return None
-    
-    def _analyze_timezone_location(self, email_headers: Dict, timestamp: Optional[str]) -> Optional[BacktrackingSignal]:
-        """
-        Technique 6: Timezone and location correlation
-        Mismatch between VPN location and timezone may reveal real location
-        """
-        
-        evidence = []
-        
-        # Extract timezone info
-        date_header = email_headers.get("Date", "")
-        if date_header:
-            # Parse timezone offset (e.g., +05:30 for IST)
-            tz_pattern = r'([+-]\d{2}:\d{2})$'
-            tz_match = re.search(tz_pattern, date_header)
-            if tz_match:
-                tz_offset = tz_match.group(1)
-                evidence.append(f"Email sent at timezone offset: {tz_offset}")
-                
-                # Map common timezones
-                if tz_offset == "+05:30":
-                    evidence.append("Timezone suggests India (IST)")
-                elif tz_offset == "+09:00":
-                    evidence.append("Timezone suggests Japan/Korea")
-                elif tz_offset == "+00:00":
-                    evidence.append("Timezone suggests UTC/UK")
-        
-        if evidence:
-            return BacktrackingSignal(
-                method=BacktrackingMethod.TIMING_ANALYSIS,
-                real_ip=None,
-                confidence=0.45,
-                evidence=evidence
-            )
-        
-        return None
-    
-    def _analyze_provider_vulnerabilities(self, vpn_provider: str) -> Optional[BacktrackingSignal]:
-        """
-        Technique 7: Analyze VPN provider for known vulnerabilities
-        """
-        
-        evidence = []
-        provider_info = self.known_vpn_providers.get(vpn_provider, {})
-        
-        if provider_info:
-            leak_risk = provider_info.get("leak_risk", 0.05)
-            evidence.append(f"Provider: {vpn_provider}")
-            evidence.append(f"Known leak risk: {leak_risk * 100:.1f}%")
-            evidence.append(f"Kill switch available: {provider_info.get('kill_switch', False)}")
-            
-            if leak_risk > 0.05:
-                evidence.append("This provider has history of IP leaks")
-                evidence.append("Law enforcement can request provider logs")
-        else:
-            evidence.append(f"Unknown/Custom VPN provider: {vpn_provider}")
-            evidence.append("May be compromised or specialized service")
-        
-        return BacktrackingSignal(
-            method=BacktrackingMethod.PROVIDER_VULN,
-            real_ip=None,
-            confidence=0.50,
-            evidence=evidence
-        )
-    
-    def _extract_ips_from_received(self, received_headers: List[str]) -> List[str]:
-        """Extract all IPs from Received headers"""
-        ips = []
-        ip_pattern = r'\[([0-9a-fA-F:.]+)\]'
-        for header in received_headers:
-            matches = re.findall(ip_pattern, str(header))
-            ips.extend(matches)
-        return ips
-    
-    def _is_private_ip(self, ip: str) -> bool:
-        """Check if IP is private/reserved"""
-        private_ranges = [
-            "10.0.0.0/8",
-            "172.16.0.0/12",
-            "192.168.0.0/16",
-            "127.0.0.0/8",
-            "fc00::/7",
-            "fe80::/10",
-        ]
+        # Try the full enricher first
         try:
-            ip_obj = ipaddress.ip_address(ip)
-            for range_str in private_ranges:
-                if ip_obj in ipaddress.ip_network(range_str, strict=False):
-                    return True
-        except ValueError:
-            return True
-        return False
-    
-    def _synthesize_results(self, signals: List[BacktrackingSignal]) -> Optional[str]:
-        """Combine multiple signals to determine likely real IP"""
-        
-        # Group IPs by frequency
-        ip_scores = {}
-        for signal in signals:
-            if signal.real_ip:
-                if signal.real_ip not in ip_scores:
-                    ip_scores[signal.real_ip] = 0
-                ip_scores[signal.real_ip] += signal.confidence
-        
-        if ip_scores:
-            best_ip = max(ip_scores.items(), key=lambda x: x[1])[0]
-            if ip_scores[best_ip] > 0.5:
-                return best_ip
-        
-        return None
-    
-    def _calculate_overall_confidence(self, signals: List[BacktrackingSignal]) -> float:
-        """Calculate overall backtracking confidence"""
-        
-        if not signals:
-            return 0.0
-        
-        # Average confidence weighted by method importance
-        method_weights = {
-            BacktrackingMethod.DNS_LEAK: 0.80,
-            BacktrackingMethod.EMAIL_METADATA: 0.70,
-            BacktrackingMethod.TIMING_ANALYSIS: 0.60,
-            BacktrackingMethod.BEHAVIORAL: 0.50,
-            BacktrackingMethod.PROVIDER_VULN: 0.40,
-            BacktrackingMethod.TOR_FINGERPRINT: 0.30,
-            BacktrackingMethod.P2P_LEAK: 0.40,
-        }
-        
-        total_weight = 0
-        weighted_sum = 0
-        for signal in signals:
-            weight = method_weights.get(signal.method, 0.5)
-            weighted_sum += signal.confidence * weight
-            total_weight += weight
-        
-        if total_weight > 0:
-            return weighted_sum / total_weight
-        return 0.0
-    
-    def _generate_backtrack_actions(self, signals: List[BacktrackingSignal], vpn_provider: str) -> List[str]:
-        """Generate recommended action steps for law enforcement"""
-        
-        actions = [
-            "1. Request VPN provider logs via legal process",
-            "2. Analyze email header metadata for real IP indicators",
-            "3. Correlate timezone information with attacker location",
-            "4. Check for DNS/WebRTC leaks in connection metadata",
-        ]
-        
-        if vpn_provider.lower() == "tor":
-            actions.append("5. Subpoena ISP records for Tor node connection times")
-            actions.append("6. Correlate with Tor relay historical data")
-        else:
-            actions.append(f"5. Contact {vpn_provider} with lawful intercept request")
-            actions.append("6. Check for kill switch failures in session logs")
-        
-        has_metadata = any(s.method == BacktrackingMethod.EMAIL_METADATA for s in signals)
-        if has_metadata:
-            actions.append("7. Extract and analyze X-originating-IP and X-Mailer headers")
-        
-        return actions
-    
-    def _generate_law_enforcement_notes(self, vpn_provider: str, signals: List[BacktrackingSignal]) -> str:
-        """Generate notes for law enforcement"""
-        
-        notes = f"""
-===============================================================================
-[LAW ENFORCEMENT - VPN BACKTRACKING ANALYSIS]
-===============================================================================
+            from huntertrace.enrichment.geolocation import GeolocationEnricher
+            enricher = GeolocationEnricher()
+            result = enricher.enrich_ip(ip)
+            if result and result.country:
+                return result.country
+        except Exception:
+            pass
 
-VPN PROVIDER: {vpn_provider}
-================================================================================
+        # Lightweight fallback: single ip-api call
+        try:
+            import requests
+            resp = requests.get(
+                f"http://ip-api.com/json/{ip}?fields=country,status",
+                timeout=6,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("status") == "success" and data.get("country"):
+                    return data["country"]
+        except Exception:
+            pass
 
-BACKTRACKING CAPABILITY:
-Based on {len(signals)} analysis techniques, real attacker IP may be recoverable
-through lawful intercept and VPN provider cooperation.
-
-KEY EVIDENCE FOR WARRANT:
-{chr(10).join([f'- {s.method.value.upper()}: {s.confidence:.0%} confidence' for s in signals if s.evidence])}
-
-INVESTIGATIVE DATA SOURCES:
-1. VPN Provider Logs (requires warrant)
-   - Connection timestamp logs
-   - Real IP to VPN endpoint mappings
-   - Session duration records
-   - Payment/subscription information
-
-2. Email Server Logs (may be available without warrant)
-   - ISP logs matching VPN endpoint IP
-   - Correlate with connection timestamp
-   - Track to real subscriber address
-
-3. Network Analysis
-   - DNS query logs (ISP level)
-   - BGP route analysis
-   - Network topology inference
-
-4. Behavioral Correlation
-   - Compare with other known accounts
-   - Timing patterns across campaigns
-   - Geographic inconsistencies
-
-NEXT STEPS:
-1. Prepare evidence package with this analysis
-2. Consult with prosecutor for appropriate warrants
-3. Contact VPN provider legal department
-4. Request ISP logs for matching timeframe
-5. Coordinate with INTERPOL if international
-
-TIMELINE PRIORITY:
-- Urgent: VPN provider logs (preserved for ~30-90 days)
-- High: ISP logs (preserved for 6-12 months)
-- Medium: Email server analysis (available indefinitely)
-===============================================================================
-        """
-        
-        return notes
+        return "Unknown"

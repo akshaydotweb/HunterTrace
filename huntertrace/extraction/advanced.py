@@ -320,9 +320,9 @@ class AdvancedRealIPExtractor:
         self.verbose = verbose
         self.techniques_applied = []
         # Live IP database — replaces all hardcoded static IP tables.
-        # Lazily imported so the module works without liveIpDatabase.py present.
+        # Lazily imported so the module works without the database module present.
         try:
-            from liveIpDatabase import LiveIPDatabase
+            from huntertrace.enrichment.database import LiveIPDatabase
             self.live_db = LiveIPDatabase(abuseipdb_key=abuseipdb_key, verbose=verbose)
         except ImportError:
             self.live_db = None
