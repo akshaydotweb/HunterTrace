@@ -5,7 +5,6 @@ from huntertrace.extraction.basic import RealIPExtractor, extract_real_ip_summar
 from huntertrace.extraction.advanced import (
     AdvancedRealIPExtractor,
     RealIPAnalysis,
-    ExtractionTechnique,
 )
 from huntertrace.extraction.webmail import (
     run_webmail_extraction,
@@ -19,7 +18,7 @@ from huntertrace.extraction.vpnBacktrack import (
 
 __all__ = [
     "RealIPExtractor", "extract_real_ip_summary",
-    "AdvancedRealIPExtractor", "RealIPAnalysis", "ExtractionTechnique",
+    "AdvancedRealIPExtractor", "RealIPAnalysis",
     "run_webmail_extraction", "WebmailExtractionResult",
     "RealIPBacktracker", "BacktrackResult", "RealIPSignal",
 ]

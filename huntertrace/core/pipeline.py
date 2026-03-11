@@ -152,6 +152,7 @@ class ReceivedChainAnalysis:
     spoofing_risk: float
     confidence: float
     red_flags: List[str]
+    extra_headers: Optional[Dict[str, str]] = None
 
 
 class HeaderExtractor:
@@ -267,7 +268,19 @@ class HeaderExtractor:
             headers_found=len(received_headers),
             spoofing_risk=min(1.0, spoofing_risk),
             confidence=1.0 - (spoofing_risk * 0.3),
-            red_flags=red_flags
+            red_flags=red_flags,
+            extra_headers={
+                'Received-SPF': msg.get('Received-SPF', '') or '',
+                'DKIM-Signature': msg.get('DKIM-Signature', '') or '',
+                'X-Originating-IP': msg.get('X-Originating-IP', '') or '',
+                'Authentication-Results': msg.get('Authentication-Results', '') or '',
+                'X-Mailer': msg.get('X-Mailer', '') or '',
+                'User-Agent': msg.get('User-Agent', '') or '',
+                'X-Sender-IP': msg.get('X-Sender-IP', '') or '',
+                'X-Originating-Client-IP': msg.get('X-Originating-Client-IP', '') or '',
+                'X-Priority': msg.get('X-Priority', '') or '',
+                'From': email_from,
+            },
         )
         
         return analysis
@@ -3306,12 +3319,20 @@ class CompletePipeline:
         print(f"  Obfuscation layers detected: {proxy_analysis.obfuscation_count}")
         print(f"  Real origin status: {proxy_analysis.likely_real_origin}")
         
-        # VPN BACKTRACKING (NEW): If VPN detected, attempt to backtrack real IP
+        # VPN BACKTRACKING: If VPN/Proxy/Datacenter detected, attempt to backtrack real IP
         vpn_backtrack_analysis = None
-        if proxy_analysis.obfuscation_count > 0 and VPN_BACKTRACK_AVAILABLE:
+        # Trigger on: obfuscation layers detected OR any IP classified as VPN/proxy/datacenter
+        any_vpn_or_proxy = any(
+            c.is_vpn or c.is_proxy or 'VPN' in c.classification or 'DATACENTER' in c.classification
+            for c in classifications.values()
+        )
+        should_backtrack = VPN_BACKTRACK_AVAILABLE and (
+            proxy_analysis.obfuscation_count > 0 or any_vpn_or_proxy
+        )
+        if should_backtrack:
             print("\n[VPN BACKTRACKING] Detecting obfuscation methods...")
             try:
-                # Find VPN IP in classifications
+                # Find VPN/proxy IP in classifications (prefer VPN, fall back to proxy/datacenter)
                 vpn_ip = None
                 vpn_provider = "Unknown"
                 vpn_country = "Unknown"
@@ -3323,21 +3344,36 @@ class CompletePipeline:
                         if classification.country:
                             vpn_country = classification.country
                         break
+                if not vpn_ip:
+                    # Fall back to first proxy/datacenter IP
+                    for ip, classification in classifications.items():
+                        if classification.is_proxy or 'DATACENTER' in classification.classification:
+                            vpn_ip = ip
+                            vpn_provider = classification.provider or "Datacenter/Proxy"
+                            vpn_country = classification.country or "Unknown"
+                            break
                 
                 if vpn_ip:
-                    print(f"  VPN detected: {vpn_provider} ({vpn_ip})")
+                    print(f"  VPN/Proxy detected: {vpn_provider} ({vpn_ip})")
                     print(f"  Attempting to backtrack REAL IP using 7+ techniques...\n")
                     
                     backtracker = RealIPBacktracker(verbose=self.verbose)
                     
-                    # Convert email headers to dict
+                    # Build headers dict from REAL parsed email headers
+                    _extra = header_analysis.extra_headers or {}
                     email_headers_for_backtrack = {
                         'Date': str(header_analysis.email_date) if header_analysis.email_date else None,
                         'Received': [hop.raw_header for hop in header_analysis.hops],
-                        'Received-SPF': 'Unknown',
-                        'DKIM-Signature': 'Unknown',
-                        'X-Originating-IP': 'Unknown',
-                        'Authentication-Results': 'Unknown',
+                        'Received-SPF': _extra.get('Received-SPF', ''),
+                        'DKIM-Signature': _extra.get('DKIM-Signature', ''),
+                        'X-Originating-IP': _extra.get('X-Originating-IP', ''),
+                        'Authentication-Results': _extra.get('Authentication-Results', ''),
+                        'X-Mailer': _extra.get('X-Mailer', ''),
+                        'User-Agent': _extra.get('User-Agent', ''),
+                        'X-Sender-IP': _extra.get('X-Sender-IP', ''),
+                        'X-Originating-Client-IP': _extra.get('X-Originating-Client-IP', ''),
+                        'X-Priority': _extra.get('X-Priority', ''),
+                        'From': _extra.get('From', header_analysis.email_from),
                     }
                     
                     vpn_backtrack_analysis = backtracker.backtrack_real_ip(
@@ -3352,10 +3388,11 @@ class CompletePipeline:
                     if vpn_backtrack_analysis.probable_real_ip:
                         print(f"    [ALERT] PROBABLE REAL IP: {vpn_backtrack_analysis.probable_real_ip}")
                     if vpn_backtrack_analysis.probable_country:
-                        print(f"    Location: {vpn_backtrack_analysis.probable_country}")
+                        print(f"    [ALERT] PROBABLE REAL LOCATION: {vpn_backtrack_analysis.probable_country}")
             except Exception as e:
                 if self.verbose:
                     print(f"  [WARNING] VPN backtracking failed: {e}")
+                    import traceback; traceback.print_exc()
                 vpn_backtrack_analysis = None
         
         # ── REAL IP EXTRACTION (early) ─────────────────────────────────
@@ -3531,34 +3568,28 @@ class CompletePipeline:
         # VPN backtracking: use inferred country if real IP == VPN endpoint
         use_backtrack_country = False
         backtrack_country = None
+        # Case 1: Backtracking found a real IP — geolocate it and use the result
         if vpn_backtrack_analysis and vpn_backtrack_analysis.probable_real_ip:
             _bt_ip = vpn_backtrack_analysis.probable_real_ip
-            is_same_as_vpn = False
-            if proxy_analysis and proxy_analysis.chain:
-                for chain_item in proxy_analysis.chain:
-                    if chain_item.ip == _bt_ip and chain_item.is_obfuscation:
-                        is_same_as_vpn = True
-                        break
-            if is_same_as_vpn and vpn_backtrack_analysis.probable_country:
-                use_backtrack_country = True
+            # If the probable real IP is NOT the VPN IP itself, geolocate it directly
+            if _bt_ip not in seen_ipv4:
+                unique_ips.append(_bt_ip)
+                seen_ipv4.add(_bt_ip)
+            # Prefer the backtracked country when available
+            if vpn_backtrack_analysis.probable_country:
                 backtrack_country = vpn_backtrack_analysis.probable_country
-                geolocation_results = {_bt_ip: type('obj', (object,), {
-                    'country': backtrack_country,
-                    'country_code': 'INFERRED',
-                    'city': 'Unknown',
-                    'latitude': None,
-                    'longitude': None,
-                    'timezone': 'Unknown',
-                    'asn': 'Unknown',
-                    'provider': 'Unknown',
-                    'isp': 'Unknown',
-                    'accuracy_radius_km': None,
-                    'confidence': vpn_backtrack_analysis.backtracking_confidence,
-                    'sources': ['VPN Backtracking']
-                })()}
-                print(f"  [VPN BACKTRACK] Using inferred country: {backtrack_country}")
+                use_backtrack_country = True
+                print(f"  [VPN BACKTRACK] Probable real IP: {_bt_ip}, inferred country: {backtrack_country}")
 
-        if not use_backtrack_country and self.geolocation_enricher:
+        # Case 2: Backtracking inferred a country from timezone/behavioral signals
+        #         but no concrete real IP was found (common for VPN emails)
+        if not use_backtrack_country and vpn_backtrack_analysis and vpn_backtrack_analysis.probable_country:
+            backtrack_country = vpn_backtrack_analysis.probable_country
+            use_backtrack_country = True
+            print(f"  [VPN BACKTRACK] No real IP extracted, but inferred country: {backtrack_country}")
+
+        # Always run real geolocation — backtrack country supplements, not replaces
+        if self.geolocation_enricher:
             try:
                 # PRIORITY: If we identified a real attacker IP, ONLY geolocate that
                 if attacker_real_ip:
@@ -3619,7 +3650,7 @@ class CompletePipeline:
                 if self.verbose:
                     print(f"  [WARNING] Geolocation enrichment failed: {e}")
                 geolocation_results = None
-        elif not use_backtrack_country and not self.geolocation_enricher:
+        elif not self.geolocation_enricher:
             print("  [NOTICE] Geolocation skipped (geolocation module not available)")
         
         # STAGE 5: ATTRIBUTION ANALYSIS - Final synthesis and evidence packaging

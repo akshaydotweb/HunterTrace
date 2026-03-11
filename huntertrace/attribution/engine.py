@@ -581,6 +581,19 @@ class SignalExtractor:
             if tz_off in TZ_REGION_MAP:
                 signals["timezone_region"] = TZ_REGION_MAP[tz_off]
 
+        # ── VPN backtrack country override ────────────────────────────────
+        # When VPN is detected and backtracking inferred a real country
+        # (from timezone / behavioral / DNS-leak signals), use it as the
+        # authoritative real_ip_country instead of the VPN exit IP's geo.
+        if bt and obfuscation["vpn"] and getattr(bt, "probable_country", None):
+            bt_country = bt.probable_country
+            signals["real_ip_country"] = bt_country
+            # geolocation_country from the VPN exit IP just mirrors the
+            # exit node — override it so both point to the inferred origin.
+            if ("geolocation_country" in signals
+                    and signals.get("vpn_exit_country") == signals["geolocation_country"]):
+                signals["geolocation_country"] = bt_country
+
         return signals, obfuscation
 
 
