@@ -508,7 +508,7 @@ class IPClassifierLight:
             import requests
             resp = requests.get(
                 f"http://ip-api.com/json/{ip}?fields=org,as,proxy,hosting,isp",
-                timeout=4
+                timeout=10
             )
             if resp.status_code == 200:
                 data = resp.json()
@@ -2123,7 +2123,7 @@ class ThreatIntelligenceEngine:
                 import requests
                 resp = requests.get(
                     f"http://ip-api.com/json/{ip}?fields=proxy,hosting,isp,org",
-                    timeout=4
+                    timeout=10
                 )
                 if resp.status_code == 200:
                     d = resp.json()
@@ -3571,7 +3571,7 @@ class CompletePipeline:
                             print(f"  [+] ATTACKER LOCATION: {attacker_geo.city}, {attacker_geo.country}")
                             if attacker_geo.latitude and attacker_geo.longitude:
                                 print(f"    Coordinates: {format_coordinates(attacker_geo.latitude, attacker_geo.longitude)}")
-                            print(f"    ISP: {attacker_geo.isp or 'Unknown'}")
+                            print(f"    ISP: {attacker_geo.provider or 'Unknown'}")
                             print(f"    Confidence: {attacker_geo.confidence:.0%}")
                 else:
                     # Fallback: Geolocate all IPs in chain (IPv4 + IPv6)
@@ -3733,7 +3733,7 @@ class CompletePipeline:
             import requests
             resp = requests.get(
                 f"http://ip-api.com/json/{ipv6_address}?fields=country,status",
-                timeout=4
+                timeout=10
             )
             if resp.status_code == 200:
                 d = resp.json()

@@ -41,7 +41,33 @@ class GeolocationEnricher:
     
     IPAPI_ENDPOINT = "http://ip-api.com/json/"
     MAXMIND_ENDPOINT = "https://geoip.maxmind.com/geoip/v2.1/city/"
-    IPINFO_ENDPOINT = "https://ipinfo.io/json"
+    IPINFO_ENDPOINT = "https://ipinfo.io/"
+
+    # ISO 3166-1 alpha-2 → full country name (for APIs that return codes)
+    _ISO_TO_COUNTRY = {
+        "AF": "Afghanistan", "AL": "Albania", "DZ": "Algeria", "AR": "Argentina",
+        "AM": "Armenia", "AU": "Australia", "AT": "Austria", "AZ": "Azerbaijan",
+        "BD": "Bangladesh", "BY": "Belarus", "BE": "Belgium", "BR": "Brazil",
+        "BG": "Bulgaria", "CA": "Canada", "CL": "Chile", "CN": "China",
+        "CO": "Colombia", "HR": "Croatia", "CZ": "Czech Republic",
+        "DK": "Denmark", "EC": "Ecuador", "EG": "Egypt", "EE": "Estonia",
+        "FI": "Finland", "FR": "France", "GE": "Georgia", "DE": "Germany",
+        "GH": "Ghana", "GR": "Greece", "HK": "Hong Kong", "HU": "Hungary",
+        "IS": "Iceland", "IN": "India", "ID": "Indonesia", "IR": "Iran",
+        "IQ": "Iraq", "IE": "Ireland", "IL": "Israel", "IT": "Italy",
+        "JP": "Japan", "KZ": "Kazakhstan", "KE": "Kenya", "KP": "North Korea",
+        "KR": "South Korea", "KW": "Kuwait", "LV": "Latvia", "LT": "Lithuania",
+        "MY": "Malaysia", "MX": "Mexico", "MA": "Morocco", "MM": "Myanmar",
+        "NP": "Nepal", "NL": "Netherlands", "NZ": "New Zealand", "NG": "Nigeria",
+        "NO": "Norway", "OM": "Oman", "PK": "Pakistan", "PE": "Peru",
+        "PH": "Philippines", "PL": "Poland", "PT": "Portugal", "QA": "Qatar",
+        "RO": "Romania", "RU": "Russia", "SA": "Saudi Arabia", "RS": "Serbia",
+        "SG": "Singapore", "SK": "Slovakia", "SI": "Slovenia", "ZA": "South Africa",
+        "ES": "Spain", "LK": "Sri Lanka", "SE": "Sweden", "CH": "Switzerland",
+        "TW": "Taiwan", "TH": "Thailand", "TR": "Turkey", "UA": "Ukraine",
+        "AE": "UAE", "GB": "United Kingdom", "US": "United States",
+        "UZ": "Uzbekistan", "VE": "Venezuela", "VN": "Vietnam",
+    }
     
     def __init__(self, verbose: bool = False):
         self.verbose = verbose
@@ -71,6 +97,11 @@ class GeolocationEnricher:
         
         # Try IP-API (supports both IPv4 and IPv6)
         if self._try_ipapi(ip, geoloc_data):
+            self.cache[ip] = geoloc_data
+            return geoloc_data
+        
+        # Try ipwho.is (HTTPS, returns full country name, no key needed)
+        if self._try_ipwhois(ip, geoloc_data):
             self.cache[ip] = geoloc_data
             return geoloc_data
         
@@ -416,7 +447,7 @@ class GeolocationEnricher:
             # IP-API supports both IPv4 and IPv6
             url = f"{self.IPAPI_ENDPOINT}{ip}?fields=country,countryCode,city,lat,lon,timezone,as,isp,query"
             
-            response = requests.get(url, timeout=5)
+            response = requests.get(url, timeout=10)
             if response.status_code == 200:
                 data = response.json()
                 
@@ -447,13 +478,40 @@ class GeolocationEnricher:
         
         return False
     
+    def _try_ipwhois(self, ip: str, geoloc_data: GeolocationData) -> bool:
+        """Try ipwho.is (HTTPS, returns full country name, no key, 10k req/month)"""
+        try:
+            time.sleep(self.rate_limit_wait)
+            url = f"https://ipwho.is/{ip}"
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('success') and data.get('country'):
+                    geoloc_data.country = data.get('country')
+                    geoloc_data.country_code = data.get('country_code')
+                    geoloc_data.city = data.get('city')
+                    geoloc_data.latitude = data.get('latitude')
+                    geoloc_data.longitude = data.get('longitude')
+                    geoloc_data.timezone = (data.get('timezone') or {}).get('id')
+                    geoloc_data.provider = (data.get('connection') or {}).get('isp')
+                    geoloc_data.accuracy_radius_km = 25
+                    geoloc_data.confidence = 0.90
+                    geoloc_data.sources = ['ipwho.is']
+                    if self.verbose:
+                        print(f"[[+]] ipwho.is: {ip} => {geoloc_data.city}, {geoloc_data.country}")
+                    return True
+        except Exception as e:
+            if self.verbose:
+                print(f"[!] ipwho.is failed for {ip}: {e}")
+        return False
+    
     def _try_ipinfo(self, ip: str, geoloc_data: GeolocationData) -> bool:
         """Try IPinfo.io (free tier: 50,000 req/month)"""
         try:
             time.sleep(self.rate_limit_wait)
-            url = f"{self.IPINFO_ENDPOINT}?ip={ip}"
+            url = f"{self.IPINFO_ENDPOINT}{ip}/json"
             
-            response = requests.get(url, timeout=5)
+            response = requests.get(url, timeout=10)
             if response.status_code == 200:
                 data = response.json()
                 
@@ -463,11 +521,15 @@ class GeolocationEnricher:
                 # Parse coordinates
                 loc_parts = data.get('loc', '').split(',')
                 
-                geoloc_data.country = data.get('country')
-                geoloc_data.country_code = data.get('country')
+                # ipinfo returns ISO country codes — resolve to full name
+                raw_country = data.get('country', '')
+                geoloc_data.country = self._ISO_TO_COUNTRY.get(
+                    raw_country.upper(), raw_country
+                )
+                geoloc_data.country_code = raw_country
                 geoloc_data.city = data.get('city')
-                geoloc_data.latitude = float(loc_parts[0]) if len(loc_parts) > 0 else None
-                geoloc_data.longitude = float(loc_parts[1]) if len(loc_parts) > 1 else None
+                geoloc_data.latitude = float(loc_parts[0]) if len(loc_parts) > 0 and loc_parts[0] else None
+                geoloc_data.longitude = float(loc_parts[1]) if len(loc_parts) > 1 and loc_parts[1] else None
                 geoloc_data.timezone = data.get('timezone')
                 geoloc_data.provider = data.get('org')
                 geoloc_data.accuracy_radius_km = 50  # IPinfo typical accuracy
