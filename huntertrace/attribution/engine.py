@@ -130,48 +130,114 @@ ACI_LAYER_WEIGHTS: Dict[str, float] = {
 
 # Geographic prior — population-weighted base rate for phishing actors by region
 # (rough empirical priors; regions with higher phishing volumes have higher priors)
+# Flattened (max 0.055) so priors alone never dominate when signals are absent.
 REGION_PRIORS: Dict[str, float] = {
     # ── High-volume cybercrime sources (IC3 / ENISA data) ─────────────────
-    "Nigeria":           0.085,
-    "India":             0.080,
-    "Russia":            0.070,
-    "China":             0.065,
-    "United States":     0.055,
-    "Romania":           0.045,
-    "Brazil":            0.040,
-    "Ukraine":           0.038,
-    # ── BUG FIX (R3): These countries were MISSING from REGION_PRIORS. ────
-    # Any country absent from this dict cannot accumulate log-odds in the
-    # Bayesian updater — signals pointing to it are silently no-ops.
-    # Affected actors: ACTOR_001/011/012/026/029/031 (Germany → output Romania),
-    #   ACTOR_014 (Japan → Other), ACTOR_030 (UK → Other),
-    #   ACTOR_018/022/033/035 (Venezuela → Other or US).
-    # Weights calibrated from IC3/NCSC/ENISA cybercrime source frequency data.
-    "United Kingdom":    0.038,
-    "Germany":           0.032,
-    "South Africa":      0.035,
-    "Ghana":             0.032,
-    "Pakistan":          0.028,
-    "Indonesia":         0.025,
-    "South Korea":       0.025,
-    "Vietnam":           0.022,
-    "France":            0.022,
-    "Philippines":       0.020,
-    "Turkey":            0.018,
-    "Netherlands":       0.018,
-    "Japan":             0.018,
-    "Iran":              0.016,
-    "Canada":            0.016,
-    "Bulgaria":          0.015,
-    "Australia":         0.015,
-    "Venezuela":         0.015,
+    "Nigeria":           0.050,
+    "India":             0.048,
+    "Russia":            0.045,
+    "China":             0.043,
+    "United States":     0.042,
+    "Romania":           0.035,
+    "Brazil":            0.032,
+    "Ukraine":           0.030,
+    "United Kingdom":    0.030,
+    "Germany":           0.028,
+    "South Africa":      0.028,
+    "Ghana":             0.025,
+    "Pakistan":          0.022,
+    "Indonesia":         0.020,
+    "South Korea":       0.020,
+    "Vietnam":           0.018,
+    "France":            0.018,
+    "Philippines":       0.016,
+    "Turkey":            0.016,
+    "Netherlands":       0.016,
+    "Japan":             0.016,
+    "Iran":              0.015,
+    "Canada":            0.015,
+    "Bulgaria":          0.014,
+    "Australia":         0.014,
+    "Venezuela":         0.014,
     "North Korea":       0.012,
     "Ireland":           0.012,
     "Israel":            0.012,
     "Taiwan":            0.012,
     "Belarus":           0.010,
     "Singapore":         0.010,
-    "Other":             0.044,   # Reduced from 0.289 — sum still equals 1.000
+    # ── Additional countries for broader geolocation coverage ─────────────
+    "Poland":            0.012,
+    "Mexico":            0.012,
+    "Thailand":          0.012,
+    "Malaysia":          0.010,
+    "Argentina":         0.010,
+    "Colombia":          0.010,
+    "Egypt":             0.010,
+    "Spain":             0.010,
+    "Italy":             0.010,
+    "Sweden":            0.008,
+    "Czech Republic":    0.008,
+    "Hungary":           0.008,
+    "Chile":             0.008,
+    "Peru":              0.008,
+    "Portugal":          0.008,
+    "Denmark":           0.008,
+    "Norway":            0.008,
+    "Finland":           0.008,
+    "New Zealand":       0.008,
+    "Switzerland":       0.008,
+    "Austria":           0.008,
+    "Belgium":           0.008,
+    "Greece":            0.008,
+    "Saudi Arabia":      0.008,
+    "Bangladesh":        0.008,
+    "Sri Lanka":         0.008,
+    "Kenya":             0.008,
+    "Other":             0.072,
+}
+
+# Default prior for countries not in REGION_PRIORS, injected dynamically
+# when a signal references an unknown country.
+DEFAULT_DYNAMIC_PRIOR = 0.010
+
+# Country name aliases — maps ISO codes, abbreviations, and common variants
+# to the canonical name used in REGION_PRIORS.
+COUNTRY_ALIASES: Dict[str, str] = {
+    # ISO 3166-1 alpha-2
+    "us": "United States", "gb": "United Kingdom", "uk": "United Kingdom",
+    "cn": "China", "ru": "Russia", "in": "India", "br": "Brazil",
+    "de": "Germany", "fr": "France", "jp": "Japan", "kr": "South Korea",
+    "au": "Australia", "ca": "Canada", "za": "South Africa",
+    "ng": "Nigeria", "gh": "Ghana", "pk": "Pakistan", "id": "Indonesia",
+    "vn": "Vietnam", "ph": "Philippines", "tr": "Turkey", "nl": "Netherlands",
+    "ir": "Iran", "bg": "Bulgaria", "ro": "Romania", "ua": "Ukraine",
+    "ve": "Venezuela", "kp": "North Korea", "ie": "Ireland", "il": "Israel",
+    "tw": "Taiwan", "by": "Belarus", "sg": "Singapore", "pl": "Poland",
+    "mx": "Mexico", "th": "Thailand", "my": "Malaysia", "ar": "Argentina",
+    "co": "Colombia", "eg": "Egypt", "es": "Spain", "it": "Italy",
+    "se": "Sweden", "cz": "Czech Republic", "hu": "Hungary",
+    "cl": "Chile", "pe": "Peru", "pt": "Portugal", "dk": "Denmark",
+    "no": "Norway", "fi": "Finland", "nz": "New Zealand",
+    "ch": "Switzerland", "at": "Austria", "be": "Belgium",
+    "gr": "Greece", "sa": "Saudi Arabia", "bd": "Bangladesh",
+    "lk": "Sri Lanka", "ke": "Kenya",
+    # Common name variants
+    "usa": "United States", "united states of america": "United States",
+    "great britain": "United Kingdom", "england": "United Kingdom",
+    "republic of korea": "South Korea", "korea, republic of": "South Korea",
+    "korea": "South Korea",
+    "russian federation": "Russia",
+    "türkiye": "Turkey", "turkiye": "Turkey",
+    "iran, islamic republic of": "Iran",
+    "taiwan, province of china": "Taiwan",
+    "hong kong": "China",
+    "czechia": "Czech Republic",
+    "the netherlands": "Netherlands",
+    "holland": "Netherlands",
+    "ivory coast": "Ghana",
+    "deutschland": "Germany",
+    "brasil": "Brazil",
+    "nippon": "Japan",
 }
 
 # Timezone offset → candidate countries (ordered by prior probability)
@@ -545,7 +611,7 @@ class BayesianUpdater:
         self,
         signals: Dict[str, Any],
         existing_log_odds: Dict[str, float] = None,
-    ) -> Tuple[List[RegionProbability], Dict[str, float], List[str], List[str]]:
+    ) -> Tuple[List[RegionProbability], Dict[str, float], List[str], List[str], bool]:
         """
         Perform one Bayesian update step.
 
@@ -555,10 +621,11 @@ class BayesianUpdater:
                                (for longitudinal accumulation)
 
         Returns:
-            posterior    — sorted list of RegionProbability
-            log_odds     — updated log-odds dict (for next call)
-            used_signals — signals that contributed
-            missing      — signals not present
+            posterior      — sorted list of RegionProbability
+            log_odds       — updated log-odds dict (for next call)
+            used_signals   — signals that contributed
+            missing        — signals not present
+            any_matched    — True if at least one signal actually matched a region
         """
         # Initialise from prior or from accumulated log-odds
         log_odds: Dict[str, float] = {}
@@ -575,6 +642,7 @@ class BayesianUpdater:
 
         used_signals:    List[str] = []
         missing_signals: List[str] = list(SIGNAL_LIKELIHOOD_RATIOS.keys())
+        any_region_matched: bool   = False
 
         # ── Process each signal ───────────────────────────────────────────
         for sig_name, sig_value in signals.items():
@@ -585,6 +653,16 @@ class BayesianUpdater:
 
             lr_base = SIGNAL_LIKELIHOOD_RATIOS[sig_name]
             matched_regions = self._get_matching_regions(sig_name, sig_value)
+
+            if matched_regions:
+                any_region_matched = True
+                # Ensure dynamically injected countries have log-odds initialised
+                for mr in matched_regions:
+                    if mr not in log_odds:
+                        other_p = self._priors.get("Other", 0.1)
+                        mr_prior = self._priors.get(mr, DEFAULT_DYNAMIC_PRIOR)
+                        log_odds[mr] = math.log(mr_prior / other_p) if other_p > 0 else -5.0
+
             used_signals.append(sig_name)
 
             for region in list(log_odds.keys()):
@@ -633,7 +711,46 @@ class BayesianUpdater:
                 supporting_signals = supporting,
             ))
 
-        return posterior, log_odds, used_signals, missing_signals
+        return posterior, log_odds, used_signals, missing_signals, any_region_matched
+
+    def _normalize_country(self, val: str) -> Optional[str]:
+        """
+        Resolve a country name/code to the canonical key in self._priors.
+        Returns None if no match is found even after alias lookup.
+        """
+        v = val.strip()
+        v_lower = v.lower()
+
+        # 1. Exact (case-insensitive) match against priors
+        for region in self._priors:
+            if region.lower() == v_lower:
+                return region
+
+        # 2. Alias lookup BEFORE substring (avoids "DE" matching "sweDEn")
+        if v_lower in COUNTRY_ALIASES:
+            alias_target = COUNTRY_ALIASES[v_lower]
+            if alias_target not in self._priors:
+                self._priors[alias_target] = DEFAULT_DYNAMIC_PRIOR
+            return alias_target
+
+        # 3. Substring match only for longer names (>= 4 chars) to avoid
+        #    false positives like "DE" in "sweDEn"
+        if len(v) >= 4:
+            for region in self._priors:
+                if region.lower() in v_lower or v_lower in region.lower():
+                    return region
+
+        return None
+
+    def _inject_country(self, country_name: str) -> str:
+        """
+        Ensure a country exists in self._priors.  If it's missing, inject it
+        with DEFAULT_DYNAMIC_PRIOR so the Bayesian updater can accumulate
+        evidence for it.  Returns the canonical name.
+        """
+        if country_name not in self._priors:
+            self._priors[country_name] = DEFAULT_DYNAMIC_PRIOR
+        return country_name
 
     def _get_matching_regions(self, signal_name: str, value: Any) -> List[str]:
         """
@@ -647,11 +764,15 @@ class BayesianUpdater:
 
         if signal_name in ("real_ip_country", "geolocation_country",
                            "isp_country", "vpn_exit_country"):
-            # Direct country name — look for it in our priors
-            for region in self._priors:
-                if region.lower() in val.lower() or val.lower() in region.lower():
-                    return [region]
-            # Unmapped country — still useful as "not Other"
+            # Try canonical matching first, then alias, then dynamic inject
+            canonical = self._normalize_country(val)
+            if canonical:
+                return [canonical]
+            # Country not recognised by any alias — inject it dynamically
+            # so the geolocation evidence is never silently discarded.
+            if val and val.lower() not in ("", "unknown", "none", "other"):
+                injected = self._inject_country(val)
+                return [injected]
             return []
 
         if signal_name == "timezone_offset":
@@ -912,7 +1033,7 @@ class AttributionEngine:
         state["all_obfuscation"].append(obfuscation)
 
         # Bayesian update — pass existing log-odds as seed
-        posterior, new_log_odds, used, _ = self._updater.update(
+        posterior, new_log_odds, used, _, _ = self._updater.update(
             signals       = signals,
             existing_log_odds = state["log_odds"],
         )
@@ -964,7 +1085,7 @@ class AttributionEngine:
         state["all_signals"].append(signals)
         state["all_obfuscation"].append(obfuscation)
 
-        _, new_log_odds, used, _ = self._updater.update(
+        _, new_log_odds, used, _, _ = self._updater.update(
             signals           = signals,
             existing_log_odds = state["log_odds"],
         )
@@ -1163,7 +1284,7 @@ class AttributionEngine:
                        getattr(t, "campaign_count", 0) or 1)
         log_odds_seed = None
         for _ in range(n_obs):
-            _, log_odds_seed, _, _ = self._updater.update(
+            _, log_odds_seed, _, _, _ = self._updater.update(
                 signals           = signals,
                 existing_log_odds = log_odds_seed,
             )
@@ -1190,7 +1311,7 @@ class AttributionEngine:
     ) -> AttributionResult:
 
         # Bayesian update (uses seed if provided)
-        posterior, log_odds, used_signals, missing = self._updater.update(
+        posterior, log_odds, used_signals, missing, any_matched = self._updater.update(
             signals           = signals,
             existing_log_odds = log_odds_seed,
         )
@@ -1213,11 +1334,13 @@ class AttributionEngine:
         _conf_cap = min(0.50 + _n_sig * 0.075, 0.92)
         aci_adj   = min(raw_prob * aci.final_aci, _conf_cap)
 
-        # If no signals were used, the posterior reflects only priors.
-        # Prior-only attribution is not meaningful — return tier 0 regardless
-        # of the prior probability of the top region.
-        if not used_signals:
+        # If no signals were used OR no signal actually identified a region,
+        # the posterior reflects only priors. Prior-only attribution is not
+        # meaningful — force tier 0 and label the primary region as Unknown.
+        if not used_signals or not any_matched:
             aci_adj = 0.0
+            primary = RegionProbability(
+                region="Unknown", probability=0.0, prior=0.0, log_odds=0.0)
 
         # Tier assignment
         tier, tier_label, tier_desc = self._tier.assign(aci_adj)
