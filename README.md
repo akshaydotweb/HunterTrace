@@ -12,7 +12,12 @@
 
 ## Overview
 
-HUNTERTRACE is an open-source phishing attribution engine that identifies the **geographic origin of phishing actors** with **73% accuracy** — even when they operate behind VPNs, proxies, or Tor. With infrastructure graph analysis enabled, accuracy reaches **82%**.
+HUNTERTRACE is an open-source phishing attribution engine that identifies the
+**geographic origin of phishing actors** through multi-signal Bayesian inference,
+combining 8+ orthogonal signals to bypass VPN and proxy obfuscation. Evaluated
+on 53 labeled emails, it achieves **52.8% country-level** and **56.6%
+region-level** accuracy — outperforming single-signal methods — with larger-scale
+validation ongoing.
 
 Traditional email forensics relies on IP geolocation alone (~31% accuracy). HUNTERTRACE fuses **8+ orthogonal signals** through Bayesian inference:
 
@@ -106,95 +111,74 @@ huntertrace campaign emails/ -o campaign_report/
 
 ## Performance
 
-Evaluated on a corpus of phishing emails with known ground-truth origins:
+Evaluated on a labeled corpus of 53 phishing emails with known ground-truth origins:
 
-| Method | Region Accuracy | Notes |
-|--------|:-:|---|
-| IP Geolocation Only | 31% | Baseline |
-| Timezone Only | 52% | VPN-resistant but coarse |
-| **HUNTERTRACE (Bayesian)** | **73%** | Multi-signal fusion |
-| **HUNTERTRACE (+ Graph)** | **82%** | With infrastructure reuse detection |
+| Method | Top-1 Country Accuracy | Notes |
+|--------|------------------------|-------|
+| IP Geolocation Only | ~31% | Industry baseline |
+| Timezone Only | ~52% | VPN-resistant, coarse |
+| **HUNTERTRACE (Bayesian)** | **52.8%** | Multi-signal fusion |
+| **HUNTERTRACE (+ Graph)** | **56.6%** | Region-level accuracy |
 
-## Key Techniques
+**95% Confidence Interval**: 39.7% – 65.6% (n=53)  
+**Webmail IP Leak Rate**: 37.7% of analyzed emails  
+**Coverage**: 100% (no failed predictions)
 
-### Webmail Provider IP Leak Detection
-Gmail, Yahoo, and Outlook inject the sender's real IP into headers like `X-Originating-IP` and `X-Sender-IP`. HUNTERTRACE detects these leaks with a **67% extraction rate** across webmail-originated phishing emails.
+> ⚠️ **Note**: Performance numbers are based on an initial corpus of 53 labeled
+> emails. Larger-scale validation is in progress. Region-level accuracy (56.6%)
+> is more reliable than country-level given current corpus size.
 
-### Timezone-Based VPN Bypass
-The `Date:` header timezone offset reveals the sender's local time regardless of VPN usage. Combined with `Received:` chain timing analysis, this provides a VPN-resistant geographic signal.
+## ✨ Key Features
 
-### Infrastructure Graph Centrality
-When analyzing multiple emails (batch/campaign mode), HUNTERTRACE builds an infrastructure reuse graph and applies centrality metrics to identify shared attacker infrastructure — providing a **+9% accuracy boost**.
+- 🎯 Multi-Signal Attribution (8+ signals)
+- 🔓 VPN Bypass (webmail leaks, timezone)
+- 🕸️ Graph Analysis (infrastructure reuse)
+- 📊 Bayesian Fusion (probabilistic)
 
-### Bayesian Multi-Signal Fusion
-All signals are combined using likelihood ratios and Bayesian updating. The Adversarial Confidence Index (ACI) adjusts for evasion attempts, producing calibrated confidence tiers (0–4).
-
-### VPN Backtrack Analysis
-12 techniques to identify the real origin behind VPN/proxy layers, including ASN classification, exit node fingerprinting, and webmail header correlation.
-
-## Project Structure
-
-```
-huntertrace/
-├── core/           # Main pipeline + orchestrator
-├── extraction/     # IP extraction (basic, advanced, VPN backtrack, webmail)
-├── enrichment/     # Geolocation, WHOIS, hosting provider, IP classification
-├── attribution/    # Bayesian engine + evidence analysis
-├── analysis/       # Campaign correlator, sender classifier, actor profiler
-├── graph/          # Attack graph builder, centrality engine
-├── forensics/      # Header forensic scanner
-├── cli.py          # Command-line interface
-└── assets/         # HTML templates, logos
-```
-
-## Requirements
-
-- Python 3.8+
-- networkx >= 2.6
-- numpy >= 1.20
-- requests >= 2.25
-
-### Optional Dependencies
+## 🚀 Quick Start
 
 ```bash
-# Graph community detection (for campaign analysis)
-pip install huntertrace[graph]
+git clone https://github.com/akshaydotweb/HunterTrace.git
+cd HunterTrace
+pip install -r requirements.txt
 
-# WHOIS enrichment
-pip install huntertrace[whois]
-
-# Everything
-pip install huntertrace[all]
+# Analyze email
+python hunterTrace.py analyze phishing.eml
 ```
 
-## Documentation
+## 📖 Documentation
 
+- [Technical Summary](docs/HUNTERTRACE_Technical_Summary.md)
 - [Installation Guide](docs/INSTALLATION.md)
-- [Usage Guide](docs/USAGE.md)
-- [Changelog](CHANGELOG.md)
+- [API Documentation](docs/API.md)
 
-## Citation
+## 🔬 Evaluation
 
-If you use HUNTERTRACE in your research:
+**Dataset**: 53 labeled phishing emails  
+**Methodology**: Manual OSINT labeling with ground truth
+- Top-1 Country Accuracy: 52.8%
+- Top-1 Region Accuracy: 56.6%
+- 95% Confidence Interval: 39.7% – 65.6%
+- Webmail Leak Rate: 37.7%
+- Macro F1: 0.37
+
+See [evaluation/](evaluation/) for full results.
+
+## 🎓 Citation
 
 ```bibtex
 @software{huntertrace2026,
-  author = {Akshay V},
-  title = {HUNTERTRACE: Advanced Phishing Actor Attribution Using Multi-Signal Bayesian Inference},
+  author = {[Your Name]},
+  title = {HUNTERTRACE: Multi-Signal Phishing Attribution},
   year = {2026},
-  url = {https://github.com/akshaydotweb/huntertrace}
+  url = {https://github.com/akshaydotweb/HunterTrace}
 }
 ```
 
-## License
+## 📄 License
 
-MIT License — see [LICENSE](LICENSE)
+MIT License - See [LICENSE](LICENSE)
 
-## Disclaimer
+---
 
-This tool is intended for **legitimate security research, incident response, and law enforcement** use only. Always obtain proper authorization before analyzing emails. The authors are not responsible for misuse.
-
-## Contact
-
-- GitHub: [@akshaydotweb](https://github.com/akshaydotweb)
-- Email: akshayvmudaliar@gmail.com
+**Black Hat Arsenal 2026 Submission**
