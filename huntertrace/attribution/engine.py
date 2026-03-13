@@ -227,7 +227,10 @@ REGION_PRIORS: Dict[str, float] = {
     "Belarus":       0.0111,  # Linked to Russian cybercrime infrastructure
     "Kazakhstan":    0.0089,  # Kaspersky 2024 #4 spam origin (3.82%)
     "Bulgaria":      0.0078,  # Historical cybercrime (CardPlanet etc.)
-    "Other":         0.1389,  # Residual — all unlisted countries combined
+    "United Kingdom":0.0150,  # IC3 BEC origin; Europol IOCTA 2024; GMT timezone
+    "Germany":       0.0100,  # Europol IOCTA 2024; CET/CEST timezone fingerprint
+    "Venezuela":     0.0050,  # INTERPOL Americas 2024; distinct -0400 VET timezone
+    "Other":         0.1089,  # Residual — all unlisted (reduced from 0.1389)
 }
 
 # Timezone offset → candidate countries.
@@ -237,10 +240,10 @@ REGION_PRIORS: Dict[str, float] = {
 # Each list is ordered by prior probability (highest-prior attacker country first).
 # Source: standard UTC offset geography cross-referenced with REGION_PRIORS keys.
 TIMEZONE_COUNTRY_MAP: Dict[str, List[str]] = {
-    "+0000": ["Nigeria", "Ghana"],                              # UK/Ghana/Nigeria — track actors
-    "+0100": ["Romania", "Bulgaria", "Nigeria", "Ghana"],       # Central Europe + W.Africa
-    "+0200": ["Ukraine", "Romania", "South Africa"],            # E.Europe + S.Africa
-    "+0300": ["Russia", "Turkey", "Ukraine", "Belarus"],        # Moscow / Istanbul
+    "+0000": ["United Kingdom", "Nigeria", "Ghana"],        # GMT: UK winter + W.Africa
+    "+0100": ["Romania", "Bulgaria", "Germany", "Nigeria", "Ghana"],  # CET: C.Europe + W.Africa
+    "+0200": ["Ukraine", "Romania", "South Africa", "Germany"],       # EET/CEST: E.Europe + Germany summer
+    "+0300": ["Russia", "Turkey", "Ukraine", "Belarus"],
     "+0330": ["Iran"],
     "+0400": [],                                                # UAE/Gulf — not in priors
     "+0430": [],                                                # Afghanistan — not in priors
@@ -254,7 +257,7 @@ TIMEZONE_COUNTRY_MAP: Dict[str, List[str]] = {
     "+0900": [],                                                # Japan/South Korea — not in priors
     "+1000": [],                                                # Australia — not in priors
     "-0300": ["Brazil"],
-    "-0400": [],                                                # Venezuela/Bolivia — not in priors
+    "-0400": ["Venezuela"],                                     # VET — Venezuela standard time
     "-0500": ["United States"],
     "-0600": ["United States"],
     "-0700": ["United States"],
@@ -574,9 +577,9 @@ class SignalExtractor:
         tz_off = signals.get("timezone_offset")
         if tz_off:
             TZ_REGION_MAP = {
-                "+0000": "UTC / West Africa",
-                "+0100": "Central Europe / West Africa",
-                "+0200": "Eastern Europe / South Africa",
+                "+0000": "UTC / West Africa",           # UK (GMT), Nigeria, Ghana
+                "+0100": "Central Europe / West Africa", # Germany (CET), Romania, Nigeria
+                "+0200": "Eastern Europe / South Africa",# Ukraine, Romania, Germany (CEST)
                 "+0300": "Russia (Moscow) / East Africa",
                 "+0330": "Iran",
                 "+0400": "UAE / Caucasus",
@@ -589,7 +592,8 @@ class SignalExtractor:
                 "+0800": "China / Southeast Asia",
                 "+0900": "Japan / South Korea",
                 "+1000": "Australia (East)",
-                "-0300": "South America (East)",
+                "-0300": "Brazil / Argentina",
+                "-0400": "Venezuela / Chile",           # Venezuela standard time (VET)
                 "-0500": "US Eastern / South America",
                 "-0600": "US Central / Mexico",
                 "-0700": "US Mountain",
@@ -757,7 +761,7 @@ class BayesianUpdater:
                 "India":                          ["India"],
                 "Russia (Moscow) / East Africa":  ["Russia"],
                 "Russia":                         ["Russia"],
-                "Eastern Europe / South Africa":  ["Ukraine", "Romania", "South Africa"],
+                "Eastern Europe / South Africa":  ["Ukraine", "Romania", "South Africa", "Germany"],
                 "Nigeria":                        ["Nigeria"],
                 "Ghana":                          ["Ghana"],
                 "China / Southeast Asia":         ["China", "Vietnam", "Philippines"],
@@ -767,12 +771,16 @@ class BayesianUpdater:
                 "US Central / Mexico":            ["United States"],
                 "US Mountain":                    ["United States"],
                 "West Africa":                    ["Nigeria", "Ghana"],
-                "UTC / West Africa":              ["Nigeria", "Ghana"],
+                "UTC / West Africa":              ["United Kingdom", "Nigeria", "Ghana"],
+                "UTC":                            ["United Kingdom", "Nigeria", "Ghana"],
                 "Iran":                           ["Iran"],
                 "Pakistan / Central Asia":        ["Pakistan", "Kazakhstan"],
                 "Southeast Asia":                 ["Vietnam", "Indonesia", "Philippines"],
                 "South America (East)":           ["Brazil"],
-                "Central Europe / West Africa":   ["Romania", "Bulgaria", "Nigeria", "Ghana"],
+                "Brazil / Argentina":             ["Brazil"],
+                "Venezuela / Chile":              ["Venezuela"],
+                "Central Europe / West Africa":   ["Germany", "Romania", "Bulgaria", "Nigeria", "Ghana"],
+                "Central Europe":                 ["Germany", "Romania", "Bulgaria"],
             }
             for label, countries in region_to_countries.items():
                 if label.lower() in val.lower() or val.lower() in label.lower():

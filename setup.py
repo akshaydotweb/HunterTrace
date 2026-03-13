@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Setup script for HUNTЕРТRACE."""
+"""Setup script for HUNTЕRТRACE."""
 
 from setuptools import setup, find_packages
 from pathlib import Path
@@ -13,8 +13,8 @@ if version_file.exists():
 else:
     version = {
         '__title__': 'huntertrace',
-        '__version__': '1.0.0',
-        '__author__': 'HUNTЕРТRACE Contributors',
+        '__version__': '1.1.3',
+        '__author__': 'HUNTЕRТRACE Contributors',
         '__author_email__': 'akshayvmudaliar@gmail.com',
         '__description__': 'Advanced phishing actor attribution using Bayesian inference and graph analysis',
         '__url__': 'https://github.com/akshaydotweb/huntertrace',
