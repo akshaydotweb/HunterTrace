@@ -60,7 +60,7 @@ Signal Likelihood Model
 
 Integration with pipeline
 ──────────────────────────
-    from huntertrace.attribution.engine import AttributionEngine
+    from attributionEngine import AttributionEngine
 
     engine = AttributionEngine()
 
@@ -98,17 +98,77 @@ from collections import defaultdict
 # LR > 1 → signal supports region; LR < 1 → signal argues against.
 # Values estimated from the discriminatory power of each signal.
 SIGNAL_LIKELIHOOD_RATIOS: Dict[str, float] = {
-    "real_ip_country":     18.0,   # Webmail-leaked real IP — near-definitive
-    "geolocation_country": 12.0,   # Direct IP geolocation
-    "isp_country":          8.0,   # ISP registration country
-    "timezone_offset":      6.0,   # Narrows to ~3–5 countries
-    "timezone_region":      4.5,   # Labeled region ("India / Sri Lanka")
-    "vpn_exit_country":     2.5,   # VPN exit country (weaker — actor chose it)
-    "webmail_provider":     2.0,   # Language/region corroboration
-    "send_hour_local":      1.8,   # Working hours imply local timezone
-    "hop_pattern":          1.4,   # Network path latency hints
-    "subject_language":     1.3,   # Language of subject line
+    # Layer 1 — Active Bypass
+    # LR=25.0: captures real IP at document-open, bypasses VPN/Tor entirely.
+    "canarytoken_triggered": 25.0,
+    # Passive signals
+    "real_ip_country":       18.0,  # Webmail-leaked real IP
+    "geolocation_country":   12.0,  # Direct IP geolocation
+    "isp_country":            8.0,  # ISP registration country
+    "timezone_offset":        6.0,  # Narrows to 3-5 countries
+    "timezone_region":        4.5,  # Labeled region
+    "vpn_exit_country":       2.5,  # VPN exit (actor chose it)
+    "webmail_provider":       2.0,  # Language/region corroboration
+    "send_hour_local":        1.8,  # Working hours
+    "hop_pattern":            1.4,  # Network latency hints
+    "subject_language":       1.3,  # Subject language
 }
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  LAYER 5: SIGNAL SOURCE RELIABILITY
+# ─────────────────────────────────────────────────────────────────────────────
+# Reliability multipliers applied to LRs per obfuscation state.
+# 0.0 = signal excluded from Bayesian update entirely.
+# Basis: Prasad (2025) IP geo AUC 0.85->0.31 under VPN; timezone holds 0.74.
+SIGNAL_SOURCE_RELIABILITY: Dict[str, Dict[str, float]] = {
+    "no_obfuscation": {
+        "canarytoken_triggered": 1.00, "real_ip_country": 1.00,
+        "geolocation_country": 1.00,  "isp_country": 1.00,
+        "timezone_offset": 1.00,      "timezone_region": 1.00,
+        "vpn_exit_country": 1.00,     "webmail_provider": 1.00,
+        "send_hour_local": 1.00,      "hop_pattern": 1.00,
+        "subject_language": 1.00,
+    },
+    "vpn_detected": {
+        # IP signals point to VPN exit — exclude or down-weight
+        "canarytoken_triggered": 1.00,  # always reliable (bypasses VPN)
+        "real_ip_country":       1.00,  # webmail-leaked = real regardless
+        "geolocation_country":   0.00,  # VPN exit — exclude
+        "isp_country":           0.10,  # VPN provider ISP — near-useless
+        "vpn_exit_country":      0.00,  # actor chose this — exclude
+        # Behavioural signals survive VPN rotation
+        "timezone_offset":       1.20,  # boost: only 8.6% spoofed (Sheng 2009)
+        "timezone_region":       1.20,
+        "webmail_provider":      1.10,
+        "send_hour_local":       1.30,
+        "hop_pattern":           0.50,
+        "subject_language":      1.20,
+    },
+    "tor_detected": {
+        "canarytoken_triggered": 1.00, "real_ip_country": 1.00,
+        "geolocation_country":   0.00, "isp_country": 0.00,
+        "vpn_exit_country":      0.00,
+        "timezone_offset":       1.20, "timezone_region": 1.20,
+        "webmail_provider":      1.10, "send_hour_local": 1.30,
+        "hop_pattern":           0.20, "subject_language": 1.20,
+    },
+    "canarytoken_active": {
+        # Canarytoken fired — suppress conflicting passive IP signals
+        "canarytoken_triggered": 1.00, "real_ip_country": 1.00,
+        "geolocation_country":   0.30, "isp_country": 0.30,
+        "vpn_exit_country":      0.00,
+        "timezone_offset":       1.00, "timezone_region": 1.00,
+        "webmail_provider":      1.00, "send_hour_local": 1.00,
+        "hop_pattern":           1.00, "subject_language": 1.00,
+    },
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  LAYER 5: FALSE FLAG THRESHOLDS
+# ─────────────────────────────────────────────────────────────────────────────
+FALSE_FLAG_MIN_SIGNALS  = 3
+FALSE_FLAG_MIN_REGIONS  = 3
+FALSE_FLAG_CONFLICT_CAP = 0.45
 
 # Penalty factors per obfuscation layer (ACI computation)
 # Design constraint: sum ≤ 1.0 so the floor (0.05) is always reached before
@@ -128,143 +188,78 @@ ACI_LAYER_WEIGHTS: Dict[str, float] = {
     "datacenter":        0.08,
 }
 
-# Geographic prior — population-weighted base rate for phishing actors by region
-# (rough empirical priors; regions with higher phishing volumes have higher priors)
-# Flattened (max 0.055) so priors alone never dominate when signals are absent.
+# ─────────────────────────────────────────────────────────────────────────────
+# REGION_PRIORS — P(email originates from region | no other signals)
+#
+# Source 1: Kaspersky Securelist "Spam and Phishing in 2024" (Feb 2025)
+#   Russia 36.18%, China 17.11%, USA 8.40%, Kazakhstan 3.82%
+#   securelist.com/spam-and-phishing-report-2024/115536/
+#
+# Source 2: IC3 / FBI Internet Crime Report 2024
+#   BEC and phishing origin weighted to RU, CN, NG, PH, IN
+#
+# Source 3: Zscaler ThreatLabz Phishing Report 2025
+#   Brazil fastest growing; Turkey, Indonesia, Vietnam active
+#
+# Note: These are *attacker-origin* priors, not victim-country priors.
+#   Kaspersky raw figures include botnets (inflates RU/CN); values are
+#   blended and discounted to reflect human-actor origin.
+#   Normalized so all values sum exactly to 1.0.
+# ─────────────────────────────────────────────────────────────────────────────
 REGION_PRIORS: Dict[str, float] = {
-    # ── High-volume cybercrime sources (IC3 / ENISA data) ─────────────────
-    "Nigeria":           0.050,
-    "India":             0.048,
-    "Russia":            0.045,
-    "China":             0.043,
-    "United States":     0.042,
-    "Romania":           0.035,
-    "Brazil":            0.032,
-    "Ukraine":           0.030,
-    "United Kingdom":    0.030,
-    "Germany":           0.028,
-    "South Africa":      0.028,
-    "Ghana":             0.025,
-    "Pakistan":          0.022,
-    "Indonesia":         0.020,
-    "South Korea":       0.020,
-    "Vietnam":           0.018,
-    "France":            0.018,
-    "Philippines":       0.016,
-    "Turkey":            0.016,
-    "Netherlands":       0.016,
-    "Japan":             0.016,
-    "Iran":              0.015,
-    "Canada":            0.015,
-    "Bulgaria":          0.014,
-    "Australia":         0.014,
-    "Venezuela":         0.014,
-    "North Korea":       0.012,
-    "Ireland":           0.012,
-    "Israel":            0.012,
-    "Taiwan":            0.012,
-    "Belarus":           0.010,
-    "Singapore":         0.010,
-    # ── Additional countries for broader geolocation coverage ─────────────
-    "Poland":            0.012,
-    "Mexico":            0.012,
-    "Thailand":          0.012,
-    "Malaysia":          0.010,
-    "Argentina":         0.010,
-    "Colombia":          0.010,
-    "Egypt":             0.010,
-    "Spain":             0.010,
-    "Italy":             0.010,
-    "Sweden":            0.008,
-    "Czech Republic":    0.008,
-    "Hungary":           0.008,
-    "Chile":             0.008,
-    "Peru":              0.008,
-    "Portugal":          0.008,
-    "Denmark":           0.008,
-    "Norway":            0.008,
-    "Finland":           0.008,
-    "New Zealand":       0.008,
-    "Switzerland":       0.008,
-    "Austria":           0.008,
-    "Belgium":           0.008,
-    "Greece":            0.008,
-    "Saudi Arabia":      0.008,
-    "Bangladesh":        0.008,
-    "Sri Lanka":         0.008,
-    "Kenya":             0.008,
-    "Other":             0.072,
+    "Russia":        0.2222,  # Kaspersky 2024 #1 spam origin (36.18%)
+    "China":         0.1333,  # Kaspersky 2024 #2 (17.11%)
+    "United States": 0.0778,  # Kaspersky 2024 #3 (8.40%); large botnet share
+    "India":         0.0611,  # Kaspersky top-10; IC3 BEC; large internet population
+    "Brazil":        0.0500,  # Zscaler 2025: fastest-growing phishing origin
+    "Nigeria":       0.0444,  # IC3 BEC #1 Africa origin; INTERPOL Africa report
+    "Ukraine":       0.0389,  # Pre-conflict top-5; still active cybercrime
+    "Romania":       0.0333,  # Historically high; Europol cybercrime reports
+    "Pakistan":      0.0278,  # IC3 data; BEC; growing cybercrime ecosystem
+    "Iran":          0.0244,  # State-sponsored APT + criminal (MOIS, IRGC)
+    "North Korea":   0.0222,  # Lazarus Group; crypto theft campaigns
+    "Vietnam":       0.0200,  # Growing; OceanLotus/APT32 + criminal actors
+    "Indonesia":     0.0178,  # Large internet population; Kaspersky Q3 2024
+    "Turkey":        0.0167,  # Kaspersky malicious mail origin + target
+    "Philippines":   0.0156,  # BEC hotspot; IC3 data
+    "Ghana":         0.0144,  # West Africa fraud; INTERPOL AFRIPOL
+    "South Africa":  0.0133,  # Growing cybercrime; INTERPOL AFRIPOL
+    "Belarus":       0.0111,  # Linked to Russian cybercrime infrastructure
+    "Kazakhstan":    0.0089,  # Kaspersky 2024 #4 spam origin (3.82%)
+    "Bulgaria":      0.0078,  # Historical cybercrime (CardPlanet etc.)
+    "Other":         0.1389,  # Residual — all unlisted countries combined
 }
 
-# Default prior for countries not in REGION_PRIORS, injected dynamically
-# when a signal references an unknown country.
-DEFAULT_DYNAMIC_PRIOR = 0.010
-
-# Country name aliases — maps ISO codes, abbreviations, and common variants
-# to the canonical name used in REGION_PRIORS.
-COUNTRY_ALIASES: Dict[str, str] = {
-    # ISO 3166-1 alpha-2
-    "us": "United States", "gb": "United Kingdom", "uk": "United Kingdom",
-    "cn": "China", "ru": "Russia", "in": "India", "br": "Brazil",
-    "de": "Germany", "fr": "France", "jp": "Japan", "kr": "South Korea",
-    "au": "Australia", "ca": "Canada", "za": "South Africa",
-    "ng": "Nigeria", "gh": "Ghana", "pk": "Pakistan", "id": "Indonesia",
-    "vn": "Vietnam", "ph": "Philippines", "tr": "Turkey", "nl": "Netherlands",
-    "ir": "Iran", "bg": "Bulgaria", "ro": "Romania", "ua": "Ukraine",
-    "ve": "Venezuela", "kp": "North Korea", "ie": "Ireland", "il": "Israel",
-    "tw": "Taiwan", "by": "Belarus", "sg": "Singapore", "pl": "Poland",
-    "mx": "Mexico", "th": "Thailand", "my": "Malaysia", "ar": "Argentina",
-    "co": "Colombia", "eg": "Egypt", "es": "Spain", "it": "Italy",
-    "se": "Sweden", "cz": "Czech Republic", "hu": "Hungary",
-    "cl": "Chile", "pe": "Peru", "pt": "Portugal", "dk": "Denmark",
-    "no": "Norway", "fi": "Finland", "nz": "New Zealand",
-    "ch": "Switzerland", "at": "Austria", "be": "Belgium",
-    "gr": "Greece", "sa": "Saudi Arabia", "bd": "Bangladesh",
-    "lk": "Sri Lanka", "ke": "Kenya",
-    # Common name variants
-    "usa": "United States", "united states of america": "United States",
-    "great britain": "United Kingdom", "england": "United Kingdom",
-    "republic of korea": "South Korea", "korea, republic of": "South Korea",
-    "korea": "South Korea",
-    "russian federation": "Russia",
-    "türkiye": "Turkey", "turkiye": "Turkey",
-    "iran, islamic republic of": "Iran",
-    "taiwan, province of china": "Taiwan",
-    "hong kong": "China",
-    "czechia": "Czech Republic",
-    "the netherlands": "Netherlands",
-    "holland": "Netherlands",
-    "ivory coast": "Ghana",
-    "deutschland": "Germany",
-    "brasil": "Brazil",
-    "nippon": "Japan",
-}
-
-# Timezone offset → candidate countries (ordered by prior probability)
+# Timezone offset → candidate countries.
+# IMPORTANT: Only list countries that also appear in REGION_PRIORS.
+# Countries not in REGION_PRIORS are silently dropped by _get_matching_regions,
+# so listing them here only creates misleading penalty calculations for other regions.
+# Each list is ordered by prior probability (highest-prior attacker country first).
+# Source: standard UTC offset geography cross-referenced with REGION_PRIORS keys.
 TIMEZONE_COUNTRY_MAP: Dict[str, List[str]] = {
-    "+0000": ["United Kingdom", "Ireland", "Portugal", "Ghana", "Nigeria", "Senegal"],
-    "+0100": ["Germany", "France", "Poland", "Algeria", "Tunisia", "Romania", "Bulgaria"],
-    "+0200": ["Ukraine", "Romania", "South Africa", "Egypt", "Israel", "Finland"],
-    "+0300": ["Russia", "Turkey", "Saudi Arabia", "Iraq", "Kenya", "Ethiopia"],
+    "+0000": ["Nigeria", "Ghana"],                              # UK/Ghana/Nigeria — track actors
+    "+0100": ["Romania", "Bulgaria", "Nigeria", "Ghana"],       # Central Europe + W.Africa
+    "+0200": ["Ukraine", "Romania", "South Africa"],            # E.Europe + S.Africa
+    "+0300": ["Russia", "Turkey", "Ukraine", "Belarus"],        # Moscow / Istanbul
     "+0330": ["Iran"],
-    "+0400": ["UAE", "Azerbaijan", "Georgia", "Armenia", "Oman"],
-    "+0430": ["Afghanistan"],
-    "+0500": ["Pakistan", "Uzbekistan", "Kazakhstan"],
-    "+0530": ["India", "Sri Lanka"],
-    "+0545": ["Nepal"],
-    "+0600": ["Bangladesh", "Kazakhstan"],
-    "+0630": ["Myanmar"],
-    "+0700": ["Thailand", "Vietnam", "Indonesia", "Cambodia", "Laos"],
-    "+0800": ["China", "Philippines", "Singapore", "Malaysia", "Taiwan"],
-    "+0900": ["Japan", "South Korea"],
-    "+1000": ["Australia"],
-    "-0300": ["Brazil", "Argentina", "Chile"],
-    "-0400": ["Venezuela", "Chile", "Bolivia"],
-    "-0500": ["United States", "Canada", "Colombia", "Peru", "Ecuador"],
-    "-0600": ["United States", "Mexico"],
-    "-0700": ["United States", "Canada", "Mexico"],
-    "-0800": ["United States", "Canada"],
-    "-0500_EST": ["United States", "Canada", "Colombia"],
+    "+0400": [],                                                # UAE/Gulf — not in priors
+    "+0430": [],                                                # Afghanistan — not in priors
+    "+0500": ["Pakistan", "Kazakhstan"],
+    "+0530": ["India"],
+    "+0545": [],                                                # Nepal — not in priors
+    "+0600": ["Kazakhstan"],
+    "+0630": [],                                                # Myanmar — not in priors
+    "+0700": ["Vietnam", "Indonesia"],
+    "+0800": ["China", "Philippines"],
+    "+0900": [],                                                # Japan/South Korea — not in priors
+    "+1000": [],                                                # Australia — not in priors
+    "-0300": ["Brazil"],
+    "-0400": [],                                                # Venezuela/Bolivia — not in priors
+    "-0500": ["United States"],
+    "-0600": ["United States"],
+    "-0700": ["United States"],
+    "-0800": ["United States"],
+    "-1000": [],                                                # Hawaii — not in priors
 }
 
 # Confidence tier thresholds (applied AFTER ACI adjustment)
@@ -343,14 +338,29 @@ class AttributionResult:
     timestamp:          str
     is_campaign_level:  bool = False
 
+    # Layer 5: False flag detection
+    false_flag_warning:  bool       = False
+    conflict_score:      float      = 0.0
+    conflicting_signals: List[str]  = field(default_factory=list)
+    conflict_regions:    List[str]  = field(default_factory=list)
+
+    # Layer 1: Canarytoken
+    canarytoken_active:  bool  = False
+    reliability_mode:    str   = "no_obfuscation"
+
     def summary(self) -> str:
         """One-line human summary."""
         conf_pct = int(self.aci_adjusted_prob * 100)
+        tags = ""
+        if self.canarytoken_active:
+            tags += "  [CANARY]"
+        if self.false_flag_warning:
+            tags += "  [FALSE FLAG?]"
         return (
             f"Tier {self.tier} ({self.tier_label}) | "
             f"{self.primary_region} ({conf_pct}% ACI-adjusted) | "
             f"ACI={self.aci.final_aci:.2f} | "
-            f"{self.n_observations} observation(s)"
+            f"{self.n_observations} observation(s){tags}"
         )
 
     def analyst_brief(self) -> str:
@@ -410,11 +420,17 @@ class AttributionResult:
                  "signals": r.supporting_signals}
                 for r in self.posterior[:10]
             ],
-            "signals_used":     self.signals_used,
-            "signals_missing":  self.signals_missing,
-            "n_observations":   self.n_observations,
-            "is_campaign_level":self.is_campaign_level,
-            "timestamp":        self.timestamp,
+            "signals_used":        self.signals_used,
+            "signals_missing":     self.signals_missing,
+            "n_observations":      self.n_observations,
+            "is_campaign_level":   self.is_campaign_level,
+            "timestamp":           self.timestamp,
+            "false_flag_warning":  self.false_flag_warning,
+            "conflict_score":      round(self.conflict_score, 3),
+            "conflicting_signals": self.conflicting_signals,
+            "conflict_regions":    self.conflict_regions,
+            "canarytoken_active":  self.canarytoken_active,
+            "reliability_mode":    self.reliability_mode,
         }
 
 
@@ -524,32 +540,33 @@ class SignalExtractor:
                 signals["vpn_exit_country"] = origin_geo.country
 
         # ── WHOIS/ASN country ─────────────────────────────────────────────
-        # BUG FIX (R2): Skip IPs whose classification is MAIL_RELAY —
-        # their country is the relay's country, not the actor's ISP country.
         for ip, enr in enc.items():
-            cls_str = getattr(enr, "classification", "") or ""
-            if "MAIL_RELAY" in str(cls_str).upper() or "LEGITIMATE_RELAY" in str(cls_str).upper():
-                continue
             wd = getattr(enr, "whois_data", None)
             if wd and getattr(wd, "country", None):
                 signals["isp_country"] = wd.country
-                break
+                break   # Take first available
 
         # ── Timezone offset ───────────────────────────────────────────────
+        # Handles both RFC 2822 (+0530) and ISO 8601 (+05:30) formats.
+        # Normalizes to "+HHMM" for TIMEZONE_COUNTRY_MAP lookup.
         if ha and getattr(ha, "email_date", None):
             import re
-            tz_match = re.search(r"([+-]\d{4})", str(ha.email_date))
+            tz_match = re.search(r"([+-]\d{2}:?\d{2})", str(ha.email_date))
             if tz_match:
-                signals["timezone_offset"] = tz_match.group(1)
+                signals["timezone_offset"] = tz_match.group(1).replace(":", "")
 
         # ── Webmail provider ──────────────────────────────────────────────
         if we and getattr(we, "provider_name", None):
             signals["webmail_provider"] = we.provider_name
 
         # ── Send hour ─────────────────────────────────────────────────────
+        # Handles both ISO 8601 "T19:51" and RFC 2822 "19:51:57 +0530".
         if ha and getattr(ha, "email_date", None):
             import re
-            hour_match = re.search(r"T(\d{2}):", str(ha.email_date))
+            date_str = str(ha.email_date)
+            hour_match = re.search(r"T(\d{2}):", date_str)          # ISO 8601
+            if not hour_match:
+                hour_match = re.search(r"\b(\d{2}):\d{2}:\d{2}\b", date_str)  # RFC 2822
             if hour_match:
                 signals["send_hour_local"] = int(hour_match.group(1))
 
@@ -581,19 +598,6 @@ class SignalExtractor:
             if tz_off in TZ_REGION_MAP:
                 signals["timezone_region"] = TZ_REGION_MAP[tz_off]
 
-        # ── VPN backtrack country override ────────────────────────────────
-        # When VPN is detected and backtracking inferred a real country
-        # (from timezone / behavioral / DNS-leak signals), use it as the
-        # authoritative real_ip_country instead of the VPN exit IP's geo.
-        if bt and obfuscation["vpn"] and getattr(bt, "probable_country", None):
-            bt_country = bt.probable_country
-            signals["real_ip_country"] = bt_country
-            # geolocation_country from the VPN exit IP just mirrors the
-            # exit node — override it so both point to the inferred origin.
-            if ("geolocation_country" in signals
-                    and signals.get("vpn_exit_country") == signals["geolocation_country"]):
-                signals["geolocation_country"] = bt_country
-
         return signals, obfuscation
 
 
@@ -624,7 +628,8 @@ class BayesianUpdater:
         self,
         signals: Dict[str, Any],
         existing_log_odds: Dict[str, float] = None,
-    ) -> Tuple[List[RegionProbability], Dict[str, float], List[str], List[str], bool]:
+        effective_lrs: Dict[str, float] = None,
+    ) -> Tuple[List[RegionProbability], Dict[str, float], List[str], List[str]]:
         """
         Perform one Bayesian update step.
 
@@ -634,12 +639,12 @@ class BayesianUpdater:
                                (for longitudinal accumulation)
 
         Returns:
-            posterior      — sorted list of RegionProbability
-            log_odds       — updated log-odds dict (for next call)
-            used_signals   — signals that contributed
-            missing        — signals not present
-            any_matched    — True if at least one signal actually matched a region
+            posterior    — sorted list of RegionProbability
+            log_odds     — updated log-odds dict (for next call)
+            used_signals — signals that contributed
+            missing      — signals not present
         """
+        lrs = effective_lrs if effective_lrs is not None else SIGNAL_LIKELIHOOD_RATIOS
         # Initialise from prior or from accumulated log-odds
         log_odds: Dict[str, float] = {}
         if existing_log_odds:
@@ -654,53 +659,48 @@ class BayesianUpdater:
                     log_odds[region] = -5.0
 
         used_signals:    List[str] = []
-        missing_signals: List[str] = list(SIGNAL_LIKELIHOOD_RATIOS.keys())
-        any_region_matched: bool   = False
+        missing_signals: List[str] = list(lrs.keys())
 
         # ── Process each signal ───────────────────────────────────────────
         for sig_name, sig_value in signals.items():
-            if sig_name not in SIGNAL_LIKELIHOOD_RATIOS:
+            if sig_name not in lrs:
+                continue
+            lr_base = lrs[sig_name]
+            if lr_base == 0.0:  # zero-weighted by reliability weighting
+                if sig_name in missing_signals:
+                    missing_signals.remove(sig_name)
                 continue
             if sig_name in missing_signals:
                 missing_signals.remove(sig_name)
-
-            lr_base = SIGNAL_LIKELIHOOD_RATIOS[sig_name]
             matched_regions = self._get_matching_regions(sig_name, sig_value)
-
-            if matched_regions:
-                any_region_matched = True
-                # Ensure dynamically injected countries have log-odds initialised
-                for mr in matched_regions:
-                    if mr not in log_odds:
-                        other_p = self._priors.get("Other", 0.1)
-                        mr_prior = self._priors.get(mr, DEFAULT_DYNAMIC_PRIOR)
-                        log_odds[mr] = math.log(mr_prior / other_p) if other_p > 0 else -5.0
-
             used_signals.append(sig_name)
 
             for region in list(log_odds.keys()):
                 if region in matched_regions:
-                    # Signal supports this region
+                    # Signal supports this region — Bayesian boost
                     log_odds[region] += math.log(lr_base)
-                elif matched_regions:
-                    # Signal exists but names a different region — mild penalty
-                    # (not a hard contradiction — many signals have ambiguity)
+                elif matched_regions and region != "Other":
+                    # Signal names a different specific region — mild penalty.
+                    # "Other" is excluded: it is a catch-all that contains
+                    # every country including the matched one, so penalizing
+                    # it when a signal points to India would be wrong.
                     log_odds[region] += math.log(max(0.3, 1.0 / lr_base))
 
         # ── Combined send_hour + timezone boost ───────────────────────────
-        # If we have both a timezone_offset AND a send_hour_local in working
-        # hours (08:00–17:59), the combination is stronger evidence than each
-        # signal alone. We apply a small additional boost to timezone-matched
-        # regions to reward this cross-signal corroboration.
+        # If we have both timezone_offset AND send_hour_local in active
+        # working hours (08:00–21:59 local), the combination gives stronger
+        # geographic evidence than each signal alone.
+        # Extended to 08-21 because many attacker regions (IN/PK/NG) work
+        # into the evening. We apply a mild boost to timezone-matched regions.
         tz_off   = signals.get("timezone_offset")
         send_hr  = signals.get("send_hour_local")
         if tz_off and send_hr is not None:
-            tz_regions = TIMEZONE_COUNTRY_MAP.get(tz_off, [])
-            if tz_regions and 8 <= int(send_hr) <= 17:
-                # Working hours in the claimed timezone — small additional boost
+            tz_regions = [c for c in TIMEZONE_COUNTRY_MAP.get(tz_off, [])
+                          if c in self._priors]
+            if tz_regions and 8 <= int(send_hr) <= 21:
                 for region in tz_regions:
                     if region in log_odds:
-                        log_odds[region] += math.log(1.25)  # +25% odds (subtle)
+                        log_odds[region] += math.log(1.3)  # +30% odds
 
         # ── Normalise to probabilities ────────────────────────────────────
         # Softmax over log-odds
@@ -724,46 +724,7 @@ class BayesianUpdater:
                 supporting_signals = supporting,
             ))
 
-        return posterior, log_odds, used_signals, missing_signals, any_region_matched
-
-    def _normalize_country(self, val: str) -> Optional[str]:
-        """
-        Resolve a country name/code to the canonical key in self._priors.
-        Returns None if no match is found even after alias lookup.
-        """
-        v = val.strip()
-        v_lower = v.lower()
-
-        # 1. Exact (case-insensitive) match against priors
-        for region in self._priors:
-            if region.lower() == v_lower:
-                return region
-
-        # 2. Alias lookup BEFORE substring (avoids "DE" matching "sweDEn")
-        if v_lower in COUNTRY_ALIASES:
-            alias_target = COUNTRY_ALIASES[v_lower]
-            if alias_target not in self._priors:
-                self._priors[alias_target] = DEFAULT_DYNAMIC_PRIOR
-            return alias_target
-
-        # 3. Substring match only for longer names (>= 4 chars) to avoid
-        #    false positives like "DE" in "sweDEn"
-        if len(v) >= 4:
-            for region in self._priors:
-                if region.lower() in v_lower or v_lower in region.lower():
-                    return region
-
-        return None
-
-    def _inject_country(self, country_name: str) -> str:
-        """
-        Ensure a country exists in self._priors.  If it's missing, inject it
-        with DEFAULT_DYNAMIC_PRIOR so the Bayesian updater can accumulate
-        evidence for it.  Returns the canonical name.
-        """
-        if country_name not in self._priors:
-            self._priors[country_name] = DEFAULT_DYNAMIC_PRIOR
-        return country_name
+        return posterior, log_odds, used_signals, missing_signals
 
     def _get_matching_regions(self, signal_name: str, value: Any) -> List[str]:
         """
@@ -777,63 +738,45 @@ class BayesianUpdater:
 
         if signal_name in ("real_ip_country", "geolocation_country",
                            "isp_country", "vpn_exit_country"):
-            # Try canonical matching first, then alias, then dynamic inject
-            canonical = self._normalize_country(val)
-            if canonical:
-                return [canonical]
-            # Country not recognised by any alias — inject it dynamically
-            # so the geolocation evidence is never silently discarded.
-            if val and val.lower() not in ("", "unknown", "none", "other"):
-                injected = self._inject_country(val)
-                return [injected]
+            # Direct country name — look for it in our priors
+            for region in self._priors:
+                if region.lower() in val.lower() or val.lower() in region.lower():
+                    return [region]
+            # Unmapped country — still useful as "not Other"
             return []
 
         if signal_name == "timezone_offset":
-            return TIMEZONE_COUNTRY_MAP.get(val, [])
+            # Filter to only countries tracked in our priors dict
+            candidates = TIMEZONE_COUNTRY_MAP.get(val, [])
+            return [c for c in candidates if c in self._priors]
 
         if signal_name == "timezone_region":
-            # Map region labels to countries
+            # Map region labels → candidate countries (filtered to priors)
             region_to_countries = {
                 "India / Sri Lanka":              ["India"],
                 "India":                          ["India"],
-                "Russia (Moscow) / East Africa":  ["Russia", "Kenya"],
+                "Russia (Moscow) / East Africa":  ["Russia"],
                 "Russia":                         ["Russia"],
                 "Eastern Europe / South Africa":  ["Ukraine", "Romania", "South Africa"],
                 "Nigeria":                        ["Nigeria"],
+                "Ghana":                          ["Ghana"],
                 "China / Southeast Asia":         ["China", "Vietnam", "Philippines"],
                 "China":                          ["China"],
                 "US Eastern":                     ["United States"],
                 "US Pacific":                     ["United States"],
-                "US Central":                     ["United States"],
+                "US Central / Mexico":            ["United States"],
                 "US Mountain":                    ["United States"],
                 "West Africa":                    ["Nigeria", "Ghana"],
-                "UTC / West Africa":              ["United Kingdom", "Nigeria", "Ghana"],
-                "UTC":                            ["United Kingdom", "Ireland", "Portugal"],
+                "UTC / West Africa":              ["Nigeria", "Ghana"],
                 "Iran":                           ["Iran"],
-                "Pakistan / Central Asia":        ["Pakistan"],
-                "Bangladesh":                     ["Bangladesh"],
+                "Pakistan / Central Asia":        ["Pakistan", "Kazakhstan"],
                 "Southeast Asia":                 ["Vietnam", "Indonesia", "Philippines"],
                 "South America (East)":           ["Brazil"],
-                "Central Europe / West Africa":   ["Germany", "France", "Netherlands",
-                                                   "Nigeria", "Ghana"],
-                # BUG FIX (R3): These region labels existed in the TZ_REGION_MAP
-                # (produced by actorProfiler) but had no entry here, so the
-                # timezone_region signal was silently dropped for these actors.
-                "Venezuela / Chile":              ["Venezuela", "Chile", "Bolivia"],
-                "Japan / South Korea":            ["Japan", "South Korea"],
-                "Israel / Eastern Europe":        ["Israel", "Ukraine", "Romania"],
-                "Israel":                         ["Israel"],
-                "Australia / Pacific":            ["Australia", "New Zealand"],
-                "UK / West Africa":               ["United Kingdom", "Ireland", "Ghana"],
-                "South America (West)":           ["Peru", "Colombia", "Ecuador"],
-                "Canada / Eastern US":            ["Canada", "United States"],
-                "South Africa / Eastern Europe":  ["South Africa", "Ukraine", "Romania"],
-                "Singapore / Malaysia":           ["Singapore", "Malaysia"],
-                "Taiwan / China":                 ["Taiwan", "China"],
+                "Central Europe / West Africa":   ["Romania", "Bulgaria", "Nigeria", "Ghana"],
             }
             for label, countries in region_to_countries.items():
                 if label.lower() in val.lower() or val.lower() in label.lower():
-                    return countries
+                    return [c for c in countries if c in self._priors]
             return []
 
         if signal_name == "webmail_provider":
@@ -967,6 +910,148 @@ class TierAssigner:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  LAYER 5: FALSE FLAG DETECTOR
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class FalseFlagResult:
+    """
+    Result of false-flag conflict analysis.
+    Triggered when 3+ signals each point to different regions — consistent
+    with deliberate signal-planting, not genuine single-actor attribution.
+    """
+    false_flag_detected:  bool
+    conflict_score:       float
+    conflicting_signals:  List[str]
+    conflict_regions:     List[str]
+    confidence_cap:       float
+    detail:               str
+
+
+class FalseFlagDetector:
+    """
+    Detects deliberate false-flag geographic signal planting.
+
+    Algorithm:
+      1. Extract country each signal most directly supports
+      2. If >= MIN_SIGNALS signals exist pointing to >= MIN_REGIONS distinct
+         countries -> CONFLICTED
+      3. conflict_score = (n_distinct - 1) / (n_signals - 1)
+
+    Known confusion pairs NOT treated as conflicts:
+      CN/TW/HK, RU/UA/BY/KZ, IN/PK/BD/LK, US/CA/AU/GB, NG/GH/SN,
+      SA/AE/EG/JO, DE/AT/CH, FR/BE/LU
+    """
+
+    CONFUSION_GROUPS: List[frozenset] = [
+        frozenset({"China", "Taiwan", "Hong Kong"}),
+        frozenset({"Russia", "Ukraine", "Belarus", "Kazakhstan"}),
+        frozenset({"India", "Pakistan", "Bangladesh", "Sri Lanka"}),
+        frozenset({"United States", "Canada", "Australia", "United Kingdom"}),
+        frozenset({"Nigeria", "Ghana", "Senegal"}),
+        frozenset({"Saudi Arabia", "UAE", "Egypt", "Jordan"}),
+        frozenset({"Germany", "Austria", "Switzerland"}),
+        frozenset({"France", "Belgium", "Luxembourg"}),
+    ]
+
+    def detect(
+        self,
+        signals:      Dict[str, Any],
+        posterior:    List[RegionProbability],
+        used_signals: List[str],
+    ) -> FalseFlagResult:
+        signal_region: Dict[str, str] = {}
+        country_sigs = {
+            "real_ip_country", "geolocation_country", "isp_country",
+            "vpn_exit_country", "canarytoken_triggered",
+        }
+        for sig in used_signals:
+            val = signals.get(sig, "")
+            if not val:
+                continue
+            if sig in country_sigs:
+                signal_region[sig] = str(val)
+            elif sig == "timezone_offset":
+                countries = [c for c in TIMEZONE_COUNTRY_MAP.get(str(val), [])
+                             if c in REGION_PRIORS]
+                if countries:
+                    signal_region[sig] = countries[0]
+            elif sig == "timezone_region" and posterior:
+                signal_region[sig] = posterior[0].region
+
+        n_signals = len(signal_region)
+        if n_signals < FALSE_FLAG_MIN_SIGNALS:
+            return FalseFlagResult(
+                false_flag_detected=False, conflict_score=0.0,
+                conflicting_signals=[], conflict_regions=[],
+                confidence_cap=1.0,
+                detail=f"Only {n_signals} mappable signals — skipping",
+            )
+
+        distinct: Dict[str, List[str]] = {}
+        for sig, region in signal_region.items():
+            canonical = self._canonicalise(region)
+            distinct.setdefault(canonical, []).append(sig)
+
+        n_distinct = len(distinct)
+        if n_distinct < FALSE_FLAG_MIN_REGIONS:
+            return FalseFlagResult(
+                false_flag_detected=False, conflict_score=0.0,
+                conflicting_signals=[], conflict_regions=[],
+                confidence_cap=1.0,
+                detail=f"{n_signals} signals, {n_distinct} region(s) — consistent",
+            )
+
+        score = (n_distinct - 1) / max(n_signals - 1, 1)
+        return FalseFlagResult(
+            false_flag_detected=True,
+            conflict_score=round(score, 3),
+            conflicting_signals=list(signal_region.keys()),
+            conflict_regions=list(distinct.keys()),
+            confidence_cap=FALSE_FLAG_CONFLICT_CAP,
+            detail=(
+                f"{n_signals} signals -> {n_distinct} distinct regions "
+                f"(conflict_score={score:.2f}). Possible false-flag planting. "
+                f"Confidence capped at {FALSE_FLAG_CONFLICT_CAP:.0%}."
+            ),
+        )
+
+    def _canonicalise(self, region: str) -> str:
+        for group in self.CONFUSION_GROUPS:
+            if region in group:
+                return "|".join(sorted(group))
+        return region
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  LAYER 5: SIGNAL RELIABILITY WEIGHTER
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SignalReliabilityWeighter:
+    """Returns per-signal effective LRs adjusted for current obfuscation state."""
+
+    def get_reliability_mode(
+        self, obfuscation: Dict[str, bool], signals: Dict[str, Any]
+    ) -> str:
+        if "canarytoken_triggered" in signals:
+            return "canarytoken_active"
+        if obfuscation.get("tor", False):
+            return "tor_detected"
+        if obfuscation.get("vpn", False):
+            return "vpn_detected"
+        return "no_obfuscation"
+
+    def get_effective_lrs(self, mode: str) -> Dict[str, float]:
+        rel = SIGNAL_SOURCE_RELIABILITY.get(
+            mode, SIGNAL_SOURCE_RELIABILITY["no_obfuscation"]
+        )
+        return {
+            sig: base * rel.get(sig, 1.0)
+            for sig, base in SIGNAL_LIKELIHOOD_RATIOS.items()
+        }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  MAIN ENGINE
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -990,11 +1075,13 @@ class AttributionEngine:
     """
 
     def __init__(self, verbose: bool = False):
-        self.verbose   = verbose
-        self._extractor = SignalExtractor()
-        self._updater   = BayesianUpdater()
-        self._aci_calc  = ACICalculator()
-        self._tier      = TierAssigner()
+        self.verbose      = verbose
+        self._extractor   = SignalExtractor()
+        self._updater     = BayesianUpdater()
+        self._aci_calc    = ACICalculator()
+        self._tier        = TierAssigner()
+        self._ff_detector  = FalseFlagDetector()          # Layer 5
+        self._reliability  = SignalReliabilityWeighter()  # Layer 5
 
         # Campaign state: actor_id → accumulated evidence
         self._campaigns: Dict[str, Dict] = defaultdict(lambda: {
@@ -1022,11 +1109,45 @@ class AttributionEngine:
                   f"{[k for k,v in obfuscation.items() if v]}")
 
         return self._compute_result(
-            signals       = signals,
-            obfuscation   = obfuscation,
-            log_odds_seed = None,
-            n_obs         = 1,
-            is_campaign   = False,
+            signals            = signals,
+            obfuscation        = obfuscation,
+            log_odds_seed      = None,
+            n_obs              = 1,
+            is_campaign        = False,
+        )
+
+    def attribute_with_canarytoken(
+        self,
+        pipeline_result,
+        canarytoken_result,
+    ) -> "AttributionResult":
+        """
+        Attribution with triggered canarytoken injected as weight-25 signal.
+        Bypasses all VPN/Tor — the real IP captured at document-open dominates.
+
+        Parameters
+        ----------
+        pipeline_result   : CompletePipelineResult from standard pipeline
+        canarytoken_result: CanarytokenResult with triggered=True
+        """
+        signals, obfuscation = self._extractor.extract(pipeline_result)
+
+        if getattr(canarytoken_result, "triggered", False):
+            country = getattr(canarytoken_result, "real_ip_country", None)
+            if country:
+                signals["canarytoken_triggered"] = country
+                signals["real_ip_country"]       = country
+            if self.verbose:
+                print(f"[Engine] Canarytoken: {country} "
+                      f"(IP: {getattr(canarytoken_result, 'real_ip', '?')})")
+
+        return self._compute_result(
+            signals            = signals,
+            obfuscation        = obfuscation,
+            log_odds_seed      = None,
+            n_obs              = 1,
+            is_campaign        = False,
+            canarytoken_active = "canarytoken_triggered" in signals,
         )
 
     # ─────────────────────────────────────────────────────────────────────
@@ -1046,7 +1167,7 @@ class AttributionEngine:
         state["all_obfuscation"].append(obfuscation)
 
         # Bayesian update — pass existing log-odds as seed
-        posterior, new_log_odds, used, _, _ = self._updater.update(
+        posterior, new_log_odds, used, _ = self._updater.update(
             signals       = signals,
             existing_log_odds = state["log_odds"],
         )
@@ -1098,7 +1219,7 @@ class AttributionEngine:
         state["all_signals"].append(signals)
         state["all_obfuscation"].append(obfuscation)
 
-        _, new_log_odds, used, _, _ = self._updater.update(
+        _, new_log_odds, used, _ = self._updater.update(
             signals           = signals,
             existing_log_odds = state["log_odds"],
         )
@@ -1155,14 +1276,12 @@ class AttributionEngine:
         self,
         profile,     # ActorTTPProfile from actorProfiler
         geo_map: Dict = None,
-        enrichment_map: Dict = None,
     ) -> AttributionResult:
         """
         Derive attribution directly from an ActorTTPProfile.
         Used as the final step in the v3 pipeline after campaign correlation.
         """
         geo_map  = geo_map or {}
-        enc      = enrichment_map or {}
         signals: Dict[str, Any]  = {}
         obfuscation: Dict[str, bool] = {k: False for k in ACI_LAYER_WEIGHTS}
 
@@ -1176,128 +1295,31 @@ class AttributionEngine:
         if t.likely_country:
             signals["geolocation_country"] = t.likely_country
 
-        # BUG FIX: ISPs and email MTAs (Yahoo, Azure, CenturyLink etc.) were
-        # incorrectly triggering obfuscation["vpn"] = True here. We now check
-        # against the same whitelist used by _check_vpn_provider().
-        _MAIL_ISP_WHITELIST_TERMS = {
-            "yahoo", "oath inc", "microsoft", "hotmail", "google",
-            "centurylink", "lumen", "qwest", "windstream", "comcast",
-            "at&t", "verizon", "cox", "charter", "internap",
-            "va software", "national informatics", "nic.in",
-        }
-        real_vpn_providers = []
-        _has_relay_providers = False
         if i.vpn_providers:
-            for prov in i.vpn_providers:
-                prov_lower = (prov or "").lower()
-                if any(term in prov_lower for term in _MAIL_ISP_WHITELIST_TERMS):
-                    _has_relay_providers = True
-                else:
-                    real_vpn_providers.append(prov)
-        if real_vpn_providers:
             obfuscation["vpn"] = True
-        # FIX (R2 ECE): For relay-infrastructure actors, apply a mild residual
-        # uncertainty flag instead of full VPN penalty. These actors route via
-        # mail relays — we know they're not VPNs, but we also can't confirm
-        # their exact country with the same confidence as a direct-IP actor.
-        # timestamp_spoof penalty = −0.30 ACI, giving ACI ≈ 0.70 instead of
-        # 1.00 (full confidence) or 0.85 (false VPN). This is calibrated:
-        # relay actors are harder to attribute precisely than direct-IP actors.
-        if _has_relay_providers and not real_vpn_providers:
-            obfuscation["timestamp_spoof"] = True
         if i.primary_webmail:
             signals["webmail_provider"] = i.primary_webmail
 
         if i.origin_ips:
             for ip in i.origin_ips:
-                if ip not in geo_map:
-                    continue
-                # FIX (R2): For relay-infrastructure actors, the origin_ip IS
-                # the relay — geolocating it gives the relay's country (e.g. US
-                # for Comcast), not the actor's country. real_ip_country has
-                # LR=12.0, the highest of any signal, so this wrong value
-                # catastrophically overrides all other correct signals.
-                # For relay actors, we rely on geolocation_country (from
-                # t.likely_country, which actorProfiler set from timezone+other
-                # signals) rather than from the raw relay IP geolocation.
-                if _has_relay_providers and not real_vpn_providers:
-                    break   # skip real_ip_country entirely for relay actors
-                geo = geo_map[ip]
-                if getattr(geo, "country", None):
-                    signals["real_ip_country"] = geo.country
-                    break
+                if ip in geo_map:
+                    geo = geo_map[ip]
+                    if getattr(geo, "country", None):
+                        signals["real_ip_country"] = geo.country
+                        break
 
         if i.opsec_score >= 70:
             obfuscation["datacenter"] = True
         if i.opsec_score >= 85:
             obfuscation["residential_proxy"] = True
 
-        # ── isp_country from geo_map ──────────────────────────────────────
-        # BUG FIX (R2): isp_country must ONLY be populated from the actor's
-        # real network connection IP — NOT from mail relay IPs (Yahoo MTAs,
-        # CenturyLink, Comcast etc.). Using a relay IP's country as isp_country
-        # injects a high-LR (8.0) wrong signal that overpowers correct signals.
-        #
-        # Example failure: ACTOR_020 origin_ip=24.98.25.152 (Comcast US).
-        # Actor is in UK (correct). Before this guard: isp_country='United States'
-        # (LR=8.0 wrong) + timezone=UTC/West Africa tipped posterior to Nigeria.
-        #
-        # Guard: skip any IP that would be whitelisted by _check_vpn_provider.
-        # These IPs belong to the relay infrastructure, not the actor's ISP.
-        _ISP_RELAY_TERMS = {
-            "yahoo", "oath", "microsoft", "hotmail", "google", "gmail",
-            "centurylink", "lumen", "qwest", "windstream", "comcast",
-            "at&t", "verizon", "cox", "charter", "internap",
-            "va software", "sourceforge", "national informatics", "nic.in",
-            "amazon", "amazonaws", "azure",  # cloud MTAs also apply
-        }
-        if not signals.get("isp_country") and i.origin_ips and not obfuscation["vpn"]:
-            for ip in i.origin_ips:
-                if ip not in geo_map:
-                    continue
-                # Check org name for this IP via geo_map or enrichment
-                _org = ""
-                _enr = enc.get(ip) if enc else None
-                if _enr:
-                    _wd = getattr(_enr, "whois_data", None)
-                    _org = (getattr(_wd, "organization", "") or "").lower()
-                # Skip if it looks like a relay
-                if any(term in _org for term in _ISP_RELAY_TERMS):
-                    continue
-                geo = geo_map[ip]
-                country = getattr(geo, "country", None)
-                if country and country not in ("", "Unknown", None):
-                    signals["isp_country"] = country
-                    break
-
-        # ── send_hour_local from fingerprints (was never passed through) ──
-        # BUG FIX: The profile path never extracted send_hour_local.
-        # We pull it from the cluster's consensus send window if available.
-        if not signals.get("send_hour_local"):
-            send_window = getattr(profile, "send_window", None) or \
-                          getattr(t, "send_window", None)
-            if send_window:
-                # send_window is e.g. "14:00–18:00 UTC+1"
-                import re as _re
-                _m = _re.match(r"(\d{1,2}):(\d{2})", str(send_window))
-                if _m:
-                    signals["send_hour_local"] = int(_m.group(1))
-
-        # ── subject_language from profile language field ───────────────────
-        # BUG FIX: subject_language signal was never populated in any path.
-        # ActorTTPProfile stores a language field if detected.
-        lang = getattr(profile, "language", None) or \
-               getattr(t, "language", None)
-        if lang and lang not in ("unknown", "", None):
-            signals["subject_language"] = lang
+        n_obs = profile.campaign_count
 
         # Longitudinal update using profile's campaign count to scale the
         # log-odds — more campaigns = evidence seen multiple times
-        n_obs = max(1, getattr(profile, "campaign_count", 0) or
-                       getattr(t, "campaign_count", 0) or 1)
         log_odds_seed = None
         for _ in range(n_obs):
-            _, log_odds_seed, _, _, _ = self._updater.update(
+            _, log_odds_seed, _, _ = self._updater.update(
                 signals           = signals,
                 existing_log_odds = log_odds_seed,
             )
@@ -1316,55 +1338,60 @@ class AttributionEngine:
 
     def _compute_result(
         self,
-        signals:       Dict[str, Any],
-        obfuscation:   Dict[str, bool],
-        log_odds_seed: Optional[Dict[str, float]],
-        n_obs:         int,
-        is_campaign:   bool,
-    ) -> AttributionResult:
+        signals:            Dict[str, Any],
+        obfuscation:        Dict[str, bool],
+        log_odds_seed:      Optional[Dict[str, float]],
+        n_obs:              int,
+        is_campaign:        bool,
+        canarytoken_active: bool = False,
+    ) -> "AttributionResult":
 
-        # Bayesian update (uses seed if provided)
-        posterior, log_odds, used_signals, missing, any_matched = self._updater.update(
+        # ── Layer 5: Signal reliability weighting ────────────────────────
+        reliability_mode = self._reliability.get_reliability_mode(obfuscation, signals)
+        effective_lrs    = self._reliability.get_effective_lrs(reliability_mode)
+
+        if self.verbose and reliability_mode != "no_obfuscation":
+            zeroed = [s for s, lr in effective_lrs.items() if lr == 0.0]
+            print(f"[Engine] Reliability mode: {reliability_mode}")
+            if zeroed:
+                print(f"[Engine] Zero-weighted: {zeroed}")
+
+        # Bayesian update with reliability-adjusted LRs
+        posterior, log_odds, used_signals, missing = self._updater.update(
             signals           = signals,
             existing_log_odds = log_odds_seed,
+            effective_lrs     = effective_lrs,
         )
 
         # ACI computation
         aci = self._aci_calc.compute(obfuscation)
 
-        # Top region
-        primary   = posterior[0] if posterior else RegionProbability(
+        primary  = posterior[0] if posterior else RegionProbability(
             region="Unknown", probability=0.0, prior=0.0, log_odds=0.0)
-        raw_prob  = primary.probability
+        raw_prob = primary.probability
 
-        # ACI adjustment
-        # CALIBRATION FIX: hard 0.95 cap caused conf_when_correct=0.95 always,
-        # making ECE equal to |0.95 - accuracy|. Replace with a signal-scaled
-        # cap: more independent signals = more confidence permitted.
-        # 1 signal → max 57%, 3 signals → max 72%, 5 signals → max 88%, cap 92%.
-        # This is epistemically correct: high confidence requires convergent evidence.
-        _n_sig = len(used_signals)
+        # Signal-scaled confidence cap: 1 signal->57%, 5 signals->88%, max 92%
+        _n_sig    = len(used_signals)
         _conf_cap = min(0.50 + _n_sig * 0.075, 0.92)
-        aci_adj   = min(raw_prob * aci.final_aci, _conf_cap)
 
-        # If no signals were used OR no signal actually identified a region,
-        # the posterior reflects only priors. Prior-only attribution is not
-        # meaningful — force tier 0 and label the primary region as Unknown.
-        if not used_signals or not any_matched:
+        # Canarytoken: raise cap to 97% (definitive evidence)
+        if canarytoken_active or "canarytoken_triggered" in signals:
+            _conf_cap          = 0.97
+            canarytoken_active = True
+
+        aci_adj = min(raw_prob * aci.final_aci, _conf_cap)
+        if not used_signals:
             aci_adj = 0.0
-            primary = RegionProbability(
-                region="Unknown", probability=0.0, prior=0.0, log_odds=0.0)
 
-        # Tier assignment
+        # ── Layer 5: False flag detection ────────────────────────────────
+        ff = self._ff_detector.detect(signals, posterior, used_signals)
+        if ff.false_flag_detected:
+            aci_adj = min(aci_adj, ff.confidence_cap)
+            if self.verbose:
+                print(f"[Engine] False flag: {ff.detail}")
+
         tier, tier_label, tier_desc = self._tier.assign(aci_adj)
-
-        # HDI
         hdi_lo, hdi_hi = self._tier.compute_hdi(posterior)
-
-        # signals_available = total possible signals the engine knows about,
-        # NOT the count of signals present in this observation.
-        # len(signals) would misleadingly read as "5 of 5 signals available"
-        # when only 5 out of 10 possible signals were extractable.
         total_possible = len(SIGNAL_LIKELIHOOD_RATIOS)
 
         return AttributionResult(
@@ -1384,8 +1411,13 @@ class AttributionEngine:
             n_observations      = n_obs,
             timestamp           = datetime.now().isoformat(),
             is_campaign_level   = is_campaign,
+            false_flag_warning  = ff.false_flag_detected,
+            conflict_score      = ff.conflict_score,
+            conflicting_signals = ff.conflicting_signals,
+            conflict_regions    = ff.conflict_regions,
+            canarytoken_active  = canarytoken_active,
+            reliability_mode    = reliability_mode,
         )
-
     def _empty_result(self) -> AttributionResult:
         aci = self._aci_calc.compute({k: False for k in ACI_LAYER_WEIGHTS})
         return AttributionResult(
@@ -1405,6 +1437,12 @@ class AttributionEngine:
             n_observations      = 0,
             timestamp           = datetime.now().isoformat(),
             is_campaign_level   = False,
+            false_flag_warning  = False,
+            conflict_score      = 0.0,
+            conflicting_signals = [],
+            conflict_regions    = [],
+            canarytoken_active  = False,
+            reliability_mode    = "no_obfuscation",
         )
 
     def reset_campaign(self, actor_id: str) -> None:
@@ -1454,7 +1492,7 @@ def integrate_with_v3(
 
     Wire into HunterTraceV3._run_v3_analysis() after step 2 (actor profiling):
 
-        from huntertrace.attribution.engine import integrate_with_v3
+        from attributionEngine import integrate_with_v3
         attribution_results = integrate_with_v3(
             self._report, self._profiles, verbose=self.verbose
         )

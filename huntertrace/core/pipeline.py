@@ -42,42 +42,42 @@ from pathlib import Path
 
 # Import live hosting keywords integration
 try:
-    from ..enrichment.hosting import get_hosting_keywords, classify_hosting_by_keywords
+    from huntertrace.enrichment.hosting import get_hosting_keywords, classify_hosting_by_keywords
     HOSTING_KEYWORDS_AVAILABLE = True
 except ImportError:
     HOSTING_KEYWORDS_AVAILABLE = False
 
 # Import geolocation enrichment module
 try:
-    from ..enrichment.geolocation import GeolocationEnricher, GeolocationData, format_coordinates, get_distance_between_points
+    from huntertrace.enrichment.geolocation import GeolocationEnricher, GeolocationData, format_coordinates, get_distance_between_points
     GEOLOCATION_AVAILABLE = True
 except ImportError:
     GEOLOCATION_AVAILABLE = False
 
 # Import Stage 5: Attribution Analysis
 try:
-    from ..attribution.analysis import AttributionAnalysisEngine, Stage5Attribution
+    from huntertrace.attribution.analysis import AttributionAnalysisEngine, Stage5Attribution
     STAGE5_AVAILABLE = True
 except ImportError:
     STAGE5_AVAILABLE = False
 
 # Import Real IP Extractor (VPN/Proxy bypass) - Basic version
 try:
-    from ..extraction.basic import RealIPExtractor, extract_real_ip_summary
+    from huntertrace.extraction.basic import RealIPExtractor, extract_real_ip_summary
     REAL_IP_EXTRACTOR_AVAILABLE = True
 except ImportError:
     REAL_IP_EXTRACTOR_AVAILABLE = False
 
 # Import Advanced Real IP Extractor (11+ techniques from research paper)
 try:
-    from ..extraction.advanced import AdvancedRealIPExtractor, extract_real_ip_summary as extract_real_ip_summary_advanced
+    from huntertrace.extraction.advanced import AdvancedRealIPExtractor, extract_real_ip_summary as extract_real_ip_summary_advanced
     ADVANCED_REAL_IP_EXTRACTOR_AVAILABLE = True
 except ImportError:
     ADVANCED_REAL_IP_EXTRACTOR_AVAILABLE = False
 
 # Import VPN Backtracking Analyzer (12 techniques to trace real IP through VPN)
 try:
-    from ..extraction.vpnBacktrack import RealIPBacktracker
+    from huntertrace.extraction.vpnBacktrack import RealIPBacktracker
     VPN_BACKTRACK_AVAILABLE = True
 except ImportError:
     VPN_BACKTRACK_AVAILABLE = False
@@ -88,7 +88,7 @@ except ImportError:
 
 # Graph Centrality Engine
 try:
-    from ..graph.centrality import (
+    from huntertrace.graph.centrality import (
         InfrastructureGraphAnalyzer,
         integrate_graph_boost_into_attribution
     )
@@ -98,24 +98,42 @@ except ImportError:
 
 # Bayesian Attribution Engine
 try:
-    from ..attribution.engine import AttributionEngine, AttributionResult
+    from huntertrace.attribution.engine import AttributionEngine, AttributionResult
     ATTRIBUTION_ENGINE_AVAILABLE = True
 except ImportError:
     ATTRIBUTION_ENGINE_AVAILABLE = False
 
-# Sender Classifier
-try:
-    from ..analysis.senderClassifier import classify_sender as _classify_sender
-    SENDER_CLASSIFIER_AVAILABLE = True
-except ImportError:
-    SENDER_CLASSIFIER_AVAILABLE = False
-
 # Webmail v2 Real IP Extractor
 try:
-    from ..extraction.webmail import run_webmail_extraction
+    from huntertrace.extraction.webmail import run_webmail_extraction
     WEBMAIL_V2_AVAILABLE = True
 except ImportError:
     WEBMAIL_V2_AVAILABLE = False
+
+# ── Layer 1: Campaign Urgency Classifier ─────────────────────────────────────
+try:
+    from huntertrace.core.urgency import (
+        CampaignUrgencyClassifier,
+        UrgencyResult,
+        classify_email_urgency,
+    )
+    URGENCY_AVAILABLE = True
+except ImportError:
+    URGENCY_AVAILABLE = False
+    UrgencyResult = None
+
+# ── Layer 1: Canarytoken Bait Generator ──────────────────────────────────────
+try:
+    from huntertrace.forensics.canaryToken import (
+        CanarytokenGenerator,
+        CanarytokenResult,
+        cli_bait,
+    )
+    CANARYTOKEN_AVAILABLE = True
+except ImportError:
+    CANARYTOKEN_AVAILABLE = False
+    CanarytokenResult = None
+    cli_bait = None
 
 
 # ============================================================================
@@ -152,7 +170,6 @@ class ReceivedChainAnalysis:
     spoofing_risk: float
     confidence: float
     red_flags: List[str]
-    extra_headers: Optional[Dict[str, str]] = None
 
 
 class HeaderExtractor:
@@ -162,7 +179,14 @@ class HeaderExtractor:
         self.patterns = {
             "ipv4_only": re.compile(r'\[(\d+\.\d+\.\d+\.\d+)\]|(?:^|\bfrom\s+)(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(?!\])', re.IGNORECASE),
             "ipv6_with_brackets": re.compile(r'\[([a-fA-F0-9:]+)\]', re.IGNORECASE),  # IPv6 in brackets
-            "ipv6_loose": re.compile(r'\b([a-fA-F0-9]{1,4}(?::[a-fA-F0-9]{1,4}){2,7})\b', re.IGNORECASE),  # IPv6 — requires >=3 segments
+            "ipv6_loose": re.compile(                                                   # IPv6 without brackets
+                r'\b('
+                r'(?:[a-fA-F0-9]{1,4}:){3,}[a-fA-F0-9]{0,4}'  # >= 3 colons (multi-segment)
+                r'|(?:[a-fA-F0-9]{1,4}:)*::(?:[a-fA-F0-9:]*)'   # contains :: (compressed)
+                r'|::[a-fA-F0-9:]+'                               # starts with ::
+                r')\b',
+                re.IGNORECASE
+            ),  # IPv6 without brackets
             "protocol": re.compile(r'with\s+(ESMTP|SMTP|HTTP|HTTPS|LMTP)', re.IGNORECASE),
             "by_clause": re.compile(r'by\s+(\S+)', re.IGNORECASE),
         }
@@ -268,19 +292,7 @@ class HeaderExtractor:
             headers_found=len(received_headers),
             spoofing_risk=min(1.0, spoofing_risk),
             confidence=1.0 - (spoofing_risk * 0.3),
-            red_flags=red_flags,
-            extra_headers={
-                'Received-SPF': msg.get('Received-SPF', '') or '',
-                'DKIM-Signature': msg.get('DKIM-Signature', '') or '',
-                'X-Originating-IP': msg.get('X-Originating-IP', '') or '',
-                'Authentication-Results': msg.get('Authentication-Results', '') or '',
-                'X-Mailer': msg.get('X-Mailer', '') or '',
-                'User-Agent': msg.get('User-Agent', '') or '',
-                'X-Sender-IP': msg.get('X-Sender-IP', '') or '',
-                'X-Originating-Client-IP': msg.get('X-Originating-Client-IP', '') or '',
-                'X-Priority': msg.get('X-Priority', '') or '',
-                'From': email_from,
-            },
+            red_flags=red_flags
         )
         
         return analysis
@@ -362,24 +374,33 @@ class HeaderExtractor:
         return bool(re.match(r'^\d+\.\d+\.\d+\.\d+$', address))
     
     def _is_valid_ipv6(self, address: str) -> bool:
-        """Validate IPv6 — explicitly rejects HH:MM:SS timestamps."""
-        if not address or address.count(':') < 2:
-            return False
-        # Reject timestamps: HH:MM:SS where all segments are <=2 decimal digits
-        segments = address.split(':')
-        if all(len(s) <= 2 and s.isdigit() for s in segments if s):
+        """
+        Validate IPv6 address format.
+        Rejects timestamps (HH:MM:SS) which match the loose hex+colon pattern.
+
+        Rules:
+          - Must contain at least one colon
+          - All chars must be hex or colon
+          - Must NOT be a pure timestamp (DD:DD:DD where all segments are
+            exactly 2 decimal digits) — e.g. '06:21:58' is NOT IPv6
+          - Must have either >= 3 colons (multi-segment), or contain '::'
+            (compressed notation), or have at least one segment > 2 chars
+        """
+        address = address.strip()
+        if ':' not in address:
             return False
         if not all(c in '0123456789abcdefABCDEF:' for c in address):
             return False
-        non_empty = [s for s in segments if s]
-        if not all(1 <= len(s) <= 4 for s in non_empty):
+        # Reject HH:MM:SS timestamps: exactly 3 segments all <= 2 decimal digits
+        segments = address.split(':')
+        if (len(segments) == 3
+                and all(len(s) <= 2 and s.isdigit() for s in segments)):
             return False
-        try:
-            import ipaddress
-            ipaddress.IPv6Address(address)
-            return True
-        except ValueError:
-            return False
+        # Require: either :: compression, >= 3 colons, or a long hex segment
+        has_double_colon = '::' in address
+        colon_count = address.count(':')
+        has_long_segment = any(len(s) > 2 for s in segments)
+        return has_double_colon or colon_count >= 3 or has_long_segment
 
 
 # ============================================================================
@@ -521,7 +542,7 @@ class IPClassifierLight:
             import requests
             resp = requests.get(
                 f"http://ip-api.com/json/{ip}?fields=org,as,proxy,hosting,isp",
-                timeout=10
+                timeout=4
             )
             if resp.status_code == 200:
                 data = resp.json()
@@ -2136,7 +2157,7 @@ class ThreatIntelligenceEngine:
                 import requests
                 resp = requests.get(
                     f"http://ip-api.com/json/{ip}?fields=proxy,hosting,isp,org",
-                    timeout=10
+                    timeout=4
                 )
                 if resp.status_code == 200:
                     d = resp.json()
@@ -2357,8 +2378,13 @@ class CompletePipelineResult:
     # v3 Components
     webmail_extraction: Optional[Any] = None
     bayesian_attribution: Optional[Any] = None
+
+    # Layer 1: urgency classification (time-decay confidence)
+    urgency_result: Optional[Any] = None
+
+    # Layer 1: canarytoken (populated after bait trigger, or None)
+    canarytoken_result: Optional[Any] = None
     graph_boost_factors: Optional[Any] = None
-    sender_classification: Optional[Any] = None   # senderClassifier output
 
 
 class CompletePipelineReport:
@@ -3174,6 +3200,14 @@ class CompletePipeline:
         
         # Track processed emails for batch graph analysis
         self.processed_emails = []
+
+        # Layer 1: urgency classifier (stateless — one instance is fine)
+        self.urgency_classifier = (
+            CampaignUrgencyClassifier() if URGENCY_AVAILABLE else None
+        )
+
+        # Layer 1: canarytoken generator (host set later via CLI or env)
+        self._canarytoken_generator = None
     
     def run(self, email_file: str) -> Optional[CompletePipelineResult]:
         """Run all 7 stages (1: Headers, 2: Classification, 3A: Proxy Chain, 3B: Enrichment, 3C: Correlation, 4: Threat Intelligence, Geolocation, 5: Attribution)"""
@@ -3191,7 +3225,33 @@ class CompletePipeline:
             return None
         
         print(f"[SUCCESS] Found {header_analysis.hop_count} hops in email chain")
-        
+
+        # ── CAMPAIGN URGENCY CLASSIFICATION (Layer 1) ─────────────────────
+        # Classify email age -> CRITICAL/HIGH/NORMAL/COLD.
+        # Must run before any confidence-scored output so the time-decay
+        # penalty is available for the Bayesian engine.
+        urgency_result = None
+        if self.urgency_classifier:
+            try:
+                urgency_result = self.urgency_classifier.classify(
+                    header_analysis.email_date
+                )
+                tier_icon = {
+                    "CRITICAL": "🔴", "HIGH": "🟠",
+                    "NORMAL":   "🟡", "COLD": "⚪",
+                }.get(urgency_result.tier, "")
+                print(
+                    f"  [URGENCY] {tier_icon} {urgency_result.tier} — "
+                    f"email is {urgency_result.age_minutes:.0f} min old  "
+                    f"(ACI penalty: {urgency_result.aci_penalty:.0%})"
+                )
+                if urgency_result.canarytoken_action == "DEPLOY_NOW":
+                    print("  [URGENCY] ⚡ Canarytoken deployment recommended — "
+                          "attacker likely still active")
+            except Exception as _ue:
+                if self.verbose:
+                    print(f"  [WARNING] Urgency classification failed: {_ue}")
+
         # Extract unique IPs (BOTH IPv4 AND IPv6)
         unique_ips = []
         unique_ipv6 = []
@@ -3205,77 +3265,6 @@ class CompletePipeline:
                 unique_ipv6.append(hop.ipv6)
                 seen_ipv6.add(hop.ipv6)
         
-        # Include origin_ip (e.g. From-domain resolved IP) so enrichment
-        # stages always have at least one IP to work with even when 0 hops.
-        if header_analysis.origin_ip and header_analysis.origin_ip not in seen_ipv4:
-            unique_ips.append(header_analysis.origin_ip)
-            seen_ipv4.add(header_analysis.origin_ip)
-
-        # Fallback: if still no IPs, try to extract from body URLs, From-domain,
-        # and raw IP literals.  Common for CEAS/spam datasets with no Received: headers.
-        if not unique_ips and not unique_ipv6:
-            print("[FALLBACK] No IPs from headers — extracting from email body...")
-            try:
-                with open(email_file, 'r', errors='ignore') as _fb:
-                    _raw = _fb.read()
-
-                _extracted_domains = set()
-                _extracted_ips = set()
-
-                # 1) From-domain (re-attempt in case parse_email_file skipped it)
-                _from_match = re.search(r'@([\w.\-]+)', header_analysis.email_from or "")
-                if _from_match:
-                    _extracted_domains.add(_from_match.group(1).lower())
-
-                # 2) URLs in body (http/https links)
-                for _url_m in re.finditer(r'https?://([^\s/"><\)]+)', _raw):
-                    _host = _url_m.group(1).split(':')[0].lower()
-                    if re.match(r'\d+\.\d+\.\d+\.\d+$', _host):
-                        _extracted_ips.add(_host)
-                    else:
-                        _extracted_domains.add(_host)
-
-                # 3) Bare IP addresses in the body
-                for _ip_m in re.finditer(r'\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b', _raw):
-                    _extracted_ips.add(_ip_m.group(1))
-
-                # Resolve domains → IPs
-                for _dom in _extracted_domains:
-                    try:
-                        _resolved = socket.gethostbyname(_dom)
-                        _p = _resolved.split('.')
-                        _f, _s = int(_p[0]), int(_p[1])
-                        _is_priv = (_f == 10 or _f == 127 or
-                                    (_f == 172 and 16 <= _s <= 31) or
-                                    (_f == 192 and _s == 168))
-                        if not _is_priv:
-                            _extracted_ips.add(_resolved)
-                            print(f"  [+] Resolved {_dom} → {_resolved}")
-                    except Exception:
-                        pass
-
-                # Filter private IPs and add
-                for _eip in _extracted_ips:
-                    try:
-                        _p = _eip.split('.')
-                        _f, _s = int(_p[0]), int(_p[1])
-                        _is_priv = (_f == 10 or _f == 127 or _f == 0 or
-                                    (_f == 172 and 16 <= _s <= 31) or
-                                    (_f == 192 and _s == 168))
-                        if not _is_priv and _eip not in seen_ipv4:
-                            unique_ips.append(_eip)
-                            seen_ipv4.add(_eip)
-                    except (ValueError, IndexError):
-                        pass
-
-                if unique_ips:
-                    print(f"  [FALLBACK] Extracted {len(unique_ips)} IP(s): {', '.join(unique_ips)}")
-                else:
-                    print("  [FALLBACK] Could not extract any public IPs from email")
-            except Exception as _fbe:
-                if self.verbose:
-                    print(f"  [FALLBACK] IP extraction failed: {_fbe}")
-
         print(f"[INFO] Unique IPs found: {', '.join(unique_ips + unique_ipv6)}")
         
         # WEBMAIL EXTRACTION: run immediately after header parsing on raw file
@@ -3319,20 +3308,12 @@ class CompletePipeline:
         print(f"  Obfuscation layers detected: {proxy_analysis.obfuscation_count}")
         print(f"  Real origin status: {proxy_analysis.likely_real_origin}")
         
-        # VPN BACKTRACKING: If VPN/Proxy/Datacenter detected, attempt to backtrack real IP
+        # VPN BACKTRACKING (NEW): If VPN detected, attempt to backtrack real IP
         vpn_backtrack_analysis = None
-        # Trigger on: obfuscation layers detected OR any IP classified as VPN/proxy/datacenter
-        any_vpn_or_proxy = any(
-            c.is_vpn or c.is_proxy or 'VPN' in c.classification or 'DATACENTER' in c.classification
-            for c in classifications.values()
-        )
-        should_backtrack = VPN_BACKTRACK_AVAILABLE and (
-            proxy_analysis.obfuscation_count > 0 or any_vpn_or_proxy
-        )
-        if should_backtrack:
+        if proxy_analysis.obfuscation_count > 0 and VPN_BACKTRACK_AVAILABLE:
             print("\n[VPN BACKTRACKING] Detecting obfuscation methods...")
             try:
-                # Find VPN/proxy IP in classifications (prefer VPN, fall back to proxy/datacenter)
+                # Find VPN IP in classifications
                 vpn_ip = None
                 vpn_provider = "Unknown"
                 vpn_country = "Unknown"
@@ -3344,36 +3325,21 @@ class CompletePipeline:
                         if classification.country:
                             vpn_country = classification.country
                         break
-                if not vpn_ip:
-                    # Fall back to first proxy/datacenter IP
-                    for ip, classification in classifications.items():
-                        if classification.is_proxy or 'DATACENTER' in classification.classification:
-                            vpn_ip = ip
-                            vpn_provider = classification.provider or "Datacenter/Proxy"
-                            vpn_country = classification.country or "Unknown"
-                            break
                 
                 if vpn_ip:
-                    print(f"  VPN/Proxy detected: {vpn_provider} ({vpn_ip})")
+                    print(f"  VPN detected: {vpn_provider} ({vpn_ip})")
                     print(f"  Attempting to backtrack REAL IP using 7+ techniques...\n")
                     
                     backtracker = RealIPBacktracker(verbose=self.verbose)
                     
-                    # Build headers dict from REAL parsed email headers
-                    _extra = header_analysis.extra_headers or {}
+                    # Convert email headers to dict
                     email_headers_for_backtrack = {
                         'Date': str(header_analysis.email_date) if header_analysis.email_date else None,
                         'Received': [hop.raw_header for hop in header_analysis.hops],
-                        'Received-SPF': _extra.get('Received-SPF', ''),
-                        'DKIM-Signature': _extra.get('DKIM-Signature', ''),
-                        'X-Originating-IP': _extra.get('X-Originating-IP', ''),
-                        'Authentication-Results': _extra.get('Authentication-Results', ''),
-                        'X-Mailer': _extra.get('X-Mailer', ''),
-                        'User-Agent': _extra.get('User-Agent', ''),
-                        'X-Sender-IP': _extra.get('X-Sender-IP', ''),
-                        'X-Originating-Client-IP': _extra.get('X-Originating-Client-IP', ''),
-                        'X-Priority': _extra.get('X-Priority', ''),
-                        'From': _extra.get('From', header_analysis.email_from),
+                        'Received-SPF': 'Unknown',
+                        'DKIM-Signature': 'Unknown',
+                        'X-Originating-IP': 'Unknown',
+                        'Authentication-Results': 'Unknown',
                     }
                     
                     vpn_backtrack_analysis = backtracker.backtrack_real_ip(
@@ -3388,114 +3354,15 @@ class CompletePipeline:
                     if vpn_backtrack_analysis.probable_real_ip:
                         print(f"    [ALERT] PROBABLE REAL IP: {vpn_backtrack_analysis.probable_real_ip}")
                     if vpn_backtrack_analysis.probable_country:
-                        print(f"    [ALERT] PROBABLE REAL LOCATION: {vpn_backtrack_analysis.probable_country}")
+                        print(f"    Location: {vpn_backtrack_analysis.probable_country}")
             except Exception as e:
                 if self.verbose:
                     print(f"  [WARNING] VPN backtracking failed: {e}")
-                    import traceback; traceback.print_exc()
                 vpn_backtrack_analysis = None
         
-        # ── REAL IP EXTRACTION (early) ─────────────────────────────────
-        # Run before Stage 3B so the extracted IP gets enriched.
-        print("\n[REAL IP EXTRACTION] Identifying true attacker IP (VPN/Proxy bypass)...")
-        real_ip_analysis = None
-        advanced_real_ip_analysis = None
-        attacker_real_ip = None
-
-        # Inject webmail-leaked IP into unique_ips for enrichment
-        if webmail_extraction and getattr(webmail_extraction, 'real_ip_found', False):
-            _wm_ip = getattr(webmail_extraction, 'real_ip', None)
-            if _wm_ip and _wm_ip not in seen_ipv4:
-                unique_ips.append(_wm_ip)
-                seen_ipv4.add(_wm_ip)
-                print(f"  [+] Added webmail-leaked IP for enrichment: {_wm_ip}")
-
-        # Try advanced extraction first (11+ techniques)
-        if self.use_advanced_extraction and self.advanced_real_ip_extractor:
-            try:
-                print("  Using ADVANCED Real IP Extractor (11+ Research Paper Techniques)...")
-                email_headers_dict = {
-                    'received_from_ip': header_analysis.origin_ip,
-                    'hop_count': header_analysis.hop_count,
-                    'timestamp': str(header_analysis.email_date) if header_analysis.email_date else None,
-                }
-                classifications_dict = {}
-                for ip, classification in classifications.items():
-                    classifications_dict[ip] = {
-                        'is_vpn': 'VPN' in classification.classification,
-                        'is_proxy': 'Proxy' in classification.classification,
-                        'is_tor': 'Tor' in classification.classification,
-                    }
-                advanced_real_ip_analysis = self.advanced_real_ip_extractor.extract_real_ip(
-                    email_headers=email_headers_dict,
-                    classifications=classifications_dict,
-                    enrichments={},
-                    geolocation={},
-                    honeypot_data=None,
-                    dns_queries=None,
-                    traffic_patterns=None
-                )
-                if advanced_real_ip_analysis:
-                    real_ip_analysis = advanced_real_ip_analysis
-                    attacker_real_ip = advanced_real_ip_analysis.suspected_real_ip
-                    print(f"  [+] Real IP: {attacker_real_ip} ({advanced_real_ip_analysis.confidence_score:.0%} confidence)")
-                    if advanced_real_ip_analysis.vpn_provider:
-                        print(f"    VPN Provider: {advanced_real_ip_analysis.vpn_provider}")
-            except Exception as e:
-                if self.verbose:
-                    print(f"  [WARNING] Advanced Real IP extraction failed: {e}")
-
-        # Fall back to basic extraction
-        if not real_ip_analysis and self.real_ip_extractor:
-            try:
-                print("  Using standard Real IP Extractor (7 Basic Techniques)...")
-                classifications_dict = {}
-                for ip, classification in classifications.items():
-                    classifications_dict[ip] = {
-                        "classification": classification.classification,
-                        "confidence": classification.confidence
-                    }
-                real_ip_analysis = self.real_ip_extractor.extract_real_ip(
-                    origin_ip=header_analysis.origin_ip,
-                    all_ips_in_chain=[hop.ip or hop.ipv6 for hop in header_analysis.hops if (hop.ip or hop.ipv6)],
-                    hop_details=[{
-                        "hop_number": hop.hop_number,
-                        "ip": hop.ip,
-                        "ipv6": hop.ipv6,
-                        "hostname": hop.hostname,
-                        "raw_header": hop.raw_header
-                    } for hop in header_analysis.hops],
-                    classifications=classifications_dict,
-                    enrichment_data=None,
-                    geolocation_data=None
-                )
-                if real_ip_analysis:
-                    attacker_real_ip = real_ip_analysis.suspected_real_ip
-                    print(f"  [+] Real IP: {attacker_real_ip} ({real_ip_analysis.confidence_score:.0%} confidence)")
-            except Exception as e:
-                if self.verbose:
-                    print(f"  [WARNING] Real IP extraction failed: {e}")
-
-        if not real_ip_analysis:
-            print("  [NOTICE] Real IP extractor not available")
-
-        # Inject the extracted real IP into unique_ips for enrichment
-        if attacker_real_ip and attacker_real_ip not in seen_ipv4:
-            unique_ips.append(attacker_real_ip)
-            seen_ipv4.add(attacker_real_ip)
-            print(f"  [+] Added extracted real IP for enrichment: {attacker_real_ip}")
-
-        # VPN backtracking probable real IP
-        if vpn_backtrack_analysis and vpn_backtrack_analysis.probable_real_ip:
-            _bt_ip = vpn_backtrack_analysis.probable_real_ip
-            if _bt_ip not in seen_ipv4:
-                unique_ips.append(_bt_ip)
-                seen_ipv4.add(_bt_ip)
-                print(f"  [+] Added VPN-backtracked IP for enrichment: {_bt_ip}")
-
         # STAGE 3B: WHOIS enrichment
         enrichment_results = None
-        if self.enricher and unique_ips:
+        if self.enricher:
             print("\n[STAGE 3B] Enriching with WHOIS/DNS data...")
             try:
                 enrichment_results = {}
@@ -3509,10 +3376,8 @@ class CompletePipeline:
                 if self.verbose:
                     print(f"  [WARNING] Enrichment failed: {e}")
                 enrichment_results = None
-        elif not self.enricher:
-            print("\n[NOTICE] Stage 3B skipped (requires python-whois library)")
         else:
-            print("\n[NOTICE] Stage 3B skipped (no IPs to enrich)")
+            print("\n[NOTICE] Stage 3B skipped (requires python-whois library)")
         
         # STAGE 3C: Infrastructure Correlation
         print("\n[STAGE 3C] Analyzing infrastructure correlation...")
@@ -3540,7 +3405,7 @@ class CompletePipeline:
         print("\n[STAGE 4] Aggregating threat intelligence...")
         
         threat_intelligence = None
-        if unique_ips:
+        if enrichment_results:
             try:
                 threat_intelligence = self.threat_intel_engine.analyze_ips(
                     ips=unique_ips
@@ -3559,127 +3424,186 @@ class CompletePipeline:
                     print(f"  [WARNING] Threat intelligence analysis failed: {e}")
                 threat_intelligence = None
         else:
-            print("  [NOTICE] Stage 4 skipped (no IPs to analyze)")
+            print("  [NOTICE] Stage 4 skipped (requires Stage 3B enrichment data)")
         
-        # GEOLOCATION ENRICHMENT
-        print("\n[GEOLOCATION] Enriching IPs with geolocation data...")
+        # (Real IP extraction and geolocation run in the canonical block below)
+        
+        # REAL IP EXTRACTION: Extract true IP address before geolocating (so we geolocate the RIGHT IP)
+        print("\n[REAL IP EXTRACTION] Identifying true attacker IP (VPN/Proxy bypass)...")
+        real_ip_analysis = None
+        attacker_real_ip = None  # Will store the suspected_real_ip for targeted geolocation
+        
+        # Try advanced extraction first (11+ techniques from research paper)
+        if self.use_advanced_extraction and self.advanced_real_ip_extractor:
+            try:
+                print("  Using ADVANCED Real IP Extractor (11+ techniques from research paper)...")
+                
+                # Prepare data for advanced extractor
+                email_headers_dict = {
+                    'received_from_ip': header_analysis.origin_ip,
+                    'hop_count': header_analysis.hop_count,
+                }
+                
+                # Prepare classifications dict
+                classifications_dict = {}
+                for ip, classification in classifications.items():
+                    classifications_dict[ip] = {
+                        'is_vpn': 'VPN' in classification.classification,
+                        'is_proxy': 'Proxy' in classification.classification,
+                        'is_tor': 'Tor' in classification.classification,
+                    }
+                
+                # Prepare enrichment data
+                enrichments = {}
+                if enrichment_results:
+                    for ip, enrichment in enrichment_results.items():
+                        enrichments[ip] = {
+                            'organization': enrichment.whois_data.organization or "Unknown",
+                            'asn': enrichment.whois_data.asn or "Unknown",
+                            'country': enrichment.whois_data.country or "Unknown",
+                        }
+                
+                # Run advanced extraction
+                advanced_real_ip_analysis = self.advanced_real_ip_extractor.extract_real_ip(
+                    email_headers=email_headers_dict,
+                    classifications=classifications_dict,
+                    enrichments=enrichments,
+                    geolocation={},  # Will add geolocation after extraction
+                    honeypot_data=None,
+                    dns_queries=None,
+                    traffic_patterns=None
+                )
+                
+                if advanced_real_ip_analysis:
+                    real_ip_analysis = advanced_real_ip_analysis
+                    attacker_real_ip = advanced_real_ip_analysis.suspected_real_ip
+                    print(f"  [+] EXTRACTED ATTACKER IP: {attacker_real_ip} ({advanced_real_ip_analysis.confidence_score:.0%} confidence)")
+                    if advanced_real_ip_analysis.vpn_provider:
+                        print(f"    VPN Provider: {advanced_real_ip_analysis.vpn_provider}")
+            except Exception as e:
+                if self.verbose:
+                    print(f"  [WARNING] Advanced extraction failed: {e}")
+        
+        # Fallback to standard extraction
+        if not real_ip_analysis and self.real_ip_extractor:
+            try:
+                print("  Using standard Real IP Extractor (7 basic techniques)...")
+                
+                classifications_dict = {}
+                for ip, classification in classifications.items():
+                    classifications_dict[ip] = {
+                        "classification": classification.classification,
+                        "confidence": classification.confidence
+                    }
+                
+                enrichment_dict = None
+                if enrichment_results:
+                    enrichment_dict = {}
+                    for ip, enrichment in enrichment_results.items():
+                        enrichment_dict[ip] = {
+                            "organization": enrichment.whois_data.organization or "Unknown",
+                            "asn": enrichment.whois_data.asn or "Unknown"
+                        }
+                
+                real_ip_analysis = self.real_ip_extractor.extract_real_ip(
+                    origin_ip=header_analysis.origin_ip,
+                    all_ips_in_chain=[hop.ip or hop.ipv6 for hop in header_analysis.hops if (hop.ip or hop.ipv6)],
+                    hop_details=[{
+                        "hop_number": hop.hop_number,
+                        "ip": hop.ip,
+                        "ipv6": hop.ipv6,
+                        "hostname": hop.hostname,
+                        "raw_header": hop.raw_header
+                    } for hop in header_analysis.hops],
+                    classifications=classifications_dict,
+                    enrichment_data=enrichment_dict,
+                    geolocation_data=None
+                )
+                
+                if real_ip_analysis:
+                    attacker_real_ip = real_ip_analysis.suspected_real_ip
+                    print(f"  [+] EXTRACTED ATTACKER IP: {attacker_real_ip} ({real_ip_analysis.confidence_score:.0%} confidence)")
+            except Exception as e:
+                if self.verbose:
+                    print(f"  [WARNING] Standard extraction failed: {e}")
+        
+        # NOW GEOLOCATE: Use VPN backtracking result if available (it has real IP), otherwise use real_ip_analysis
+        print("\n[GEOLOCATION] Enriching attacker IP location...")
         geolocation_results = None
         
-        # VPN backtracking: use inferred country if real IP == VPN endpoint
+        # PRIORITY: If VPN backtracking found real IP, use that for geolocation
+        # BUT: If the probable_real_ip IS the VPN endpoint, use inferred COUNTRY instead
+        ip_to_geolocate = None
         use_backtrack_country = False
         backtrack_country = None
-        # Case 1: Backtracking found a real IP — geolocate it and use the result
+        
         if vpn_backtrack_analysis and vpn_backtrack_analysis.probable_real_ip:
-            _bt_ip = vpn_backtrack_analysis.probable_real_ip
-            # If the probable real IP is NOT the VPN IP itself, geolocate it directly
-            if _bt_ip not in seen_ipv4:
-                unique_ips.append(_bt_ip)
-                seen_ipv4.add(_bt_ip)
-            # Prefer the backtracked country when available
-            if vpn_backtrack_analysis.probable_country:
-                backtrack_country = vpn_backtrack_analysis.probable_country
+            # Check if this IP is the same as the VPN endpoint (happens when backtracking can't separate IP)
+            is_same_as_vpn = False
+            if proxy_analysis and proxy_analysis.chain:
+                for chain_item in proxy_analysis.chain:
+                    if chain_item.ip == vpn_backtrack_analysis.probable_real_ip and chain_item.is_obfuscation:
+                        is_same_as_vpn = True
+                        break
+            
+            # If it's the VPN endpoint, use inferred country instead of geolocating the VPN IP
+            if is_same_as_vpn and vpn_backtrack_analysis.probable_country:
                 use_backtrack_country = True
-                print(f"  [VPN BACKTRACK] Probable real IP: {_bt_ip}, inferred country: {backtrack_country}")
-
-        # Case 2: Backtracking inferred a country from timezone/behavioral signals
-        #         but no concrete real IP was found (common for VPN emails)
-        if not use_backtrack_country and vpn_backtrack_analysis and vpn_backtrack_analysis.probable_country:
-            backtrack_country = vpn_backtrack_analysis.probable_country
-            use_backtrack_country = True
-            print(f"  [VPN BACKTRACK] No real IP extracted, but inferred country: {backtrack_country}")
-
-        # Always run real geolocation — backtrack country supplements, not replaces
-        if self.geolocation_enricher:
+                backtrack_country = vpn_backtrack_analysis.probable_country
+                print(f"  [VPN BACKTRACK] Using inferred country (VPN endpoint detected): {backtrack_country}")
+                print(f"     Confidence: {vpn_backtrack_analysis.backtracking_confidence:.0%}")
+            else:
+                # Actually different IP, geolocate it
+                ip_to_geolocate = vpn_backtrack_analysis.probable_real_ip
+                print(f"  Using VPN backtracking result: {ip_to_geolocate}")
+        elif attacker_real_ip:
+            ip_to_geolocate = attacker_real_ip
+            print(f"  Using real IP extraction result: {ip_to_geolocate}")
+        
+        if use_backtrack_country:
+            # Use inferred country from backtracking (timezone, behavior analysis, etc.)
+            geolocation_results = {vpn_backtrack_analysis.probable_real_ip: type('obj', (object,), {
+                'country': backtrack_country,
+                'country_code': 'INFERRED',
+                'city': 'Unknown',
+                'latitude': None,
+                'longitude': None,
+                'timezone': 'Unknown',
+                'asn': 'Unknown',
+                'provider': 'Unknown',
+                'isp': 'Unknown',
+                'accuracy_radius_km': None,
+                'confidence': vpn_backtrack_analysis.backtracking_confidence,
+                'sources': ['VPN Backtracking']
+            })()} if vpn_backtrack_analysis.probable_real_ip else None
+            print(f"  [+] ATTACKER LOCATION: {backtrack_country} (Inferred)")
+        elif ip_to_geolocate and self.geolocation_enricher:
             try:
-                # PRIORITY: If we identified a real attacker IP, ONLY geolocate that
-                if attacker_real_ip:
-                    print(f"  [PRIORITY] Geolocating attacker IP only: {attacker_real_ip}")
-                    geolocation_results = self.geolocation_enricher.enrich_multiple_ips([attacker_real_ip])
-                    
-                    if geolocation_results and attacker_real_ip in geolocation_results:
-                        attacker_geo = geolocation_results[attacker_real_ip]
-                        if attacker_geo:
-                            print(f"  [+] ATTACKER LOCATION: {attacker_geo.city}, {attacker_geo.country}")
-                            if attacker_geo.latitude and attacker_geo.longitude:
-                                print(f"    Coordinates: {format_coordinates(attacker_geo.latitude, attacker_geo.longitude)}")
-                            print(f"    ISP: {attacker_geo.provider or 'Unknown'}")
-                            print(f"    Confidence: {attacker_geo.confidence:.0%}")
-                else:
-                    # Fallback: Geolocate all IPs in chain (IPv4 + IPv6)
-                    all_ips_to_geolocate = unique_ips + unique_ipv6
-                    if all_ips_to_geolocate:
-                        geolocation_results = self.geolocation_enricher.enrich_multiple_ips(all_ips_to_geolocate)
-                        
-                        # Special handling for IPv6 (print separately since they're from attacker's machine)
-                        if unique_ipv6 and geolocation_results:
-                            print(f"\n  [IPv6 DETECTED] Attacker's machine IPv6 addresses:")
-                            for ipv6_addr in unique_ipv6:
-                                if ipv6_addr in geolocation_results:
-                                    ipv6_geo = geolocation_results[ipv6_addr]
-                                    if ipv6_geo:
-                                        print(f"    [ALERT] {ipv6_addr}")
-                                        print(f"       Location: {ipv6_geo.city}, {ipv6_geo.country}")
-                                        if ipv6_geo.latitude and ipv6_geo.longitude:
-                                            print(f"       Coordinates: {format_coordinates(ipv6_geo.latitude, ipv6_geo.longitude)}")
-                                else:
-                                    # IPv6 not geolocated by service, use IPv6 block registration
-                                    ipv6_country = self._geolocate_ipv6_block(ipv6_addr)
-                                    print(f"    [ALERT] {ipv6_addr}")
-                                    print(f"       Country (from IPv6 block registration): {ipv6_country}")
+                geolocation_results = self.geolocation_enricher.enrich_multiple_ips([ip_to_geolocate])
                 
-                # Print geolocation summary
-                if geolocation_results:
-                    geoloc_summary = self.geolocation_enricher.get_geolocation_summary(geolocation_results)
-                    
-                    if geoloc_summary['countries']:
-                        countries_list = ', '.join([f"{c}({n})" for c, n in sorted(geoloc_summary['countries'].items(), key=lambda x: x[1], reverse=True)])
-                        print(f"  Countries detected: {countries_list}")
-                    
-                    if geoloc_summary['cities']:
-                        top_cities = sorted(geoloc_summary['cities'].items(), key=lambda x: x[1], reverse=True)[:3]
-                        cities_list = ', '.join([f"{c}({n})" for c, n in top_cities])
-                        print(f"  Primary cities: {cities_list}")
-                    
-                    if geoloc_summary['coordinates']:
-                        centerpoint = self.geolocation_enricher.calculate_centerpoint(geoloc_summary['coordinates'])
-                        if centerpoint:
-                            print(f"  Geographic centerpoint: {format_coordinates(centerpoint[0], centerpoint[1])}")
-                        print(f"  Avg confidence: {geoloc_summary['avg_confidence']:.0%}")
-                
+                if geolocation_results and ip_to_geolocate in geolocation_results:
+                    geo = geolocation_results[ip_to_geolocate]
+                    if geo:
+                        print(f"  [+] ATTACKER LOCATION: {geo.city}, {geo.country}")
+                        if geo.latitude and geo.longitude:
+                            print(f"     Coordinates: {format_coordinates(geo.latitude, geo.longitude)}")
+                        print(f"     ISP: {geo.isp}")
+                        print(f"     Confidence: {geo.confidence:.0%}")
+            except Exception as e:
+                if self.verbose:
+                    print(f"  [WARNING] Geolocation failed: {e}")
+        elif self.geolocation_enricher:
+            # Fallback: geolocate all IPs if no attacker IP identified
+            try:
+                geolocation_results = self.geolocation_enricher.enrich_multiple_ips(unique_ips)
             except Exception as e:
                 if self.verbose:
                     print(f"  [WARNING] Geolocation enrichment failed: {e}")
-                geolocation_results = None
-        elif not self.geolocation_enricher:
-            print("  [NOTICE] Geolocation skipped (geolocation module not available)")
         
-        # STAGE 5: ATTRIBUTION ANALYSIS - Final synthesis and evidence packaging
-        print("\n[STAGE 5] Generating final attribution and evidence package...")
+        # Stage 5 legacy attribution object — superseded by the Bayesian
+        # engine below, but kept as None so the result dataclass field is set.
         attribution_analysis = None
-        
-        if self.attribution_analyzer:
-            try:
-                attribution_analysis = self.attribution_analyzer.analyze(
-                    header_analysis=header_analysis,
-                    classifications=classifications,
-                    proxy_analysis=proxy_analysis,
-                    enrichment_results=enrichment_results or {},
-                    correlation_analysis=correlation_analysis,
-                    threat_intelligence=threat_intelligence,
-                    geolocation_results=geolocation_results or {}
-                )
-                
-                print(f"  Attribution confidence: {attribution_analysis.confidence_level}")
-                print(f"  Primary origin: {attribution_analysis.attacker_profile.primary_origin}")
-                print(f"  Sophistication: {attribution_analysis.attacker_profile.operational_security_level}")
-                print(f"  Evidence items: {len(attribution_analysis.supporting_evidence)}")
-            except Exception as e:
-                if self.verbose:
-                    print(f"  [WARNING] Attribution analysis failed: {e}")
-                attribution_analysis = None
-        elif not self.attribution_analyzer:
-            print("  [NOTICE] Stage 5 skipped (attribution module not available)")
-        
+
         # Create result
         result = CompletePipelineResult(
             header_analysis=header_analysis,
@@ -3695,52 +3619,78 @@ class CompletePipeline:
             webmail_extraction=webmail_extraction,
         )
         
-        # BAYESIAN ATTRIBUTION — runs on the assembled result regardless of
-        # whether Stage 3B / geolocation are available. The engine reads
-        # whatever signals exist (timezone, webmail provider, VPN flags, etc.)
+        # ── BAYESIAN ATTRIBUTION (Layer 5) ───────────────────────────────────
+        # Runs on the assembled result regardless of whether Stage 3B /
+        # geolocation are available.  The engine reads whatever signals exist
+        # (timezone, webmail provider, VPN flags, canarytoken, etc.).
+        # Now wires in:
+        #   • Signal reliability weighting (VPN -> zero-weight IP signals)
+        #   • False flag detection (CONFLICTED state, 45% cap)
+        #   • Urgency time-decay ACI penalty (Layer 1)
         if self.bayesian_attribution:
-            print("\n[ATTRIBUTION] Running Bayesian multi-signal attribution...")
+            print("\n[ATTRIBUTION] Running Bayesian multi-signal attribution (Layer 5)...")
             try:
                 bayes_result = self.bayesian_attribution.attribute(result)
+
+                # ── Apply urgency time-decay penalty ─────────────────────
+                if urgency_result is not None:
+                    try:
+                        from huntertrace.core.urgency import apply_to_aci
+                        original_aci = bayes_result.aci_adjusted_prob
+                        bayes_result = apply_to_aci(bayes_result, urgency_result)
+                        if self.verbose and bayes_result.aci_adjusted_prob != original_aci:
+                            print(
+                                f"  [URGENCY] ACI adjusted: "
+                                f"{original_aci:.1%} → {bayes_result.aci_adjusted_prob:.1%} "
+                                f"(−{urgency_result.aci_penalty:.0%} time-decay)"
+                            )
+                    except Exception as _upe:
+                        if self.verbose:
+                            print(f"  [WARNING] Urgency ACI adjustment failed: {_upe}")
+
                 result.bayesian_attribution = bayes_result
-                
+                result.urgency_result       = urgency_result
+
+                # ── Print result ──────────────────────────────────────────
                 print(f"  Primary region : {bayes_result.primary_region}")
-                print(f"  Confidence     : {bayes_result.primary_probability:.1%}  (ACI-adjusted: {bayes_result.aci_adjusted_prob:.1%})")
+                print(
+                    f"  Confidence     : {bayes_result.primary_probability:.1%}"
+                    f"  (ACI-adjusted: {bayes_result.aci_adjusted_prob:.1%})"
+                )
                 print(f"  ACI score      : {bayes_result.aci.final_aci:.2f}")
                 print(f"  Tier           : {bayes_result.tier} — {bayes_result.tier_label}")
-                print(f"  Signals used   : {', '.join(bayes_result.signals_used) if bayes_result.signals_used else 'none'}")
+                print(f"  Reliability    : {bayes_result.reliability_mode}")
+                print(
+                    f"  Signals used   : "
+                    f"{', '.join(bayes_result.signals_used) if bayes_result.signals_used else 'none'}"
+                )
+
+                # ── False flag warning ────────────────────────────────────
+                if bayes_result.false_flag_warning:
+                    print(
+                        f"  ⚠  FALSE FLAG DETECTED — conflict_score="
+                        f"{bayes_result.conflict_score:.2f}  "
+                        f"confidence capped at 45%"
+                    )
+                    print(
+                        f"     Conflicting signals : "
+                        f"{', '.join(bayes_result.conflicting_signals)}"
+                    )
+                    print(
+                        f"     Conflict regions   : "
+                        f"{', '.join(bayes_result.conflict_regions)}"
+                    )
+
                 if bayes_result.posterior:
-                    print(f"  Top candidates :")
+                    print("  Top candidates :")
                     for rp in bayes_result.posterior[:3]:
                         print(f"    {rp.region:<30} {rp.probability:.1%}")
+
             except Exception as _be:
                 if self.verbose:
                     print(f"  [WARNING] Bayesian attribution failed: {_be}")
                     import traceback; traceback.print_exc()
         
-        # ── SENDER CLASSIFICATION (hop forgery + timezone + regularity) ──
-        sender_classification_result = None
-        if SENDER_CLASSIFIER_AVAILABLE:
-            try:
-                sender_classification_result = _classify_sender(
-                    header_analysis,
-                    email_fingerprints=None,
-                    email_file=email_file,
-                )
-                result.sender_classification = sender_classification_result
-                sc = sender_classification_result
-                print(f"  [SENDER]   type={sc.overall_verdict}  "
-                      f"conf={sc.overall_confidence:.0%}  "
-                      f"hops={sc.hop_chain.verdict}  "
-                      f"tz_valid={sc.timezone.is_valid}  "
-                      f"tz_spoofed={sc.timezone.is_spoofed}")
-                if sc.red_flags:
-                    for rf in sc.red_flags[:3]:
-                        print(f"             \u26a0 {rf[:90]}")
-            except Exception as _se:
-                if self.verbose:
-                    print(f"  [SENDER]   classification failed: {_se}")
-
         print("\n[STAGE COMPLETE] All stages finished successfully")
         
         return result
@@ -3764,7 +3714,7 @@ class CompletePipeline:
             import requests
             resp = requests.get(
                 f"http://ip-api.com/json/{ipv6_address}?fields=country,status",
-                timeout=10
+                timeout=4
             )
             if resp.status_code == 200:
                 d = resp.json()
@@ -4046,6 +3996,7 @@ def main():
       batch  <dir>         Batch-process all .eml files in a directory
       v3     <dir>         Full v3 campaign analysis (actor clustering + MITRE)
       offline <dir>        V3 correlation from saved JSON reports
+      bait                 Generate canarytoken bait documents (active VPN bypass)
       info                 Show module/API-key status
 
     Quick start
@@ -4065,6 +4016,11 @@ def main():
 
       # Full v3 campaign intelligence
       python hunterTrace.py v3 ./inbox/ --output ./reports/ --verbose
+
+      # Active VPN bypass — generate bait documents
+      python hunterTrace.py bait --generate --host mycallback.canarytokens.org --legal-ack
+      python hunterTrace.py bait --generate --formats xlsx --host myhost --label actor1 --legal-ack
+      python hunterTrace.py bait --poll TOKEN_ID --host mycallback.canarytokens.org
     """
 
     parser = argparse.ArgumentParser(
@@ -4077,6 +4033,7 @@ COMMANDS
   batch  <dir>         Batch-analyse every .eml in a directory
   v3     <dir>         V3 campaign mode: actor clustering + MITRE ATT&CK mapping
   offline <dir>        V3 correlation from previously-saved JSON reports
+  bait                 Generate canarytoken bait documents for active VPN bypass
   info                 Show available modules and API-key status
 
 OUTPUT FLAGS
@@ -4209,14 +4166,25 @@ EXAMPLES
 
         print("\n  V3 modules:")
         v3_checks = [
-            ("campaign correlator",   "huntertrace.analysis.campaign_correlator"),
-            ("actor profiler",        "huntertrace.analysis.actor_profiler"),
+            ("campaign correlator",   "huntertrace.analysis.campaignCorrelator"),
+            ("actor profiler",        "huntertrace.analysis.actorProfiler"),
             ("attack graph builder",  "huntertrace.graph.builder"),
             ("attribution engine",    "huntertrace.attribution.engine"),
             ("V3 orchestrator",       "huntertrace.core.orchestrator"),
             ("forensics scanner",     "huntertrace.forensics.scanner"),
             ("graph centrality",      "huntertrace.graph.centrality"),
         ]
+        print("\n  Layer 1 modules:")
+        l1_checks = [
+            ("urgency classifier",    "huntertrace.core.urgency"),
+            ("canarytoken generator", "huntertrace.forensics.canarytoken"),
+        ]
+        for label, mod in l1_checks:
+            try:
+                __import__(mod)
+                print(f"    ✓  {label}")
+            except ImportError as _e:
+                print(f"    ✗  {label}  ({_e})")
         for label, mod in v3_checks:
             try:
                 __import__(mod)
@@ -4320,12 +4288,76 @@ EXAMPLES
         return
 
     # ══════════════════════════════════════════════════════════════════════
+    # BAIT — generate canarytoken bait documents (Layer 1 active bypass)
+    # Usage:
+    #   hunterTrace.py bait --generate --host CALLBACKHOST [--formats xlsx docx pdf]
+    #                       [--output DIR] [--label LABEL] [--legal-ack]
+    #   hunterTrace.py bait --poll TOKEN_ID --host CALLBACKHOST
+    # ══════════════════════════════════════════════════════════════════════
+    if args.command == "bait":
+        if not CANARYTOKEN_AVAILABLE:
+            print(
+                "[ERROR] Canarytoken module not available.\n"
+                "  Expected at: huntertrace/forensics/canarytoken.py\n"
+                "  Make sure the file is committed to the repo and installed."
+            )
+            sys.exit(1)
+
+        # Re-parse with bait-specific args.  We use a sub-parser approach:
+        # read remaining argv manually to keep the top-level parser simple.
+        import argparse as _ap
+        bait_parser = _ap.ArgumentParser(
+            prog="hunterTrace.py bait",
+            description="Generate canarytoken bait documents for active VPN bypass",
+        )
+        bait_parser.add_argument(
+            "--generate", action="store_true",
+            help="Generate bait documents (XLSX, DOCX, and/or PDF)",
+        )
+        bait_parser.add_argument(
+            "--poll", dest="poll_token", metavar="TOKEN_ID",
+            help="Poll a previously generated token for trigger events",
+        )
+        bait_parser.add_argument(
+            "--host", metavar="HOST",
+            help="Callback hostname (e.g. yourdomain.canarytokens.org)",
+        )
+        bait_parser.add_argument(
+            "--formats", nargs="+", default=["xlsx", "docx", "pdf"],
+            metavar="FMT",
+            help="Bait formats to generate: xlsx docx pdf  (default: all three)",
+        )
+        bait_parser.add_argument(
+            "--output", "-o", default="./ht_baits", metavar="DIR",
+            help="Output directory for bait files  (default: ./ht_baits)",
+        )
+        bait_parser.add_argument(
+            "--label", default="", metavar="LABEL",
+            help="Optional label embedded in token ID (e.g. actor name)",
+        )
+        bait_parser.add_argument(
+            "--legal-ack", dest="legal_ack", action="store_true",
+            help="Acknowledge legal notice before generating bait documents",
+        )
+
+        # Parse everything after "bait" from sys.argv
+        bait_argv = sys.argv[sys.argv.index("bait") + 1:]
+        bait_args = bait_parser.parse_args(bait_argv)
+
+        if not bait_args.generate and not bait_args.poll_token:
+            bait_parser.print_help()
+            sys.exit(0)
+
+        exit_code = cli_bait(bait_args)
+        sys.exit(exit_code)
+
+    # ══════════════════════════════════════════════════════════════════════
     # SINGLE EMAIL — default when command looks like a file path
     # ══════════════════════════════════════════════════════════════════════
     email_file = args.command
 
     # Catch unknown subcommands before attempting file I/O
-    known_commands = {"batch", "v3", "offline", "info"}
+    known_commands = {"batch", "v3", "offline", "info", "bait"}
     if email_file in known_commands:
         # Already handled above; this branch means the user forgot the path arg
         parser.error(
