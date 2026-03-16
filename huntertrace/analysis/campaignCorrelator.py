@@ -12,7 +12,7 @@ RESEARCH FINDING:
     signals that survive VPN rotation:
 
     Signal                  Stability   Why attackers can't easily change it
-    ─────────────────────────────────────────────────────────────────────────
+    -------------------------------------------------------------------------
     Timezone offset         Very high   System clock, rarely faked
     Webmail provider        High        Account already set up
     VPN ASN preference      High        Paid subscription to one provider
@@ -26,7 +26,7 @@ RESEARCH FINDING:
     Three emails with 6+ signals = same actor with 95%+ confidence.
 
 USAGE:
-    from huntertrace.analysis.campaign_correlator import CampaignCorrelator
+    from campaignCorrelator import CampaignCorrelator
 
     correlator = CampaignCorrelator()
 
@@ -45,13 +45,13 @@ import hashlib
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Set, Tuple
 from datetime import datetime
-from collections import defaultdict
+from collections import defaultdict, Counter
 from pathlib import Path
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # DATA STRUCTURES
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 @dataclass
 class EmailFingerprint:
@@ -155,6 +155,418 @@ class ThreatActorCluster:
     all_origin_ips:     List[str]
 
 
+# -----------------------------------------------------------------------------
+# CONVERGENCE ZONE DETECTION
+# -----------------------------------------------------------------------------
+
+@dataclass
+class ConvergenceZone:
+    """
+    Result of triangulating an actor's location from multiple independent,
+    VPN-resistant signals.
+
+    A "convergence zone" is the geographic area implied by the *intersection*
+    of signals that cannot all be defeated simultaneously:
+      - Timezone offset   (system clock)
+      - Charset / locale  (email client locale)
+      - DNS infrastructure country  (NS/MX/SPF/DKIM/PTR)
+      - IPv6 geolocation  (most VPNs don't tunnel IPv6)
+      - Subject language  (attacker's native language)
+
+    When ≥3 independent signals agree on the same country, the probability of
+    coincidence is low enough (~2–4%) to make a high-confidence attribution.
+
+    Fields
+    ------
+    actor_id          Actor this result belongs to.
+    converged_country Most-voted country across all independent signals.
+    convergence_score 0.0–1.0.  Formula: (n_agreeing / n_fired) × weight_sum.
+    n_signals_fired   Total number of VPN-resistant signals that produced a
+                      country vote.
+    n_signals_agree   How many of those agreed on converged_country.
+    signal_breakdown  Dict mapping signal name → country it voted for.
+    independent_axes  Signals used, grouped by independence axis.
+    false_flag_risk   True if any signal disagrees by ≥2 axis groups —
+                      suggests deliberate misdirection.
+    false_flag_detail Human-readable description of the conflict.
+    confidence_label  "HIGH" / "MEDIUM" / "LOW" / "INSUFFICIENT".
+    analyst_note      One-sentence summary for the report.
+    """
+    actor_id:          str
+    converged_country: Optional[str]
+    convergence_score: float                      # 0.0–1.0
+    n_signals_fired:   int
+    n_signals_agree:   int
+    signal_breakdown:  Dict[str, Optional[str]]   # signal → country or None
+    independent_axes:  Dict[str, List[str]]        # axis → [signals in axis]
+    false_flag_risk:   bool
+    false_flag_detail: Optional[str]
+    confidence_label:  str                        # HIGH/MEDIUM/LOW/INSUFFICIENT
+    analyst_note:      str
+
+
+class ConvergenceDetector:
+    """
+    Campaign-level triangulation across independent, VPN-resistant signals.
+
+    Independence model
+    ------------------
+    We group signals into five independence axes.  Two signals in the same
+    axis share an underlying mechanism, so they are *not* independent evidence.
+    Two signals in *different* axes are independent — their joint probability
+    of coincidentally pointing to the same wrong country is multiplicative.
+
+    Axis A — Temporal:      timezone_offset, timezone_region, send_hour_local
+    Axis B — Locale:        charset_region, subject_language
+    Axis C — Network:       ipv6_country, dns_infra_country, isp_country
+    Axis D — Content:       dkim_domain country, from_domain TLD country
+    Axis E — Infrastructure: real_ip_country, canarytoken_country
+
+    Convergence scoring (per actor cluster)
+    ----------------------------------------
+    1. Collect one country vote per axis (majority within axis).
+    2. Find the globally most-voted country.
+    3. score = sum(axis_weight[ax] for ax if ax voted for winner)
+               / sum(axis_weight[ax] for ax if ax fired at all)
+    4. false_flag_risk = True if 2+ axes disagree with the winner AND
+                         the disagreeing axes each have 2+ signals (i.e. not
+                         single-signal noise).
+
+    Axis weights (reflecting signal strength research):
+      A Temporal     0.30   (timezone rarely faked — Sheng 2009: only 8.6%)
+      B Locale       0.25   (charset set by OS/MUA, survives VPN)
+      C Network      0.20   (DNS infra + IPv6 are pre-VPN artifacts)
+      D Content      0.15   (DKIM domain locked to mail account)
+      E Infra        0.10   (real IP / canary — highest precision, lowest freq)
+    """
+
+    # Independence axes: name → (weight, list-of-signal-names)
+    AXES: Dict[str, Tuple[float, List[str]]] = {
+        "temporal":      (0.30, ["timezone_offset", "timezone_region",
+                                 "send_hour_local"]),
+        "locale":        (0.25, ["charset_region", "subject_language"]),
+        "network":       (0.20, ["ipv6_country", "dns_infra_country",
+                                 "isp_country"]),
+        "content":       (0.15, ["dkim_domain_country", "from_domain_country"]),
+        "infrastructure":(0.10, ["real_ip_country", "canarytoken_country"]),
+    }
+
+    # Country resolution: signals that directly name a country
+    _DIRECT_COUNTRY_SIGNALS = frozenset([
+        "ipv6_country", "dns_infra_country", "isp_country",
+        "real_ip_country", "canarytoken_country",
+        "dkim_domain_country", "from_domain_country",
+    ])
+
+    # TZ offset → set of candidate countries (same as attributionEngine)
+    _TZ_COUNTRY_MAP: Dict[str, List[str]] = {
+        "+0000": ["United Kingdom", "Ghana", "Nigeria"],
+        "+0100": ["Nigeria", "Germany"],
+        "+0200": ["Ukraine", "Romania", "Bulgaria", "South Africa", "Germany"],
+        "+0300": ["Russia", "Belarus", "Turkey", "Ukraine"],
+        "+0330": ["Iran"],
+        "+0400": ["Azerbaijan"],
+        "+0430": ["Afghanistan"],
+        "+0500": ["Pakistan", "Kazakhstan"],
+        "+0530": ["India"],
+        "+0545": ["Nepal"],
+        "+0600": ["Bangladesh"],
+        "+0700": ["Vietnam", "Indonesia", "Thailand"],
+        "+0800": ["China", "Philippines", "Singapore"],
+        "+0900": ["North Korea", "Japan"],
+        "+1000": ["Australia"],
+        "-0300": ["Brazil"],
+        "-0400": ["Venezuela"],
+        "-0500": ["United States"],
+        "-0600": ["United States"],
+        "-0700": ["United States"],
+        "-0800": ["United States"],
+    }
+
+    # Charset → country (mirrors attributionEngine.CHARSET_REGION_MAP)
+    _CHARSET_COUNTRY_MAP: Dict[str, str] = {
+        "windows-1251": "Russia", "koi8-r":     "Russia",
+        "koi8-u":       "Ukraine","iso-8859-5":  "Russia",
+        "gb2312":       "China",  "gbk":         "China",
+        "gb18030":      "China",  "big5":        "China",
+        "hz-gb-2312":   "China",
+        "windows-1254": "Turkey", "iso-8859-9":  "Turkey",
+        "windows-1258": "Vietnam",
+        "windows-1250": "Romania","iso-8859-2":  "Romania",
+    }
+
+    def detect(self, cluster: "ThreatActorCluster") -> ConvergenceZone:
+        """
+        Run convergence detection on a single ThreatActorCluster.
+        Returns a ConvergenceZone even if no signals fire (score=0).
+        """
+        actor_id = cluster.actor_id
+        fps      = cluster.fingerprints  # List[EmailFingerprint]
+
+        # -- Step 1: collect signal → country votes across all emails -----
+        signal_votes: Dict[str, Counter] = defaultdict(Counter)
+
+        for fp in fps:
+            self._vote_temporal(fp, signal_votes)
+            self._vote_locale(fp, signal_votes)
+            self._vote_network(fp, signal_votes)
+            self._vote_content(fp, signal_votes)
+
+        # Flatten: signal → winning country (plurality)
+        breakdown: Dict[str, Optional[str]] = {}
+        for sig, votes in signal_votes.items():
+            breakdown[sig] = votes.most_common(1)[0][0] if votes else None
+
+        # -- Step 2: axis-level vote (majority within axis) ---------------
+        axis_votes:  Dict[str, Optional[str]] = {}   # axis → country
+        axis_weight: Dict[str, float]         = {}   # axis → weight if fired
+        axis_signals: Dict[str, List[str]]    = {}   # axis → which signals fired
+
+        for ax_name, (weight, sig_names) in self.AXES.items():
+            fired = {s: breakdown[s] for s in sig_names
+                     if s in breakdown and breakdown[s]}
+            if not fired:
+                continue
+            # Plurality within axis
+            ctr = Counter(fired.values())
+            winner = ctr.most_common(1)[0][0]
+            axis_votes[ax_name]   = winner
+            axis_weight[ax_name]  = weight
+            axis_signals[ax_name] = list(fired.keys())
+
+        if not axis_votes:
+            return self._empty(actor_id)
+
+        # -- Step 3: global winner ----------------------------------------
+        global_ctr = Counter(axis_votes.values())
+        converged_country, _ = global_ctr.most_common(1)[0]
+
+        n_fired  = len(axis_votes)
+        n_agree  = sum(1 for v in axis_votes.values() if v == converged_country)
+        w_agree  = sum(axis_weight[ax] for ax, v in axis_votes.items()
+                       if v == converged_country)
+        w_total  = sum(axis_weight.values())
+        score    = w_agree / w_total if w_total > 0 else 0.0
+
+        # -- Step 4: false-flag detection ---------------------------------
+        # Flag when 2+ axes with 2+ signals each point to DIFFERENT countries
+        # (i.e. inter-axis disagreement, not just disagreement with the winner).
+        multi_signal_axes = {
+            ax: v for ax, v in axis_votes.items()
+            if len(axis_signals.get(ax, [])) >= 1  # any axis that fired
+        }
+        # Find axes that voted for something other than the global winner
+        dissenting_axes = [
+            ax for ax, v in multi_signal_axes.items()
+            if v != converged_country
+        ]
+        # Count distinct dissenting countries across those axes
+        dissenting_countries = set(axis_votes[ax] for ax in dissenting_axes)
+        # False-flag: >=2 axes fire AND disagree with each other
+        # (converged country wins by plurality, but >=1 axis strongly contradicts)
+        false_flag_risk = (
+            len(axis_votes) >= 2          # at least 2 axes fired
+            and len(dissenting_axes) >= 1  # at least 1 axis disagrees
+            and n_agree < n_fired          # not unanimous
+            # Require the dissenting axes to have 2+ signals between them
+            and sum(len(axis_signals.get(ax, [])) for ax in dissenting_axes) >= 2
+        )
+        false_flag_detail: Optional[str] = None
+        if false_flag_risk:
+            examples = "; ".join(
+                f"{ax}→{axis_votes[ax]}" for ax in dissenting_axes[:3]
+            )
+            false_flag_detail = (
+                f"{len(dissenting_axes)} axis/axes contradict "
+                f"'{converged_country}' ({examples}) — possible misdirection"
+            )
+
+        # -- Step 5: confidence label --------------------------------------
+        if n_agree >= 3 and score >= 0.70:
+            label = "HIGH"
+        elif n_agree >= 2 and score >= 0.45:
+            label = "MEDIUM"
+        elif n_agree >= 1 and score > 0.0:
+            label = "LOW"
+        else:
+            label = "INSUFFICIENT"
+
+        # -- Step 6: analyst note -----------------------------------------
+        sig_list = ", ".join(
+            s for ax in axis_signals.values() for s in ax
+        )
+        if false_flag_risk:
+            note = (
+                f"⚠ False-flag risk: {n_agree}/{n_fired} axes converge on "
+                f"'{converged_country}' but {len(dissenting_axes)} axes "
+                f"contradict — likely deliberate misdirection."
+            )
+        elif label == "HIGH":
+            note = (
+                f"✓ Strong convergence: {n_agree}/{n_fired} independent axes "
+                f"({sig_list}) triangulate to '{converged_country}'."
+            )
+        elif label == "MEDIUM":
+            note = (
+                f"~ Partial convergence: {n_agree}/{n_fired} axes point to "
+                f"'{converged_country}' (score={score:.2f})."
+            )
+        else:
+            note = (
+                f"✗ Insufficient signal: only {n_agree} axis/axes fired "
+                f"for '{converged_country}' — gather more data."
+            )
+
+        return ConvergenceZone(
+            actor_id          = actor_id,
+            converged_country = converged_country,
+            convergence_score = round(score, 4),
+            n_signals_fired   = sum(len(v) for v in axis_signals.values()),
+            n_signals_agree   = n_agree,
+            signal_breakdown  = breakdown,
+            independent_axes  = axis_signals,
+            false_flag_risk   = false_flag_risk,
+            false_flag_detail = false_flag_detail,
+            confidence_label  = label,
+            analyst_note      = note,
+        )
+
+    # -- Private vote helpers -------------------------------------------------
+
+    def _vote_temporal(self, fp: "EmailFingerprint",
+                       votes: Dict[str, Counter]) -> None:
+        """Temporal axis: timezone_offset, timezone_region, send_hour_local."""
+        if fp.timezone_offset:
+            # TZ offset → candidate countries (may be >1, e.g. +0200)
+            # We record the offset itself; resolution to country happens in
+            # the axis aggregation below via _TZ_COUNTRY_MAP.
+            candidates = self._TZ_COUNTRY_MAP.get(fp.timezone_offset, [])
+            for c in candidates:
+                votes["timezone_offset"][c] += 1
+
+        if fp.timezone_region:
+            # timezone_region is a human string e.g. "Russia (Moscow) / East Africa"
+            # Extract country names from it using REGION_PRIORS keys
+            for country in self._extract_countries_from_region(fp.timezone_region):
+                votes["timezone_region"][country] += 1
+
+    def _vote_locale(self, fp: "EmailFingerprint",
+                     votes: Dict[str, Counter]) -> None:
+        """Locale axis: charset_region, subject_language."""
+        # charset stored on fingerprint if FingerprintExtractor was extended;
+        # fall through gracefully if not present
+        charset = getattr(fp, "email_charset", None)
+        if charset:
+            cs_lower = charset.lower().strip()
+            country = self._CHARSET_COUNTRY_MAP.get(cs_lower)
+            if country:
+                votes["charset_region"][country] += 1
+
+        # subject_language: free-text like "Russian" or "ru"
+        lang = getattr(fp, "subject_language", None)
+        if lang:
+            lc = self._LANG_TO_COUNTRY.get(lang.lower().strip())
+            if lc:
+                votes["subject_language"][lc] += 1
+
+    def _vote_network(self, fp: "EmailFingerprint",
+                      votes: Dict[str, Counter]) -> None:
+        """Network axis: ipv6_country, dns_infra_country, isp_country."""
+        for attr, sig in [
+            ("ipv6_country",      "ipv6_country"),
+            ("dns_infra_country", "dns_infra_country"),
+            ("isp_country",       "isp_country"),
+        ]:
+            val = getattr(fp, attr, None)
+            if val:
+                votes[sig][val] += 1
+
+    def _vote_content(self, fp: "EmailFingerprint",
+                      votes: Dict[str, Counter]) -> None:
+        """Content axis: DKIM domain TLD, From domain TLD."""
+        if fp.dkim_domain:
+            country = self._tld_to_country(fp.dkim_domain)
+            if country:
+                votes["dkim_domain_country"][country] += 1
+
+        if fp.from_domain:
+            country = self._tld_to_country(fp.from_domain)
+            if country:
+                votes["from_domain_country"][country] += 1
+
+    # -- Lookup helpers --------------------------------------------------------
+
+    _REGION_COUNTRIES = {
+        "Russia": ["Russia"], "China": ["China"],
+        "India": ["India"], "Brazil": ["Brazil"],
+        "United States": ["United States"], "Nigeria": ["Nigeria"],
+        "Ukraine": ["Ukraine"], "Romania": ["Romania"],
+        "Pakistan": ["Pakistan"], "Iran": ["Iran"],
+        "Vietnam": ["Vietnam"], "Indonesia": ["Indonesia"],
+        "Turkey": ["Turkey"], "Philippines": ["Philippines"],
+        "Ghana": ["Ghana"], "South Africa": ["South Africa"],
+        "Belarus": ["Belarus"], "Kazakhstan": ["Kazakhstan"],
+        "Bulgaria": ["Bulgaria"], "United Kingdom": ["United Kingdom"],
+        "Germany": ["Germany"], "Venezuela": ["Venezuela"],
+        "North Korea": ["North Korea"], "Japan": ["Japan"],
+        "Australia": ["Australia"],
+    }
+
+    _LANG_TO_COUNTRY: Dict[str, str] = {
+        "russian": "Russia", "ru": "Russia",
+        "chinese": "China",  "zh": "China",
+        "ukrainian": "Ukraine", "uk": "Ukraine",
+        "persian": "Iran", "farsi": "Iran", "fa": "Iran",
+        "turkish": "Turkey", "tr": "Turkey",
+        "vietnamese": "Vietnam", "vi": "Vietnam",
+        "hindi": "India", "hi": "India",
+        "portuguese": "Brazil", "pt": "Brazil",
+        "romanian": "Romania", "ro": "Romania",
+        "german": "Germany", "de": "Germany",
+    }
+
+    _CC_TLD_MAP: Dict[str, str] = {
+        ".ru": "Russia",   ".cn": "China",    ".ua": "Ukraine",
+        ".ir": "Iran",     ".tr": "Turkey",   ".vn": "Vietnam",
+        ".in": "India",    ".br": "Brazil",   ".ro": "Romania",
+        ".de": "Germany",  ".ng": "Nigeria",  ".za": "South Africa",
+        ".by": "Belarus",  ".kz": "Kazakhstan", ".bg": "Bulgaria",
+        ".gb": "United Kingdom", ".uk": "United Kingdom",
+        ".ve": "Venezuela", ".kp": "North Korea",
+        ".ph": "Philippines", ".gh": "Ghana",
+        ".id": "Indonesia", ".pk": "Pakistan",
+    }
+
+    def _tld_to_country(self, domain: str) -> Optional[str]:
+        """Extract country from ccTLD. Returns None for .com/.net/etc."""
+        if not domain:
+            return None
+        d = domain.lower().rstrip(".")
+        for tld, country in self._CC_TLD_MAP.items():
+            if d.endswith(tld):
+                return country
+        return None
+
+    def _extract_countries_from_region(self, region_str: str) -> List[str]:
+        """Parse 'Russia (Moscow) / East Africa' → ['Russia']."""
+        found = []
+        for country in self._REGION_COUNTRIES:
+            if country.lower() in region_str.lower():
+                found.append(country)
+        return found
+
+    @staticmethod
+    def _empty(actor_id: str) -> ConvergenceZone:
+        return ConvergenceZone(
+            actor_id=actor_id, converged_country=None,
+            convergence_score=0.0, n_signals_fired=0, n_signals_agree=0,
+            signal_breakdown={}, independent_axes={},
+            false_flag_risk=False, false_flag_detail=None,
+            confidence_label="INSUFFICIENT",
+            analyst_note="✗ No VPN-resistant signals available for triangulation.",
+        )
+
+
 @dataclass
 class CorrelationReport:
     """Complete correlation report from a batch of emails."""
@@ -165,6 +577,8 @@ class CorrelationReport:
     similarity_matrix:  Dict[str, Dict[str, float]]  # fp_a → fp_b → score
     correlations:       List[FingerprintSimilarity]
     timestamp:          str
+    # Convergence zone results — one per actor cluster
+    convergence_zones:  Dict[str, ConvergenceZone] = field(default_factory=dict)
 
     def summary(self) -> str:
         lines = []
@@ -191,14 +605,23 @@ class CorrelationReport:
             if actor.ttps:
                 lines.append(f"    TTPs:        {', '.join(actor.ttps)}")
             lines.append(f"    Emails:      {', '.join(actor.emails)}")
+            # Convergence zone
+            cz = self.convergence_zones.get(actor.actor_id)
+            if cz and cz.confidence_label != "INSUFFICIENT":
+                lines.append(f"    Convergence: [{cz.confidence_label}] "
+                             f"score={cz.convergence_score:.2f}  "
+                             f"axes={cz.n_signals_agree}/{cz.n_signals_fired}")
+                lines.append(f"      {cz.analyst_note}")
+                if cz.false_flag_risk:
+                    lines.append(f"      ⚠ FALSE-FLAG: {cz.false_flag_detail}")
             lines.append("")
         lines.append("=" * 70)
         return "\n".join(lines)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # SIGNAL WEIGHTS
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 SIGNAL_WEIGHTS = {
     # Highest weight — very hard to fake or accidentally change
@@ -226,9 +649,9 @@ THRESHOLD_LIKELY_SAME  = 0.50
 THRESHOLD_POSSIBLE     = 0.30
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # FINGERPRINT EXTRACTOR
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 class FingerprintExtractor:
     """
@@ -267,13 +690,13 @@ class FingerprintExtractor:
         bt = result.vpn_backtrack_analysis
         ri = result.real_ip_analysis
 
-        # ── Temporal signals ──────────────────────────────────────────────
+        # -- Temporal signals ----------------------------------------------
         tz_offset   = self._extract_tz_offset(ha)
         tz_region   = self.TZ_REGION_MAP.get(tz_offset) if tz_offset else None
         send_hour   = self._extract_send_hour(ha)
         send_dow    = self._extract_day_of_week(ha)
 
-        # ── Infrastructure signals ────────────────────────────────────────
+        # -- Infrastructure signals ----------------------------------------
         vpn_provider = None
         vpn_asn      = None
         origin_ip    = ha.origin_ip if ha else None
@@ -287,7 +710,7 @@ class FingerprintExtractor:
         if bt and not vpn_provider:
             vpn_provider = getattr(bt, 'vpn_provider', None)
 
-        # ── Real IP (v2 webmail extraction takes priority) ────────────────
+        # -- Real IP (v2 webmail extraction takes priority) ----------------
         real_ip      = None
         real_ip_src  = None
 
@@ -301,13 +724,13 @@ class FingerprintExtractor:
             real_ip     = bt.probable_real_ip
             real_ip_src = "vpn_backtrack"
 
-        # ── Provider signals ──────────────────────────────────────────────
+        # -- Provider signals ----------------------------------------------
         webmail  = getattr(we, 'provider_name', None) if we else None
         dkim_dom = self._extract_dkim_domain(ha)
         mailer   = self._extract_mailer(ha)
         hops     = ha.hop_count if ha else 1
 
-        # ── Content signals ───────────────────────────────────────────────
+        # -- Content signals -----------------------------------------------
         subj_pat  = self._normalize_subject(ha.email_subject if ha else "")
         from_dom  = self._extract_from_domain(ha.email_from if ha else "")
 
@@ -336,47 +759,22 @@ class FingerprintExtractor:
         fp.compute_hash()
         return fp
 
-    # ── Private helpers ───────────────────────────────────────────────────
+    # -- Private helpers ---------------------------------------------------
 
     def _extract_tz_offset(self, ha) -> Optional[str]:
-        """
-        Extract timezone offset from email_date.
-        Handles both raw Date header format (+0530) and
-        Python isoformat() output (+05:30) — the colon is added by isoformat().
-        """
         if not ha or not ha.email_date:
             return None
-        date_str = str(ha.email_date)
-
-        # isoformat() produces +05:30 — match and normalise to +0530
-        m = re.search(r'([+-])(\d{2}):(\d{2})$', date_str)
-        if m:
-            return f"{m.group(1)}{m.group(2)}{m.group(3)}"
-
-        # Raw Date header: +0530 (no colon)
-        m = re.search(r'([+-]\d{4})', date_str)
-        if m:
-            return m.group(1)
-
-        return None
+        m = re.search(r'([+-]\d{4})', str(ha.email_date))
+        return m.group(1) if m else None
 
     def _extract_send_hour(self, ha) -> Optional[int]:
-        """Extract local send hour (0-23) from email_date."""
         if not ha or not ha.email_date:
             return None
-        date_str = str(ha.email_date)
-
-        # isoformat: 2002-08-23T15:42:17+05:30
-        m = re.search(r'T(\d{2}):', date_str)
+        m = re.search(r'T(\d{2}):', str(ha.email_date))
         if m:
             return int(m.group(1))
-
-        # Raw Date header: 15:42:17
-        m = re.search(r'\b(\d{2}):\d{2}:\d{2}\b', date_str)
-        if m:
-            return int(m.group(1))
-
-        return None
+        m2 = re.search(r'(\d{2}):(\d{2}):\d{2}', str(ha.email_date))
+        return int(m2.group(1)) if m2 else None
 
     def _extract_day_of_week(self, ha) -> Optional[str]:
         if not ha or not ha.email_date:
@@ -432,9 +830,9 @@ class FingerprintExtractor:
         return m.group(1).lower() if m else None
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # SIMILARITY ENGINE
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 class SimilarityEngine:
     """
@@ -507,7 +905,7 @@ class SimilarityEngine:
             verdict              = verdict,
         )
 
-    # ── Matchers ─────────────────────────────────────────────────────────
+    # -- Matchers ---------------------------------------------------------
 
     def _exact(self, a, b) -> Tuple[float, str]:
         if str(a).strip().lower() == str(b).strip().lower():
@@ -563,9 +961,9 @@ class SimilarityEngine:
 import os
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # CLUSTER BUILDER
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 class ClusterBuilder:
     """
@@ -671,11 +1069,8 @@ class ClusterBuilder:
         if send_window:
             ttps.append(f"Send window: {send_window}")
 
-        # Geographic inference: timezone first, IP geolocation as fallback
+        # Geographic inference from timezone
         country_from_tz = _tz_to_country(tz)
-        if not country_from_tz:
-            all_real_ips = list(set(fp.real_ip for fp in fps if fp.real_ip))
-            country_from_tz = _country_from_ips(all_real_ips)
 
         return ThreatActorCluster(
             actor_id            = actor_id,
@@ -712,51 +1107,21 @@ class ClusterBuilder:
 def _tz_to_country(tz_offset: Optional[str]) -> Optional[str]:
     """Map timezone offset to most likely single country for display."""
     TZ_COUNTRY = {
-        "+0000": "United Kingdom",   "+0100": "Germany",
-        "+0200": "Ukraine",          "+0300": "Russia",
-        "+0330": "Iran",             "+0400": "UAE",
-        "+0430": "Afghanistan",      "+0500": "Pakistan",
-        "+0530": "India",            "+0545": "Nepal",
-        "+0600": "Bangladesh",       "+0630": "Myanmar",
-        "+0700": "Thailand",         "+0800": "China",
-        "+0900": "Japan",            "+0930": "Australia",
-        "+1000": "Australia",        "+1200": "New Zealand",
-        "-0300": "Brazil",           "-0400": "Venezuela",
-        "-0500": "United States",    "-0600": "Mexico",
-        "-0700": "United States",    "-0800": "United States",
-        "-1000": "United States",
+        "+0530": "India",        "+0545": "Nepal",
+        "+0600": "Bangladesh",   "+0530": "India",
+        "+0800": "China",        "+0900": "Japan",
+        "+0700": "Thailand",     "+0300": "Russia",
+        "+0200": "South Africa", "+0100": "Germany",
+        "+0000": "UK",           "-0500": "United States (ET)",
+        "-0800": "United States (PT)", "-0300": "Brazil",
+        "+0400": "UAE",          "+0330": "Iran",
     }
     return TZ_COUNTRY.get(tz_offset) if tz_offset else None
 
 
-def _country_from_ips(all_origin_ips: list) -> Optional[str]:
-    """
-    Derive likely_country from origin IPs when timezone is unavailable.
-    Uses ip-api.com (same as autoCorpusBuilder) with a short cache.
-    Only called when tz-based country is None.
-    """
-    import urllib.request, json, time
-    for ip in all_origin_ips[:3]:   # try up to 3 IPs
-        if not ip:
-            continue
-        try:
-            req = urllib.request.Request(
-                f"http://ip-api.com/json/{ip}?fields=status,country,countryCode",
-                headers={"User-Agent": "HunterTrace/3.0"}
-            )
-            with urllib.request.urlopen(req, timeout=5) as r:
-                data = json.loads(r.read())
-            time.sleep(1.4)
-            if data.get("status") == "success" and data.get("country"):
-                return data["country"]
-        except Exception:
-            continue
-    return None
-
-
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # MAIN CORRELATOR
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 class CampaignCorrelator:
     """
@@ -818,6 +1183,17 @@ class CampaignCorrelator:
         # Cluster
         clusters, singletons = self.cluster_builder.build(fps, sims)
 
+        # -- Convergence zone detection (post-clustering) -----------------
+        detector = ConvergenceDetector()
+        convergence_zones: Dict[str, ConvergenceZone] = {}
+        for cluster in clusters:
+            cz = detector.detect(cluster)
+            convergence_zones[cluster.actor_id] = cz
+            if self.verbose and cz.confidence_label != "INSUFFICIENT":
+                print(f"  [convergence] {cluster.actor_id}: "
+                      f"{cz.confidence_label} → {cz.converged_country} "
+                      f"(score={cz.convergence_score:.2f})")
+
         return CorrelationReport(
             total_emails      = n,
             total_actors      = len(clusters),
@@ -826,6 +1202,7 @@ class CampaignCorrelator:
             similarity_matrix = dict(matrix),
             correlations      = sims,
             timestamp         = datetime.now().isoformat(),
+            convergence_zones = convergence_zones,
         )
 
     def _extract_from_json(self, email_file: str, report: dict) -> Optional[EmailFingerprint]:

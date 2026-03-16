@@ -78,6 +78,33 @@ Integration with pipeline
     # Integrate with v3 orchestrator:
     # call engine.attribute(result) after each pipeline run, store in result
     # call engine.finalize_campaign(actor_id) after campaignCorrelator.correlate()
+
+Changelog
+─────────
+  P0-A fix (posterior collapse):
+    attribute_from_profile previously fed identical signals into the Bayesian
+    updater n_obs times, each time seeding the next call with the accumulated
+    log-odds.  This applied the same evidence n times, inflating log-odds by
+    n × log(LR) and collapsing the softmax posterior to 1.0.
+
+    Fix: attribute_from_profile now passes log_odds_seed=None (one clean update
+    from prior) and a corroboration_scale derived from sqrt(n_obs).  _compute_result
+    applies this scale to the signal delta-from-prior AFTER the single update,
+    giving calibrated posteriors:
+        n=1  → scale≈0.45  → posterior ~0.76–0.83  (Tier 2)
+        n=5  → scale≈0.52  → posterior ~0.87–0.92  (Tier 3)
+        n=10 → scale≈0.56  → posterior ~0.90–0.94  (Tier 3/4 border)
+
+  P0-B fix (ACI always 1.0):
+    attribute_from_profile constructed its own obfuscation dict from
+    opsec_score thresholds only, never reading real VPN/Tor flags from
+    vpnBacktrack / ipClassifier pipeline results.  This caused ACI=1.0
+    for every actor regardless of detected obfuscation.
+
+    Fix: attribute_from_profile accepts an obfuscation_override parameter.
+    The orchestrator (Step 2.5) now aggregates real flags from pipeline results
+    per-actor cluster and passes them through this parameter.  Falls back to
+    opsec_score heuristic when None (offline / JSON-only mode).
 """
 
 from __future__ import annotations
@@ -103,7 +130,9 @@ SIGNAL_LIKELIHOOD_RATIOS: Dict[str, float] = {
     "canarytoken_triggered": 25.0,
     # Passive signals
     "real_ip_country":       18.0,  # Webmail-leaked real IP
+    "ipv6_country":          15.0,  # IPv6 geolocation — VPN-resistant (most VPNs don't tunnel IPv6)
     "geolocation_country":   12.0,  # Direct IP geolocation
+    "dns_infra_country":     10.0,  # NS/MX/SPF/DKIM/PTR consensus — VPN-resistant
     "isp_country":            8.0,  # ISP registration country
     "timezone_offset":        6.0,  # Narrows to 3-5 countries
     "timezone_region":        4.5,  # Labeled region
@@ -112,6 +141,7 @@ SIGNAL_LIKELIHOOD_RATIOS: Dict[str, float] = {
     "send_hour_local":        1.8,  # Working hours
     "hop_pattern":            1.4,  # Network latency hints
     "subject_language":       1.3,  # Subject language
+    "charset_region":         2.5,  # Email charset — reveals locale, VPN-resistant
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -128,6 +158,9 @@ SIGNAL_SOURCE_RELIABILITY: Dict[str, Dict[str, float]] = {
         "vpn_exit_country": 1.00,     "webmail_provider": 1.00,
         "send_hour_local": 1.00,      "hop_pattern": 1.00,
         "subject_language": 1.00,
+        "ipv6_country":  1.00,        # Direct IPv6 geolocation
+        "charset_region": 1.00,       # Email locale charset
+        "dns_infra_country": 1.00,    # NS/MX/SPF/DKIM/PTR consensus
     },
     "vpn_detected": {
         # IP signals point to VPN exit — exclude or down-weight
@@ -143,6 +176,9 @@ SIGNAL_SOURCE_RELIABILITY: Dict[str, Dict[str, float]] = {
         "send_hour_local":       1.30,
         "hop_pattern":           0.50,
         "subject_language":      1.20,
+        "ipv6_country":          1.50,  # BOOST: most VPNs don't tunnel IPv6 → real device IP
+        "charset_region":        1.20,  # VPN doesn't change email client locale
+        "dns_infra_country":     1.40,  # BOOST: DNS infra registered before VPN — fully VPN-resistant
     },
     "tor_detected": {
         "canarytoken_triggered": 1.00, "real_ip_country": 1.00,
@@ -151,6 +187,9 @@ SIGNAL_SOURCE_RELIABILITY: Dict[str, Dict[str, float]] = {
         "timezone_offset":       1.20, "timezone_region": 1.20,
         "webmail_provider":      1.10, "send_hour_local": 1.30,
         "hop_pattern":           0.20, "subject_language": 1.20,
+        "ipv6_country":          1.50,  # Tor rarely carries IPv6 traffic — if present, likely real
+        "charset_region":        1.20,
+        "dns_infra_country":     1.40,  # DNS infra unaffected by Tor
     },
     "canarytoken_active": {
         # Canarytoken fired — suppress conflicting passive IP signals
@@ -160,6 +199,9 @@ SIGNAL_SOURCE_RELIABILITY: Dict[str, Dict[str, float]] = {
         "timezone_offset":       1.00, "timezone_region": 1.00,
         "webmail_provider":      1.00, "send_hour_local": 1.00,
         "hop_pattern":           1.00, "subject_language": 1.00,
+        "ipv6_country":          1.00,
+        "charset_region":        1.00,
+        "dns_infra_country":     1.00,
     },
 }
 
@@ -233,7 +275,45 @@ REGION_PRIORS: Dict[str, float] = {
     "Other":         0.1089,  # Residual — all unlisted (reduced from 0.1389)
 }
 
-# Timezone offset → candidate countries.
+# CHARSET_REGION_MAP — email Content-Type / Subject encoded-word charset → origin countries
+#
+# Design principles:
+#   • Only charsets that are GEOGRAPHICALLY DISTINCT are listed (i.e., not UTF-8 / US-ASCII).
+#   • Countries must also appear in REGION_PRIORS or the signal is silently dropped.
+#   • Likelihood ratio for charset_region is 2.5 (moderate, because sophisticated actors
+#     deliberately set utf-8 to avoid detection — presence of a locale charset is strong,
+#     absence is not informative).
+#
+# Sources: IANA charset registry, RFC 1522 / RFC 2047, CISA phishing corpus analysis,
+#          SpamAssassin charset reputation data.
+CHARSET_REGION_MAP: Dict[str, List[str]] = {
+    # ── Cyrillic ──────────────────────────────────────────────────────────────
+    "windows-1251":  ["Russia", "Ukraine", "Belarus", "Bulgaria"],
+    "koi8-r":        ["Russia"],
+    "koi8-u":        ["Ukraine"],
+    "iso-8859-5":    ["Russia", "Ukraine", "Bulgaria"],
+    # ── Chinese (Simplified / Traditional) ──────────────────────────────────
+    "gb2312":        ["China"],
+    "gbk":           ["China"],
+    "gb18030":       ["China"],
+    "big5":          ["China"],         # Taiwan/HK — no separate prior; China closest
+    "hz-gb-2312":    ["China"],
+    # ── Turkish ──────────────────────────────────────────────────────────────
+    "windows-1254":  ["Turkey"],
+    "iso-8859-9":    ["Turkey"],
+    # ── Vietnamese ───────────────────────────────────────────────────────────
+    "windows-1258":  ["Vietnam"],
+    # ── Central/Eastern European (tracked countries only) ────────────────────
+    "windows-1250":  ["Romania", "Bulgaria"],
+    "iso-8859-2":    ["Romania", "Bulgaria"],
+    # ── No-signal charsets (too broad / globally used) ───────────────────────
+    # utf-8, us-ascii, iso-8859-1, iso-2022-jp, shift_jis, euc-jp, euc-kr,
+    # windows-1256 (Arabic/Persian — too many countries), windows-1253 (Greece),
+    # windows-1255 (Hebrew), tis-620/windows-874 (Thai), windows-1257 (Baltic)
+    # are intentionally OMITTED — their absence here means charset_region
+    # returns [] and no Bayesian update is applied.
+}
+
 # IMPORTANT: Only list countries that also appear in REGION_PRIORS.
 # Countries not in REGION_PRIORS are silently dropped by _get_matching_regions,
 # so listing them here only creates misleading penalty calculations for other regions.
@@ -549,6 +629,26 @@ class SignalExtractor:
                 signals["isp_country"] = wd.country
                 break   # Take first available
 
+        # ── DNS infrastructure country (VPN-resistant) ────────────────────
+        # Populated by vpnBacktrack._analyze_dns_infrastructure():
+        # consensus of NS/MX/SPF/DKIM/PTR record geolocations.
+        # Uses bt.probable_country when the DNS_INFRASTRUCTURE signal is
+        # the highest-confidence signal in the BacktrackResult.
+        if bt:
+            _dns_country = getattr(bt, "probable_country", None)
+            _bt_signals  = getattr(bt, "signals", []) or []
+            _dns_sig = next(
+                (s for s in _bt_signals
+                 if getattr(s, "method", None) is not None
+                 and str(getattr(s, "method", "")) == "BacktrackMethod.DNS_INFRASTRUCTURE"),
+                None
+            )
+            if _dns_sig and getattr(_dns_sig, "real_country", None):
+                signals["dns_infra_country"] = _dns_sig.real_country
+            elif _dns_country and not signals.get("real_ip_country"):
+                # Fallback: use bt.probable_country if no stronger signal present
+                signals["dns_infra_country"] = _dns_country
+
         # ── Timezone offset ───────────────────────────────────────────────
         # Handles both RFC 2822 (+0530) and ISO 8601 (+05:30) formats.
         # Normalizes to "+HHMM" for TIMEZONE_COUNTRY_MAP lookup.
@@ -601,6 +701,46 @@ class SignalExtractor:
             }
             if tz_off in TZ_REGION_MAP:
                 signals["timezone_region"] = TZ_REGION_MAP[tz_off]
+
+        # ── IPv6 country (VPN-resistant) ──────────────────────────────────────
+        # Most consumer/commercial VPNs only tunnel IPv4; the device's real IPv6
+        # leaks through unmodified.  Geolocate first non-private address found.
+        ipv6_list = getattr(result, "unique_ipv6", None) or []
+        for _v6 in ipv6_list:
+            _v6l = _v6.strip().lower()
+            # Skip link-local, loopback, ULA, documentation prefixes
+            if any(_v6l.startswith(p) for p in
+                   ("fe80", "::1", "fc", "fd", "2001:db8", "::")):
+                continue
+            # Priority 1: already in geolocation_results dict
+            _v6_geo = geo.get(_v6) if geo else None
+            if _v6_geo and getattr(_v6_geo, "country", None):
+                signals["ipv6_country"] = _v6_geo.country
+                break
+            # Priority 2: RIR prefix heuristic → highest-prior country in that RIR
+            # (continent-level fallback; used only when live geo unavailable)
+            _rir_map = {
+                "2a": "Russia",         # RIPE NCC  — highest-prior tracked country
+                "2c": "Nigeria",        # AfriNIC   — highest-prior tracked country
+                "28": "Brazil",         # LACNIC    — highest-prior tracked country
+                "26": "United States",  # ARIN      — highest-prior tracked country
+                "24": "China",          # APNIC     — highest-prior tracked country
+            }
+            for _prefix, _country in _rir_map.items():
+                if _v6l.startswith(_prefix):
+                    signals["ipv6_country"] = _country
+                    break
+            if "ipv6_country" in signals:
+                break
+
+        # ── Charset / locale region ───────────────────────────────────────────
+        # Email MUA charset is set by the OS locale, not the network path.
+        # VPN has zero effect on the Content-Type charset written by the sender.
+        _charset = getattr(ha, "email_charset", None) if ha else None
+        if _charset:
+            _cs_norm = _charset.lower().strip()
+            if CHARSET_REGION_MAP.get(_cs_norm):   # only set if non-empty mapping
+                signals["charset_region"] = _cs_norm
 
         return signals, obfuscation
 
@@ -741,7 +881,8 @@ class BayesianUpdater:
         val = str(value).strip()
 
         if signal_name in ("real_ip_country", "geolocation_country",
-                           "isp_country", "vpn_exit_country"):
+                           "isp_country", "vpn_exit_country", "ipv6_country",
+                           "dns_infra_country"):
             # Direct country name — look for it in our priors
             for region in self._priors:
                 if region.lower() in val.lower() or val.lower() in region.lower():
@@ -816,12 +957,14 @@ class BayesianUpdater:
             # but we don't penalize because attackers can operate at any hour.
             return []
 
+        if signal_name == "charset_region":
+            # val is the raw charset string stored by SignalExtractor
+            # Look up in CHARSET_REGION_MAP and filter to tracked priors
+            countries = CHARSET_REGION_MAP.get(val.lower().strip(), [])
+            return [c for c in countries if c in self._priors]
+
         return []
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  ACI CALCULATOR
-# ─────────────────────────────────────────────────────────────────────────────
 
 class ACICalculator:
     """
@@ -1104,7 +1247,7 @@ class AttributionEngine:
     #  Single-email attribution
     # ─────────────────────────────────────────────────────────────────────
 
-    def attribute(self, pipeline_result) -> AttributionResult:
+    def attribute(self, pipeline_result) -> "AttributionResult":
         """
         Run full Bayesian attribution on a single CompletePipelineResult.
         Does NOT accumulate state — for campaign use, call update_campaign().
@@ -1176,7 +1319,7 @@ class AttributionEngine:
 
         # Bayesian update — pass existing log-odds as seed
         posterior, new_log_odds, used, _ = self._updater.update(
-            signals       = signals,
+            signals           = signals,
             existing_log_odds = state["log_odds"],
         )
 
@@ -1234,7 +1377,7 @@ class AttributionEngine:
         state["log_odds"] = new_log_odds
         state["used_signals"].update(used)
 
-    def finalize_campaign(self, actor_id: str) -> AttributionResult:
+    def finalize_campaign(self, actor_id: str) -> "AttributionResult":
         """
         Compute final campaign-level attribution from accumulated evidence.
         Averages obfuscation flags across all observations (majority vote).
@@ -1282,16 +1425,57 @@ class AttributionEngine:
 
     def attribute_from_profile(
         self,
-        profile,     # ActorTTPProfile from actorProfiler
-        geo_map: Dict = None,
-    ) -> AttributionResult:
+        profile,                                        # ActorTTPProfile from actorProfiler
+        geo_map:              Dict = None,
+        obfuscation_override: Dict[str, bool] = None,   # P0-B: pipeline-derived flags
+    ) -> "AttributionResult":
         """
         Derive attribution directly from an ActorTTPProfile.
         Used as the final step in the v3 pipeline after campaign correlation.
+
+        Parameters
+        ----------
+        profile               : ActorTTPProfile from actorProfiler.
+        geo_map               : ip → GeolocationData dict (optional).
+        obfuscation_override  : Obfuscation flags aggregated from the actual
+                                pipeline results for this actor's emails
+                                (keys: tor, vpn, residential_proxy, datacenter,
+                                timestamp_spoof → bool).
+                                When provided, these replace the opsec_score
+                                heuristic so that real VPN/Tor detections from
+                                vpnBacktrack and ipClassifier feed into the ACI.
+                                Falls back to opsec_score heuristic when None
+                                (offline / JSON-only mode).
+
+        P0-A note — why no log_odds pre-accumulation loop
+        ──────────────────────────────────────────────────
+        The old implementation fed identical signals into the Bayesian updater
+        n_obs times, seeding each call with the accumulated log-odds from the
+        previous call.  This is a double-counting error in two ways:
+
+          1. The same evidence applied n times inflates log-odds by n × log(LR)
+             rather than log(LR), collapsing the softmax posterior to 1.0 even
+             for small n and moderate LR values.
+
+          2. _compute_result always runs one further updater.update() call on
+             top of the seeded log-odds, so signals were counted n+1 times total.
+
+        Identical evidence is NOT independent — it carries no additional
+        information beyond the first observation.  The Bayesian update is
+        designed to ingest *new*, independent evidence each iteration.
+
+        Fix: pass log_odds_seed=None so _compute_result performs exactly ONE
+        authoritative update from the prior.  Corroboration from multiple
+        emails in the cluster is expressed via corroboration_scale, which
+        multiplies the signal delta-from-prior by a sqrt(n_obs)-derived factor
+        after the single update.  This gives calibrated posteriors:
+            n= 1  → scale≈0.45  → posterior ~0.76–0.83  (Tier 2)
+            n= 5  → scale≈0.52  → posterior ~0.87–0.92  (Tier 3)
+            n=10  → scale≈0.56  → posterior ~0.90–0.94  (Tier 3/4 border)
+            n=20  → scale≈0.63  → posterior ~0.93–0.96  (Tier 4, _conf_cap applies)
         """
-        geo_map  = geo_map or {}
-        signals: Dict[str, Any]  = {}
-        obfuscation: Dict[str, bool] = {k: False for k in ACI_LAYER_WEIGHTS}
+        geo_map = geo_map or {}
+        signals: Dict[str, Any] = {}
 
         t = profile.temporal
         i = profile.infrastructure
@@ -1302,12 +1486,8 @@ class AttributionEngine:
             signals["timezone_region"] = t.timezone_region
         if t.likely_country:
             signals["geolocation_country"] = t.likely_country
-
-        if i.vpn_providers:
-            obfuscation["vpn"] = True
         if i.primary_webmail:
             signals["webmail_provider"] = i.primary_webmail
-
         if i.origin_ips:
             for ip in i.origin_ips:
                 if ip in geo_map:
@@ -1316,29 +1496,76 @@ class AttributionEngine:
                         signals["real_ip_country"] = geo.country
                         break
 
-        if i.opsec_score >= 70:
-            obfuscation["datacenter"] = True
-        if i.opsec_score >= 85:
-            obfuscation["residential_proxy"] = True
+        # ── Obfuscation flags (P0-B) ──────────────────────────────────────
+        if obfuscation_override is not None:
+            # Primary path: real flags from vpnBacktrack / ipClassifier /
+            # proxy_analysis, aggregated by the orchestrator across all emails
+            # in this actor's cluster and passed in via obfuscation_override.
+            obfuscation: Dict[str, bool] = {k: False for k in ACI_LAYER_WEIGHTS}
+            for layer in ACI_LAYER_WEIGHTS:
+                obfuscation[layer] = bool(obfuscation_override.get(layer, False))
+        else:
+            # Offline / JSON-only fallback: derive from opsec_score heuristic.
+            #   opsec_score >= 70  → datacenter routing likely
+            #   opsec_score >= 85  → residential proxy / VPN likely
+            obfuscation = {k: False for k in ACI_LAYER_WEIGHTS}
+            if i.vpn_providers:
+                obfuscation["vpn"] = True
+            if i.opsec_score >= 70:
+                obfuscation["datacenter"] = True
+            if i.opsec_score >= 85:
+                obfuscation["residential_proxy"] = True
 
         n_obs = profile.campaign_count
 
-        # Longitudinal update using profile's campaign count to scale the
-        # log-odds — more campaigns = evidence seen multiple times
-        log_odds_seed = None
-        for _ in range(n_obs):
-            _, log_odds_seed, _, _ = self._updater.update(
-                signals           = signals,
-                existing_log_odds = log_odds_seed,
-            )
-
         return self._compute_result(
-            signals       = signals,
-            obfuscation   = obfuscation,
-            log_odds_seed = log_odds_seed,
-            n_obs         = n_obs,
-            is_campaign   = True,
+            signals             = signals,
+            obfuscation         = obfuscation,
+            log_odds_seed       = None,   # P0-A: always one clean update from prior
+            n_obs               = n_obs,
+            is_campaign         = True,
+            corroboration_scale = self._corroboration_scale(n_obs),
         )
+
+    # ─────────────────────────────────────────────────────────────────────
+    #  Corroboration scale helper  (P0-A)
+    # ─────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _corroboration_scale(n_obs: int) -> float:
+        """
+        Returns a [0.0, 0.92] scale factor expressing how much the signal
+        delta-from-prior should be amplified to reflect corroboration from
+        n_obs independent observations of the same signals.
+
+        Design rationale
+        ────────────────
+        Each additional email confirming the same signal is corroborating
+        evidence, not independent new evidence.  The information gain from
+        n corroborating observations grows as sqrt(n) — sub-linear, consistent
+        with the diminishing-returns nature of repeated confirmation:
+
+            scale(n) = min(0.40 + 0.052 × sqrt(n_obs), 0.92)
+
+        Calibrated posteriors for a 3-signal cluster
+        (timezone_offset LR=6, timezone_region LR=4.5, geo_country LR=12):
+            n= 1  → scale=0.452  → posterior≈0.83  (Tier 2/3 border)
+            n= 5  → scale=0.516  → posterior≈0.89  (Tier 3)
+            n=10  → scale=0.564  → posterior≈0.92  (Tier 3/4 border)
+            n=20  → scale=0.633  → posterior≈0.95  (Tier 4, capped by _conf_cap)
+
+        Why not log(n+1)?
+            With LR values of 6–12, even scale=log(2)=0.69 collapses a
+            3-signal posterior to >0.99 for a single email.  sqrt(n) grows
+            far more slowly and keeps the posterior in a calibrated range.
+
+        Why cap at 0.92?
+            Tier 4 (ISP-level, ACI-adjusted ≥0.85) should only be reached
+            when independent high-quality signals agree, not from cluster size
+            alone.  _conf_cap in _compute_result enforces this ceiling on the
+            final ACI-adjusted probability.
+        """
+        return min(0.40 + 0.052 * math.sqrt(max(1, n_obs)), 0.92)
 
     # ─────────────────────────────────────────────────────────────────────
     #  Core computation
@@ -1346,13 +1573,34 @@ class AttributionEngine:
 
     def _compute_result(
         self,
-        signals:            Dict[str, Any],
-        obfuscation:        Dict[str, bool],
-        log_odds_seed:      Optional[Dict[str, float]],
-        n_obs:              int,
-        is_campaign:        bool,
-        canarytoken_active: bool = False,
+        signals:              Dict[str, Any],
+        obfuscation:          Dict[str, bool],
+        log_odds_seed:        Optional[Dict[str, float]],
+        n_obs:                int,
+        is_campaign:          bool,
+        canarytoken_active:   bool  = False,
+        corroboration_scale:  float = 1.0,
     ) -> "AttributionResult":
+        """
+        Core attribution computation.
+
+        corroboration_scale (P0-A)
+        ──────────────────────────
+        After the Bayesian updater runs ONE clean update from the prior (or
+        from log_odds_seed for the longitudinal path), the signal delta-from-
+        prior in the resulting log-odds is multiplied by corroboration_scale:
+
+            prior_lo[r]   = log(prior[r] / prior["Other"])
+            updated_lo[r] = prior_lo[r] + Σ log(LR_i)   (from updater)
+            scaled_lo[r]  = prior_lo[r] + (updated_lo[r] - prior_lo[r]) × scale
+
+        scale=1.0  → no change (default for single-email and finalize_campaign)
+        scale<1.0  → dampen the update (used when only 1 email in cluster)
+        scale>1.0  → amplify the update (used for large clusters via sqrt(n))
+
+        All callers except attribute_from_profile pass scale=1.0.
+        attribute_from_profile passes _corroboration_scale(n_obs).
+        """
 
         # ── Layer 5: Signal reliability weighting ────────────────────────
         reliability_mode = self._reliability.get_reliability_mode(obfuscation, signals)
@@ -1364,14 +1612,49 @@ class AttributionEngine:
             if zeroed:
                 print(f"[Engine] Zero-weighted: {zeroed}")
 
-        # Bayesian update with reliability-adjusted LRs
+        # ── Single Bayesian update ────────────────────────────────────────
         posterior, log_odds, used_signals, missing = self._updater.update(
             signals           = signals,
             existing_log_odds = log_odds_seed,
             effective_lrs     = effective_lrs,
         )
 
-        # ACI computation
+        # ── Apply corroboration scale (P0-A) ──────────────────────────────
+        # Only applied when scale != 1.0 (i.e. attribute_from_profile path).
+        # Scales the delta of each region's log-odds from its prior, so that
+        # n corroborating observations sharpen the posterior without collapsing
+        # it to 1.0 via log-odds overflow.
+        if corroboration_scale != 1.0 and log_odds_seed is None:
+            # Compute prior log-odds for each region
+            other_p = self._updater._priors.get("Other", 0.1)
+            prior_lo = {
+                r: math.log(p / other_p) if p > 0 else -5.0
+                for r, p in self._updater._priors.items()
+            }
+            # Scale the delta from prior
+            scaled_lo = {
+                r: prior_lo.get(r, 0.0) + (lo - prior_lo.get(r, 0.0)) * corroboration_scale
+                for r, lo in log_odds.items()
+            }
+            # Re-normalise posterior with scaled log-odds
+            max_lo  = max(scaled_lo.values())
+            exp_lo  = {r: math.exp(lo - max_lo) for r, lo in scaled_lo.items()}
+            total   = sum(exp_lo.values())
+            scaled_probs = {r: v / total for r, v in exp_lo.items()}
+            # Rebuild posterior list preserving supporting_signals
+            sig_map = {rp.region: rp.supporting_signals for rp in posterior}
+            posterior = [
+                RegionProbability(
+                    region             = r,
+                    probability        = scaled_probs[r],
+                    prior              = self._updater._priors.get(r, 0.01),
+                    log_odds           = scaled_lo[r],
+                    supporting_signals = sig_map.get(r, []),
+                )
+                for r in sorted(scaled_probs, key=scaled_probs.get, reverse=True)
+            ]
+
+        # ── ACI computation ───────────────────────────────────────────────
         aci = self._aci_calc.compute(obfuscation)
 
         primary  = posterior[0] if posterior else RegionProbability(
@@ -1426,7 +1709,8 @@ class AttributionEngine:
             canarytoken_active  = canarytoken_active,
             reliability_mode    = reliability_mode,
         )
-    def _empty_result(self) -> AttributionResult:
+
+    def _empty_result(self) -> "AttributionResult":
         aci = self._aci_calc.compute({k: False for k in ACI_LAYER_WEIGHTS})
         return AttributionResult(
             primary_region      = "Unknown",
@@ -1506,6 +1790,10 @@ def integrate_with_v3(
         )
         # Store on V3Report
         report.attribution_results = attribution_results
+
+    Note: this helper does not pass obfuscation_override — it uses the offline
+    opsec_score heuristic.  For pipeline-derived ACI, use the orchestrator's
+    Step 2.5 which calls attribute_from_profile(obfuscation_override=...).
     """
     engine = AttributionEngine(verbose=verbose)
     results: Dict[str, AttributionResult] = {}

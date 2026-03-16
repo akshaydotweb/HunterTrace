@@ -28,6 +28,24 @@ USAGE:
 
     # Load existing JSON reports and correlate offline
     v3.correlate_from_json_dir("/path/to/reports/")
+
+Changelog
+─────────
+  P0-B fix (ACI always 1.0):
+    Step 2.5 now aggregates real obfuscation flags (tor, vpn,
+    residential_proxy, datacenter, timestamp_spoof) from pipeline results
+    for each actor's email cluster and passes them to
+    attribute_from_profile(obfuscation_override=...).
+
+    Previously, attribute_from_profile built its own obfuscation dict from
+    opsec_score thresholds only — vpnBacktrack and ipClassifier detections
+    were never reflected in the ACI score (all actors showed ACI=1.0).
+
+    Sources consulted per email (any-detection OR logic):
+      1. result.proxy_analysis       — pa.tor_detected / vpn_detected
+      2. result.vpn_backtrack_analysis — bt.vpn_provider / tor_detected
+      3. result.classifications       — per-IP classification flags
+      4. result.header_analysis       — spoofing_risk > 0.6
 """
 
 import json
@@ -349,11 +367,6 @@ class HunterTraceV3:
                     self._results[eml_file.name] = result
                     self.correlator.ingest(eml_file.name, result)
                     print(f"  ✓ Ingested into v3 correlator")
-                    # Feed into attribution engine for per-email signal accumulation
-                    if self._attribution_engine:
-                        # We don't know the actor_id yet (assigned post-correlation)
-                        # so we store the result — attribution is done post-correlation
-                        pass
                 else:
                     print(f"  ✗ Pipeline returned no result")
             except Exception as e:
@@ -429,22 +442,102 @@ class HunterTraceV3:
                 geo = getattr(result, "geolocation_results", None) or {}
                 geo_map.update(geo)
 
-            # Longitudinal accumulation:
-            # For each actor cluster, feed its emails into the engine in order.
-            # This updates the posterior incrementally — exactly how Bayesian
-            # inference should work: each new email refines the existing posterior.
+            # ── P0-B: Aggregate real obfuscation flags per actor cluster ──────
+            #
+            # For each actor cluster we scan every email's pipeline result and
+            # OR the obfuscation flags together: if ANY email in the cluster
+            # triggered a layer (VPN, Tor, residential proxy, datacenter,
+            # timestamp spoof), we treat the actor as having used that layer.
+            #
+            # "Any-detection" (OR) is more conservative than majority-vote and
+            # is correct here: one detected VPN use degrades the reliability of
+            # IP-based signals for the whole cluster, because we cannot know
+            # which emails were sent through the VPN.
+            #
+            # Sources consulted per email (in priority order):
+            #   1. result.proxy_analysis       — pa.tor_detected / vpn_detected
+            #   2. result.vpn_backtrack_analysis — bt.vpn_provider / tor_detected
+            #   3. result.classifications       — per-IP classification flags
+            #   4. result.header_analysis       — spoofing_risk > 0.6
+
+            _ACI_LAYERS = ("tor", "vpn", "residential_proxy",
+                           "datacenter", "timestamp_spoof")
+
+            actor_obfuscation: Dict[str, Dict[str, bool]] = {}
+
             for cluster in self._report.actor_clusters:
                 actor_id = cluster.actor_id
-                profile  = self._profiles.get(actor_id)
+                flags: Dict[str, bool] = {layer: False for layer in _ACI_LAYERS}
+
+                for email_file in cluster.emails:
+                    pr = self._results.get(email_file)
+                    if pr is None:
+                        continue
+
+                    # Source 1: proxy_analysis
+                    pa = getattr(pr, "proxy_analysis", None)
+                    if pa:
+                        if getattr(pa, "tor_detected",   False):
+                            flags["tor"] = True
+                        if getattr(pa, "vpn_detected",   False):
+                            flags["vpn"] = True
+                        if getattr(pa, "proxy_detected", False):
+                            flags["residential_proxy"] = True
+
+                    # Source 2: vpn_backtrack_analysis
+                    bt = getattr(pr, "vpn_backtrack_analysis", None)
+                    if bt:
+                        if getattr(bt, "vpn_provider",      None):
+                            flags["vpn"] = True
+                        if getattr(bt, "tor_detected",      False):
+                            flags["tor"] = True
+                        if getattr(bt, "spoofing_detected", False):
+                            flags["timestamp_spoof"] = True
+
+                    # Source 3: per-IP classifications
+                    cl = getattr(pr, "classifications", None) or {}
+                    for ip_cls in cl.values():
+                        if getattr(ip_cls, "is_tor",   False):
+                            flags["tor"] = True
+                        if getattr(ip_cls, "is_vpn",   False):
+                            flags["vpn"] = True
+                        if getattr(ip_cls, "is_proxy", False):
+                            flags["residential_proxy"] = True
+                        cls_str = getattr(ip_cls, "classification", "")
+                        if "DATACENTER" in cls_str.upper():
+                            flags["datacenter"] = True
+
+                    # Source 4: header analysis timestamp spoof risk
+                    ha = getattr(pr, "header_analysis", None)
+                    if ha:
+                        spoof_risk = getattr(ha, "spoofing_risk", 0.0)
+                        if spoof_risk > 0.6:
+                            flags["timestamp_spoof"] = True
+
+                actor_obfuscation[actor_id] = flags
+                detected = [k for k, v in flags.items() if v]
+                if detected:
+                    print(f"  [{actor_id}] Obfuscation detected: {detected}")
+                else:
+                    print(f"  [{actor_id}] No obfuscation detected — clean signals")
+
+            # ── Run attribution with real obfuscation flags ───────────────────
+            for cluster in self._report.actor_clusters:
+                actor_id     = cluster.actor_id
+                profile      = self._profiles.get(actor_id)
+                obf_override = actor_obfuscation.get(actor_id)
 
                 if profile:
-                    # Primary path: attribute from the full TTP profile
-                    # (uses consensus timezone/country/infra from all emails)
+                    # Primary path: attribute from the full TTP profile.
+                    # obfuscation_override passes the pipeline-derived flags so
+                    # ACI reflects real VPN/Tor use rather than opsec_score alone.
                     ar = self._attribution_engine.attribute_from_profile(
-                        profile, geo_map
+                        profile, geo_map,
+                        obfuscation_override=obf_override,
                     )
                 else:
-                    # Fallback: accumulate directly from fingerprints
+                    # Fallback: accumulate directly from fingerprints.
+                    # Offline path — obfuscation from fingerprint.vpn_provider only.
                     for fp in cluster.fingerprints:
                         self._attribution_engine.update_campaign_from_fingerprint(
                             actor_id, fp, geo_map

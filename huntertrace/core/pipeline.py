@@ -170,6 +170,7 @@ class ReceivedChainAnalysis:
     spoofing_risk: float
     confidence: float
     red_flags: List[str]
+    email_charset: Optional[str] = None    # Charset from Content-Type / subject encoding
 
 
 class HeaderExtractor:
@@ -210,6 +211,20 @@ class HeaderExtractor:
         email_to = msg.get('To', 'Unknown')
         email_subject = msg.get('Subject', 'Unknown')
         message_id = msg.get('Message-ID', 'Unknown')
+
+        # ── Charset extraction ──────────────────────────────────────────────
+        # Priority 1: Content-Type header  (most reliable)
+        # Priority 2: encoded-word charset in Subject  (=?charset?...?=)
+        # Priority 3: None (no signal emitted)
+        email_charset: Optional[str] = None
+        ct_header = msg.get('Content-Type', '')
+        _ct_m = re.search(r'charset=["\']?([A-Za-z0-9_\-]+)', ct_header, re.I)
+        if _ct_m:
+            email_charset = _ct_m.group(1).lower()
+        if not email_charset:
+            _subj_m = re.search(r'=\?([A-Za-z0-9_\-]+)\?', email_subject or '', re.I)
+            if _subj_m:
+                email_charset = _subj_m.group(1).lower()
         
         date_str = msg.get('Date', None)
         email_date = None
@@ -292,7 +307,8 @@ class HeaderExtractor:
             headers_found=len(received_headers),
             spoofing_risk=min(1.0, spoofing_risk),
             confidence=1.0 - (spoofing_risk * 0.3),
-            red_flags=red_flags
+            red_flags=red_flags,
+            email_charset=email_charset,
         )
         
         return analysis
@@ -2384,6 +2400,9 @@ class CompletePipelineResult:
 
     # Layer 1: canarytoken (populated after bait trigger, or None)
     canarytoken_result: Optional[Any] = None
+
+    # IPv6 addresses from Received chain — VPN-resistant geolocation signal
+    unique_ipv6: Optional[List[str]] = None
     graph_boost_factors: Optional[Any] = None
 
 
@@ -3617,6 +3636,7 @@ class CompletePipeline:
             real_ip_analysis=real_ip_analysis,
             vpn_backtrack_analysis=vpn_backtrack_analysis,
             webmail_extraction=webmail_extraction,
+            unique_ipv6=unique_ipv6,
         )
         
         # ── BAYESIAN ATTRIBUTION (Layer 5) ───────────────────────────────────
