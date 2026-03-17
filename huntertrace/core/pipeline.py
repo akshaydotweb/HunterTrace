@@ -135,6 +135,41 @@ except ImportError:
     CanarytokenResult = None
     cli_bait = None
 
+# ── Phase 0: Attacker Technique Profiler ─────────────────────────────────────
+try:
+    from huntertrace.forensics.attackerTechniqueProfiler import (
+        AttackerTechniqueProfiler,
+        AttackerTechniqueProfile,
+        profile_attacker_techniques,
+    )
+    TECHNIQUE_PROFILER_AVAILABLE = True
+except ImportError:
+    TECHNIQUE_PROFILER_AVAILABLE = False
+    AttackerTechniqueProfile = None
+
+# ── Active Analysis (5 live-probe techniques) ─────────────────────────────────
+try:
+    from huntertrace.active.active_analysis import (
+        ActiveAnalysisPipeline,
+        ActiveAnalysisResult,
+        patch_backtracker_with_active_analysis,
+    )
+    ACTIVE_ANALYSIS_AVAILABLE = True
+except ImportError:
+    ACTIVE_ANALYSIS_AVAILABLE = False
+    ActiveAnalysisResult = None
+
+# ── Active Validation (offline + live validation framework) ───────────────────
+try:
+    from huntertrace.active.active_validation import (
+        ValidationRunner,
+        ValidationReport,
+    )
+    ACTIVE_VALIDATION_AVAILABLE = True
+except ImportError:
+    ACTIVE_VALIDATION_AVAILABLE = False
+    ValidationReport = None
+
 
 # ============================================================================
 # STAGE 1: EMAIL HEADER EXTRACTION
@@ -2405,6 +2440,12 @@ class CompletePipelineResult:
     unique_ipv6: Optional[List[str]] = None
     graph_boost_factors: Optional[Any] = None
 
+    # Phase 0: attacker technique profile (populated before Stage 2)
+    attacker_technique_profile: Optional[Any] = None
+
+    # Active analysis result (populated when active analysis is enabled)
+    active_analysis_result: Optional[Any] = None
+
 
 class CompletePipelineReport:
     """Generate complete analysis report"""
@@ -3227,7 +3268,105 @@ class CompletePipeline:
 
         # Layer 1: canarytoken generator (host set later via CLI or env)
         self._canarytoken_generator = None
-    
+
+        # Phase 0: attacker technique profiler
+        self.technique_profiler = (
+            AttackerTechniqueProfiler(verbose=verbose)
+            if TECHNIQUE_PROFILER_AVAILABLE else None
+        )
+
+        # Active analysis pipeline (opt-in; disabled by default to avoid
+        # unexpected outbound TCP/ICMP probes)
+        self.active_pipeline: Optional[Any] = None
+        self._active_enabled: bool = False
+
+    # ── Public API: opt-in active analysis ───────────────────────────────────
+
+    def enable_active_analysis(
+        self,
+        canary_host:   str   = "",
+        run_vpn_probe: bool  = True,
+        run_rtt:       bool  = True,
+        run_flux:      bool  = True,
+        run_graph:     bool  = True,
+        run_canary:    bool  = True,
+        timeout:       float = 5.0,
+    ) -> "CompletePipeline":
+        """
+        Enable active geolocation techniques for all subsequent run() calls.
+
+        Active techniques (opt-in — sends outbound TCP/ICMP/DNS probes):
+          1. Canary callback  — polls your webhook for real-IP triggers
+          2. Fast-flux DNS    — Holz et al. flux score + ASN geo
+          3. VPN port-probe   — TCP port fingerprinting (Goel et al.)
+          4. RTT geolocation  — round-trip time triangulation
+          5. Infra graph      — NS/MX/SPF/DKIM multi-signal graph (Prasad 2025)
+
+        Parameters
+        ----------
+        canary_host   : Hostname of your canarytoken callback server.
+                        Leave empty to skip canary polling.
+        run_vpn_probe : TCP-probe candidate IP for VPN port fingerprinting.
+        run_rtt       : RTT-based geolocation via local TCP probes.
+        run_flux      : Fast-flux DNS scoring of attacker's domain.
+        run_graph     : Infrastructure graph analysis (DNS/DKIM/SPF/MX).
+        run_canary    : Poll canary callback endpoint.
+        timeout       : Per-technique network timeout in seconds.
+
+        Returns self for chaining:
+            pipeline = CompletePipeline().enable_active_analysis(canary_host="...")
+        """
+        if not ACTIVE_ANALYSIS_AVAILABLE:
+            if self.verbose:
+                print("[WARNING] Active analysis not available — "
+                      "install huntertrace.active.active_analysis")
+            return self
+
+        self.active_pipeline = ActiveAnalysisPipeline(
+            canary_host   = canary_host,
+            run_vpn_probe = run_vpn_probe,
+            run_rtt       = run_rtt,
+            run_flux      = run_flux,
+            run_graph     = run_graph,
+            run_canary    = run_canary,
+            timeout       = timeout,
+            verbose       = self.verbose,
+        )
+        self._active_enabled = True
+        if self.verbose:
+            enabled = [
+                t for t, on in [
+                    ("canary", run_canary), ("flux", run_flux),
+                    ("vpn_probe", run_vpn_probe), ("rtt", run_rtt),
+                    ("graph", run_graph),
+                ] if on
+            ]
+            print(f"[Active] Enabled techniques: {', '.join(enabled)}")
+        return self
+
+    def disable_active_analysis(self) -> "CompletePipeline":
+        """Turn off active analysis without destroying configuration."""
+        self._active_enabled = False
+        return self
+
+    def run_validation(self, verbose: bool = False) -> Optional[Any]:
+        """
+        Run the active analysis validation framework offline.
+        Returns a ValidationReport or None if validation is not available.
+
+        Usage:
+            report = pipeline.run_validation(verbose=True)
+            if report:
+                report.print_summary()
+                report.save_json("validation.json")
+        """
+        if not ACTIVE_VALIDATION_AVAILABLE:
+            print("[WARNING] Active validation not available — "
+                  "install huntertrace.active.active_validation")
+            return None
+        runner = ValidationRunner(verbose=verbose)
+        return runner.run_all()
+
     def run(self, email_file: str) -> Optional[CompletePipelineResult]:
         """Run all 7 stages (1: Headers, 2: Classification, 3A: Proxy Chain, 3B: Enrichment, 3C: Correlation, 4: Threat Intelligence, Geolocation, 5: Attribution)"""
         
@@ -3304,7 +3443,65 @@ class CompletePipeline:
                     print(f"  [WARNING] Webmail extraction failed: {_e}")
         if unique_ipv6:
             print(f"[INFO] IPv6 addresses detected: {', '.join(unique_ipv6)}")
-        
+
+        # ── PHASE 0: ATTACKER TECHNIQUE PROFILING ─────────────────────────
+        # Runs BEFORE IP classification. Answers "what did the attacker DO?"
+        # before "where did they come from?"
+        # Outputs:
+        #   - detected_techniques[]       → MITRE ATT&CK TTP fingerprint
+        #   - sending_method              → webmail provider / phishing kit / bot
+        #   - header_integrity_score      → discounts forged Received: signals
+        #   - passive_attribution_blocked → triggers canary token fallback
+        technique_profile = None
+        _raw_email_for_profiler = None
+        if self.technique_profiler:
+            print("\n[PHASE 0] Profiling attacker techniques...")
+            try:
+                with open(email_file, 'r', encoding='utf-8', errors='replace') as _pf:
+                    _raw_email_for_profiler = _pf.read()
+                technique_profile = self.technique_profiler.profile(
+                    _raw_email_for_profiler,
+                    header_analysis=header_analysis,
+                )
+                technique_profile.print_summary()
+
+                # ── Propagate Phase 0 findings to downstream stages ────────
+                # 1. If Received: chain is forged, warn backtracking engine
+                if technique_profile.header_integrity_score < 0.85:
+                    print(
+                        f"  [PHASE 0] ⚠  Header integrity "
+                        f"{technique_profile.header_integrity_score:.0%} "
+                        f"— Received: chain may be forged. "
+                        f"T1/T3 backtracking signals will be discounted."
+                    )
+
+                # 2. If ProtonMail / Tutanota detected, passive attribution is
+                #    blocked — escalate canary token urgency immediately
+                if technique_profile.passive_attribution_blocked:
+                    print(
+                        "  [PHASE 0] 🔴 Passive attribution BLOCKED "
+                        "(ProtonMail/Tutanota strips all sender IP). "
+                        "Canary token is the only recovery path."
+                    )
+                    if urgency_result is not None:
+                        urgency_result.canarytoken_action = "DEPLOY_NOW"
+
+                # 3. If sending method leaked a real IP, log it prominently
+                if (technique_profile.sending_method and
+                        technique_profile.sending_method.real_ip_leaked and
+                        technique_profile.sending_method.real_ip):
+                    print(
+                        f"  [PHASE 0] ✓ Sending method leaked real IP: "
+                        f"{technique_profile.sending_method.real_ip} "
+                        f"({technique_profile.sending_method.provider}) "
+                        f"conf {technique_profile.sending_method.confidence:.0%}"
+                    )
+
+            except Exception as _pe:
+                if self.verbose:
+                    print(f"  [WARNING] Technique profiling failed: {_pe}")
+                technique_profile = None
+
         # STAGE 2: Classify IPs
         print("\n[STAGE 2] Classifying IPs...")
         
@@ -3347,6 +3544,16 @@ class CompletePipeline:
                 
                 if vpn_ip:
                     print(f"  VPN detected: {vpn_provider} ({vpn_ip})")
+                    # If Phase 0 flagged header forgery, warn that T1/T3 will
+                    # yield low-confidence results before we even start
+                    if (technique_profile is not None and
+                            technique_profile.header_integrity_score < 0.85):
+                        print(
+                            f"  [PHASE 0 WARNING] Header integrity "
+                            f"{technique_profile.header_integrity_score:.0%} "
+                            f"— Received: chain appears forged. "
+                            f"T1/T3 signals discounted; relying on T4/T8."
+                        )
                     print(f"  Attempting to backtrack REAL IP using 7+ techniques...\n")
                     
                     backtracker = RealIPBacktracker(verbose=self.verbose)
@@ -3619,6 +3826,79 @@ class CompletePipeline:
                 if self.verbose:
                     print(f"  [WARNING] Geolocation enrichment failed: {e}")
         
+        # ── ACTIVE ANALYSIS (opt-in) ────────────────────────────────────────
+        # Runs after passive backtracking.  Signals from active techniques
+        # (canary callback, fast-flux DNS, VPN port-probe, RTT geo, infra
+        # graph) are merged into the existing BacktrackResult signal list
+        # and confidences re-synthesised before Bayesian attribution fires.
+        active_analysis_result = None
+        if self._active_enabled and self.active_pipeline and ACTIVE_ANALYSIS_AVAILABLE:
+            print("\n[ACTIVE ANALYSIS] Running 5 active geolocation techniques...")
+            try:
+                # Build headers dict for active pipeline
+                _active_headers = {
+                    "From":            header_analysis.email_from,
+                    "DKIM-Signature":  str(getattr(header_analysis, "dkim_signature", "")),
+                    "Received":        [h.raw_header for h in header_analysis.hops],
+                    "X-HunterTrace-Canary": None,   # populated when canary deployed
+                }
+
+                _candidate_ip = (
+                    vpn_backtrack_analysis.probable_real_ip
+                    if vpn_backtrack_analysis and vpn_backtrack_analysis.probable_real_ip
+                    else header_analysis.origin_ip
+                )
+
+                active_analysis_result = self.active_pipeline.run(
+                    email_headers  = _active_headers,
+                    candidate_ip   = _candidate_ip,
+                    canary_token_id= None,
+                )
+
+                # Merge active signals into vpn_backtrack_analysis
+                if vpn_backtrack_analysis and active_analysis_result.signals:
+                    vpn_backtrack_analysis.signals.extend(
+                        active_analysis_result.signals)
+                    # Re-synthesise confidence with merged signals
+                    from collections import Counter as _Counter
+                    _ip_scores:  dict = _Counter()
+                    _cty_scores: dict = _Counter()
+                    for _s in vpn_backtrack_analysis.signals:
+                        if _s.real_ip:
+                            _ip_scores[_s.real_ip]       += _s.confidence
+                        if _s.real_country:
+                            _cty_scores[_s.real_country] += _s.confidence
+                    if _ip_scores:
+                        _best_ip = max(_ip_scores, key=_ip_scores.__getitem__)
+                        if _ip_scores[_best_ip] > 0.60:
+                            vpn_backtrack_analysis.probable_real_ip = _best_ip
+                    if _cty_scores:
+                        vpn_backtrack_analysis.probable_country = max(
+                            _cty_scores, key=_cty_scores.__getitem__)
+                    vpn_backtrack_analysis.backtracking_confidence = min(
+                        sum(s.confidence for s in vpn_backtrack_analysis.signals)
+                        / max(len(vpn_backtrack_analysis.signals), 1),
+                        1.0,
+                    )
+
+                # Print summary
+                ar = active_analysis_result
+                print(f"  Active signals generated : {len(ar.signals)}")
+                if ar.dominant_country:
+                    print(f"  Dominant country         : {ar.dominant_country}")
+                print(f"  Active confidence        : {ar.overall_confidence:.0%}")
+                if ar.canary_result and ar.canary_result.triggered:
+                    print(f"  [CANARY] Triggered — real IP: {ar.canary_result.real_ip}")
+                if ar.flux_result and ar.flux_result.is_fast_flux:
+                    print(f"  [FLUX] Fast-flux domain detected "
+                          f"(score={ar.flux_result.flux_score:.2f})")
+
+            except Exception as _ae:
+                if self.verbose:
+                    print(f"  [WARNING] Active analysis failed: {_ae}")
+                    import traceback; traceback.print_exc()
+                active_analysis_result = None
+
         # Stage 5 legacy attribution object — superseded by the Bayesian
         # engine below, but kept as None so the result dataclass field is set.
         attribution_analysis = None
@@ -3637,6 +3917,8 @@ class CompletePipeline:
             vpn_backtrack_analysis=vpn_backtrack_analysis,
             webmail_extraction=webmail_extraction,
             unique_ipv6=unique_ipv6,
+            attacker_technique_profile=technique_profile,
+            active_analysis_result=active_analysis_result,
         )
         
         # ── BAYESIAN ATTRIBUTION (Layer 5) ───────────────────────────────────
