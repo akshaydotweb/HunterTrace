@@ -209,11 +209,11 @@ class RealIPBacktracker:
         from_domain = email_headers.get("From", "").split("@")[-1].rstrip(">").strip()
         dkim_raw = email_headers.get("DKIM-Signature", "")
         dkim_domain = ""
-        if "d=" in dkim_raw:
-            try:
-                dkim_domain = dkim_raw.split("d=")[1].split(";")[0].strip()
-            except IndexError:
-                pass
+        if dkim_raw:
+            # BUG4 fix: use word-boundary regex to avoid matching d= inside b= hash
+            _dm = re.search(r'(?:^|[;\s])d=([^;\s]+)', dkim_raw)
+            if _dm:
+                dkim_domain = _dm.group(1).strip()
 
         received_headers = email_headers.get("Received", [])
         received_list = received_headers if isinstance(received_headers, list) else [received_headers]
@@ -239,7 +239,7 @@ class RealIPBacktracker:
         first_public = self._first_public_ip_from_received(received_list)
         c3 = self._analyze_tor_detection(first_public or "unknown", email_str)
         if c3["uses_tor"]:
-            delta = -0.25
+            delta = -0.40  # FIX: Tor hides real IP completely — stronger penalty than VPN
             for i in effective_conf:
                 effective_conf[i] = max(0.0, effective_conf[i] + delta)
             penalties.append(PenaltyRecord("C3_tor_detected", delta, c3["evidence"]))
@@ -453,13 +453,16 @@ class RealIPBacktracker:
             )
             confidence = min(confidence + 0.08, 0.73)
 
+        # spoofable=False when MTA Received header independently confirmed the
+        # timezone; server-added headers cannot be altered by the client.
+        is_spoofable = not server_confirmed
         return RealIPSignal(
             method=BacktrackMethod.TIMEZONE_CORRELATION,
             real_ip=None,
             real_country=region,
             confidence=confidence,
             evidence=evidence,
-            spoofable=True,   # Date: header is client-controlled
+            spoofable=is_spoofable,
         )
 
     # ------------------------------------------------------------------
@@ -613,8 +616,10 @@ class RealIPBacktracker:
                 evidence.append(f"{real_ip} is private — sender behind NAT")
                 real_ip = None
             elif real_ip == vpn_endpoint_ip:
-                # Injected same IP as VPN endpoint — low value
-                evidence.append("[WARNING] X-header IP == VPN endpoint — likely injected/spoofed")
+                # Injected same IP as VPN endpoint — null out to prevent
+                # VPN endpoint polluting the real-IP synthesis pool
+                evidence.append("[WARNING] X-header IP == VPN endpoint — nulled out")
+                real_ip = None
                 confidence = 0.15
             else:
                 # Different from VPN, still client-controlled — moderate
@@ -749,13 +754,15 @@ class RealIPBacktracker:
         if mismatch:
             evidence.append(f"MISMATCH: inferred region differs from VPN country")
 
+        # If ALL contributing signals were spoofable, T7's inference is also spoofable
+        all_spoofable = all(s.spoofable for s in prior_signals if s.real_country)
         return RealIPSignal(
             method=BacktrackMethod.GEOLOCATION_INFERENCE,
             real_ip=None,
             real_country=best_country,
             confidence=confidence,
             evidence=evidence,
-            spoofable=False,
+            spoofable=all_spoofable,
         )
 
     # ------------------------------------------------------------------
@@ -969,7 +976,7 @@ class RealIPBacktracker:
         return {
             "compromised_risk": min(risk, 1.0),
             "evidence": evidence,
-            "is_likely_compromised": risk > 0.5,
+            "is_likely_compromised": risk >= 0.5,
         }
 
     def _check_multi_ip_consistency(self, received_headers: List[str]) -> Dict:
@@ -1036,7 +1043,7 @@ class RealIPBacktracker:
                 anomaly += 0.3
         else:
             evidence.append(f"[!] Night/unusual hour: {sending_hour}:00")
-            anomaly += 0.4
+            anomaly += 0.55  # FIX: 0.4 was below the 0.5 threshold — night sends are anomalous
 
         return {
             "anomaly_score": min(anomaly, 1.0),
@@ -1133,8 +1140,14 @@ class RealIPBacktracker:
     # ------------------------------------------------------------------
 
     def _is_private_ip(self, ip: str) -> bool:
+        """
+        Returns True when IP should be excluded from real-IP consideration.
+        Uses is_global (not is_private) to also exclude TEST-NET ranges
+        (203.0.113.0/24, 198.51.100.0/24, 192.0.2.0/24) that is_private misses.
+        """
         try:
-            return ipaddress.ip_address(ip).is_private
+            obj = ipaddress.ip_address(ip)
+            return not obj.is_global
         except ValueError:
             return True
 
