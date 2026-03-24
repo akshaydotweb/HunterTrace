@@ -5,6 +5,20 @@ All notable changes to HUNTЕRТRACE will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] - 2026-03-24
+
+### Changed
+- Version bump to 1.2.0 for PyPI and GitHub release.
+- All core modules and packaging files updated to 1.2.0.
+
+### Fixed
+- Addressed packaging and distribution issues for PyPI compliance.
+- Ensured all version references are consistent across setup.py, pyproject.toml, and __version__.py.
+
+### Publishing
+- Release published to PyPI: https://pypi.org/project/huntertrace/1.2.0/
+- Release tagged and pushed to GitHub as v1.2.0.
+
 ## [1.0.3] - 2026-03-11
 
 ### Fixed
