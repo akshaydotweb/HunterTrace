@@ -1,0 +1,562 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.3, pytest-9.0.2, pluggy-1.6.0 -- /Users/lapac/Documents/projects/HunterTrace/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/lapac/Documents/projects/HunterTrace
+configfile: pyproject.toml
+testpaths: tests
+plugins: cov-7.1.0
+collecting ... collected 351 items
+
+tests/test_aci_signals.py::TestTimezoneGeoInteractions::test_geo_boosts_matched_country_in_conflict PASSED [  0%]
+tests/test_aci_signals.py::TestTimezoneGeoInteractions::test_india_tz_only_produces_india PASSED [  0%]
+tests/test_aci_signals.py::TestTimezoneGeoInteractions::test_iran_tz_unique_attribution PASSED [  0%]
+tests/test_aci_signals.py::TestTimezoneGeoInteractions::test_unambiguous_tz_plus_geo_raises_confidence PASSED [  1%]
+tests/test_aci_signals.py::TestTimezoneGeoInteractions::test_utc_tier_capped_at_2 PASSED [  1%]
+tests/test_aci_signals.py::TestTimezoneGeoInteractions::test_utc_tz_alone_stays_uncertain PASSED [  1%]
+tests/test_aci_signals.py::TestVPNReliabilityWeighting::test_no_vpn_geo_confirms_unambiguous_tz PASSED [  1%]
+tests/test_aci_signals.py::TestVPNReliabilityWeighting::test_vpn_geo_excluded_timezone_wins PASSED [  2%]
+tests/test_aci_signals.py::TestVPNReliabilityWeighting::test_vpn_geolocation_excluded_from_signals_used PASSED [  2%]
+tests/test_aci_signals.py::TestVPNReliabilityWeighting::test_vpn_sets_reliability_mode PASSED [  2%]
+tests/test_aci_signals.py::TestACIArithmetic::test_all_layers_floor_007 PASSED [  3%]
+tests/test_aci_signals.py::TestACIArithmetic::test_datacenter_only_092 PASSED [  3%]
+tests/test_aci_signals.py::TestACIArithmetic::test_layers_detected_correct PASSED [  3%]
+tests/test_aci_signals.py::TestACIArithmetic::test_no_obfuscation_aci_1 PASSED [  3%]
+tests/test_aci_signals.py::TestACIArithmetic::test_penalty_applied_correct PASSED [  4%]
+tests/test_aci_signals.py::TestACIArithmetic::test_residential_only_075 PASSED [  4%]
+tests/test_aci_signals.py::TestACIArithmetic::test_timestamp_spoof_only_088 PASSED [  4%]
+tests/test_aci_signals.py::TestACIArithmetic::test_tor_only_070 PASSED   [  5%]
+tests/test_aci_signals.py::TestACIArithmetic::test_tor_plus_vpn_052 PASSED [  5%]
+tests/test_aci_signals.py::TestACIArithmetic::test_vpn_only_082 PASSED   [  5%]
+tests/test_aci_signals.py::TestACIArithmetic::test_weights_sum_leq_1 PASSED [  5%]
+tests/test_aci_signals.py::TestTierAndConfidenceCap::test_is_campaign_false_for_attribute PASSED [  6%]
+tests/test_aci_signals.py::TestTierAndConfidenceCap::test_is_campaign_true_for_profile PASSED [  6%]
+tests/test_aci_signals.py::TestTierAndConfidenceCap::test_n_observations_from_profile PASSED [  6%]
+tests/test_aci_signals.py::TestTierAndConfidenceCap::test_n_observations_single PASSED [  7%]
+tests/test_aci_signals.py::TestTierAndConfidenceCap::test_single_signal_cap PASSED [  7%]
+tests/test_aci_signals.py::TestTierAndConfidenceCap::test_tier_thresholds PASSED [  7%]
+tests/test_aci_signals.py::TestFalseFlagInEngine::test_consistent_signals_no_false_flag PASSED [  7%]
+tests/test_aci_signals.py::TestFalseFlagInEngine::test_false_flag_caps_confidence PASSED [  8%]
+tests/test_aci_signals.py::TestCorroborationScale::test_scale_capped_at_092 PASSED [  8%]
+tests/test_aci_signals.py::TestCorroborationScale::test_scale_monotonically_increasing PASSED [  8%]
+tests/test_aci_signals.py::TestCorroborationScale::test_scale_n0_clamped_to_n1 PASSED [  9%]
+tests/test_aci_signals.py::TestCorroborationScale::test_scale_n1 PASSED  [  9%]
+tests/test_aci_signals.py::TestCorroborationScale::test_scale_n1_below_1 PASSED [  9%]
+tests/test_aci_signals.py::TestBayesianUpdaterDirect::test_accumulated_log_odds_refine PASSED [  9%]
+tests/test_aci_signals.py::TestBayesianUpdaterDirect::test_all_probabilities_positive PASSED [ 10%]
+tests/test_aci_signals.py::TestBayesianUpdaterDirect::test_contradicting_geo_penalises PASSED [ 10%]
+tests/test_aci_signals.py::TestBayesianUpdaterDirect::test_empty_signals_prior_ordering PASSED [ 10%]
+tests/test_aci_signals.py::TestBayesianUpdaterDirect::test_geo_dominates_prior PASSED [ 11%]
+tests/test_aci_signals.py::TestBayesianUpdaterDirect::test_india_timezone_unique PASSED [ 11%]
+tests/test_aci_signals.py::TestBayesianUpdaterDirect::test_iran_timezone_unique PASSED [ 11%]
+tests/test_aci_signals.py::TestBayesianUpdaterDirect::test_missing_signals_tracked PASSED [ 11%]
+tests/test_aci_signals.py::TestBayesianUpdaterDirect::test_posterior_sums_to_1 PASSED [ 12%]
+tests/test_aci_signals.py::TestBayesianUpdaterDirect::test_zero_lr_excluded PASSED [ 12%]
+tests/test_aci_signals.py::TestSignalExtractorObfuscation::test_clean_result_all_false PASSED [ 12%]
+tests/test_aci_signals.py::TestSignalExtractorObfuscation::test_datacenter_from_classification_string PASSED [ 13%]
+tests/test_aci_signals.py::TestSignalExtractorObfuscation::test_spoofing_from_backtrack PASSED [ 13%]
+tests/test_aci_signals.py::TestSignalExtractorObfuscation::test_timestamp_spoof_below_threshold PASSED [ 13%]
+tests/test_aci_signals.py::TestSignalExtractorObfuscation::test_timestamp_spoof_high_risk PASSED [ 13%]
+tests/test_aci_signals.py::TestSignalExtractorObfuscation::test_tor_from_backtrack PASSED [ 14%]
+tests/test_aci_signals.py::TestSignalExtractorObfuscation::test_tor_from_classifications PASSED [ 14%]
+tests/test_aci_signals.py::TestSignalExtractorObfuscation::test_tor_from_proxy_analysis PASSED [ 14%]
+tests/test_aci_signals.py::TestSignalExtractorObfuscation::test_vpn_from_backtrack_provider PASSED [ 15%]
+tests/test_aci_signals.py::TestSignalExtractorObfuscation::test_vpn_from_classifications PASSED [ 15%]
+tests/test_aci_signals.py::TestSignalExtractorObfuscation::test_vpn_from_proxy_analysis PASSED [ 15%]
+tests/test_aci_signals.py::TestAttributionResultToDict::test_aci_breakdown_keys PASSED [ 15%]
+tests/test_aci_signals.py::TestAttributionResultToDict::test_all_keys_present PASSED [ 16%]
+tests/test_aci_signals.py::TestAttributionResultToDict::test_posterior_entry_fields PASSED [ 16%]
+tests/test_aci_signals.py::TestAttributionResultToDict::test_posterior_is_list PASSED [ 16%]
+tests/test_aci_signals.py::TestAttributionResultToDict::test_probabilities_rounded_4dp PASSED [ 17%]
+tests/test_aci_signals.py::TestDemoACISignalBehavior::test_all_geographic_signals_in_missing PASSED [ 17%]
+tests/test_aci_signals.py::TestDemoACISignalBehavior::test_large_ip_list_no_geo_stays_uncertain PASSED [ 17%]
+tests/test_aci_signals.py::TestDemoACISignalBehavior::test_no_signal_n_obs_does_not_change_posterior PASSED [ 17%]
+tests/test_aci_signals.py::TestDemoACISignalBehavior::test_no_signal_profile_tier_0 PASSED [ 18%]
+tests/test_aci_signals.py::TestDemoACISignalBehavior::test_real_ip_from_webmail_beats_prior PASSED [ 18%]
+tests/test_aci_signals.py::TestDemoACISignalBehavior::test_webmail_unknown_no_country_boost PASSED [ 18%]
+tests/test_active_analysis.py::TestCanaryCallbackAnalyzer::test_evidence_includes_citation FAILED [ 19%]
+tests/test_active_analysis.py::TestCanaryCallbackAnalyzer::test_high_confidence_over_vpn_ip PASSED [ 19%]
+tests/test_active_analysis.py::TestCanaryCallbackAnalyzer::test_no_trigger_no_signal PASSED [ 19%]
+tests/test_active_analysis.py::TestCanaryCallbackAnalyzer::test_private_ip_handled PASSED [ 19%]
+tests/test_active_analysis.py::TestCanaryCallbackAnalyzer::test_register_trigger_returns_result PASSED [ 20%]
+tests/test_active_analysis.py::TestCanaryCallbackAnalyzer::test_signal_confidence_is_maximum PASSED [ 20%]
+tests/test_active_analysis.py::TestCanaryCallbackAnalyzer::test_trigger_produces_signal PASSED [ 20%]
+tests/test_active_analysis.py::TestCanaryCallbackAnalyzer::test_ua_captured_in_evidence PASSED [ 21%]
+tests/test_active_analysis.py::TestFastFluxAnalyzer::test_analyze_no_dns_returns_empty PASSED [ 21%]
+tests/test_active_analysis.py::TestFastFluxAnalyzer::test_fast_flux_detection_low_ttl PASSED [ 21%]
+tests/test_active_analysis.py::TestFastFluxAnalyzer::test_flux_score_bounded PASSED [ 21%]
+tests/test_active_analysis.py::TestFastFluxAnalyzer::test_flux_score_formula_fastflux PASSED [ 22%]
+tests/test_active_analysis.py::TestFastFluxAnalyzer::test_flux_score_formula_static PASSED [ 22%]
+tests/test_active_analysis.py::TestFastFluxAnalyzer::test_holz_metric_citation_in_evidence PASSED [ 22%]
+tests/test_active_analysis.py::TestFastFluxAnalyzer::test_live_yandex_ru PASSED [ 23%]
+tests/test_active_analysis.py::TestFastFluxAnalyzer::test_single_ip_static_domain FAILED [ 23%]
+tests/test_active_analysis.py::TestActiveVPNProbe::test_datacenter_org_sets_flag PASSED [ 23%]
+tests/test_active_analysis.py::TestActiveVPNProbe::test_evidence_includes_citation PASSED [ 23%]
+tests/test_active_analysis.py::TestActiveVPNProbe::test_loopback_returns_empty PASSED [ 24%]
+tests/test_active_analysis.py::TestActiveVPNProbe::test_private_ip_no_signal PASSED [ 24%]
+tests/test_active_analysis.py::TestActiveVPNProbe::test_private_ip_returns_empty PASSED [ 24%]
+tests/test_active_analysis.py::TestActiveVPNProbe::test_vpn_port_open_raises_confidence PASSED [ 25%]
+tests/test_active_analysis.py::TestActiveVPNProbe::test_vpn_provider_org_sets_flag PASSED [ 25%]
+tests/test_active_analysis.py::TestActiveVPNProbe::test_vpn_signal_confidence_inverted PASSED [ 25%]
+tests/test_active_analysis.py::TestRTTGeolocator::test_citation_in_evidence PASSED [ 25%]
+tests/test_active_analysis.py::TestRTTGeolocator::test_closest_country_brazil PASSED [ 26%]
+tests/test_active_analysis.py::TestRTTGeolocator::test_closest_country_india FAILED [ 26%]
+tests/test_active_analysis.py::TestRTTGeolocator::test_closest_country_russia FAILED [ 26%]
+tests/test_active_analysis.py::TestRTTGeolocator::test_failed_probes_produce_empty_result PASSED [ 27%]
+tests/test_active_analysis.py::TestRTTGeolocator::test_haversine_math PASSED [ 27%]
+tests/test_active_analysis.py::TestRTTGeolocator::test_haversine_same_point PASSED [ 27%]
+tests/test_active_analysis.py::TestRTTGeolocator::test_live_google_dns PASSED [ 27%]
+tests/test_active_analysis.py::TestRTTGeolocator::test_private_ip_returns_empty PASSED [ 28%]
+tests/test_active_analysis.py::TestRTTGeolocator::test_single_probe_low_confidence PASSED [ 28%]
+tests/test_active_analysis.py::TestRTTGeolocator::test_three_probes_higher_confidence PASSED [ 28%]
+tests/test_active_analysis.py::TestRTTGeolocator::test_triangulation_single_probe PASSED [ 29%]
+tests/test_active_analysis.py::TestRTTGeolocator::test_triangulation_two_probes_narrows PASSED [ 29%]
+tests/test_active_analysis.py::TestInfrastructureGraphAnalyzer::test_citation_in_evidence PASSED [ 29%]
+tests/test_active_analysis.py::TestInfrastructureGraphAnalyzer::test_confidence_tiers PASSED [ 29%]
+tests/test_active_analysis.py::TestInfrastructureGraphAnalyzer::test_domain_extraction_from_dkim PASSED [ 30%]
+tests/test_active_analysis.py::TestInfrastructureGraphAnalyzer::test_domain_extraction_from_from_fallback PASSED [ 30%]
+tests/test_active_analysis.py::TestInfrastructureGraphAnalyzer::test_no_headers_returns_empty PASSED [ 30%]
+tests/test_active_analysis.py::TestInfrastructureGraphAnalyzer::test_no_signal_when_no_votes PASSED [ 31%]
+tests/test_active_analysis.py::TestInfrastructureGraphAnalyzer::test_received_ip_geo_contributes PASSED [ 31%]
+tests/test_active_analysis.py::TestInfrastructureGraphAnalyzer::test_spf_ip_weighted_double SKIPPED [ 31%]
+tests/test_active_analysis.py::TestActiveAnalysisPipeline::test_overall_confidence_bounded PASSED [ 31%]
+tests/test_active_analysis.py::TestActiveAnalysisPipeline::test_pipeline_canary_token_integrates FAILED [ 32%]
+tests/test_active_analysis.py::TestActiveAnalysisPipeline::test_pipeline_disabled_techniques_skip PASSED [ 32%]
+tests/test_active_analysis.py::TestActiveAnalysisPipeline::test_pipeline_no_candidate_ip_skips_probes PASSED [ 32%]
+tests/test_active_analysis.py::TestActiveAnalysisPipeline::test_pipeline_private_ip_skips_probes PASSED [ 33%]
+tests/test_active_analysis.py::TestActiveAnalysisPipeline::test_pipeline_returns_active_analysis_result PASSED [ 33%]
+tests/test_active_analysis.py::TestAdversarialScenarios::test_flux_score_static_domain_low PASSED [ 33%]
+tests/test_active_analysis.py::TestAdversarialScenarios::test_graph_independent_of_date_header PASSED [ 33%]
+tests/test_active_analysis.py::TestAdversarialScenarios::test_graph_survives_relay_chain PASSED [ 34%]
+tests/test_active_analysis.py::TestAdversarialScenarios::test_residential_ip_has_low_vpn_confidence PASSED [ 34%]
+tests/test_active_analysis.py::TestAdversarialScenarios::test_same_country_proxy_still_identifiable PASSED [ 34%]
+tests/test_active_analysis.py::TestAdversarialScenarios::test_tor_org_confidence_is_0_90 PASSED [ 35%]
+tests/test_active_analysis.py::TestAdversarialScenarios::test_tor_org_detected PASSED [ 35%]
+tests/test_active_analysis.py::TestAdversarialScenarios::test_vpn_exit_detected_as_vpn PASSED [ 35%]
+tests/test_active_analysis.py::TestAdversarialScenarios::test_vpn_exit_signal_has_low_location_confidence PASSED [ 35%]
+tests/test_active_analysis.py::TestMetricValidation::test_calibration_gap_positive_for_good_model PASSED [ 36%]
+tests/test_active_analysis.py::TestMetricValidation::test_canary_triggered_cases_correct PASSED [ 36%]
+tests/test_active_analysis.py::TestMetricValidation::test_canary_validation_cases_run PASSED [ 36%]
+tests/test_active_analysis.py::TestMetricValidation::test_compute_metrics_abstention PASSED [ 37%]
+tests/test_active_analysis.py::TestMetricValidation::test_compute_metrics_all_correct PASSED [ 37%]
+tests/test_active_analysis.py::TestMetricValidation::test_compute_metrics_all_wrong PASSED [ 37%]
+tests/test_active_analysis.py::TestMetricValidation::test_compute_metrics_empty PASSED [ 37%]
+tests/test_active_analysis.py::TestMetricValidation::test_full_validation_runner_no_crash FAILED [ 38%]
+tests/test_active_analysis.py::TestMetricValidation::test_geo_error_russia_china PASSED [ 38%]
+tests/test_active_analysis.py::TestMetricValidation::test_geo_error_same_country PASSED [ 38%]
+tests/test_active_analysis.py::TestMetricValidation::test_geo_error_unknown_country PASSED [ 39%]
+tests/test_active_analysis.py::TestMetricValidation::test_haversine_formula PASSED [ 39%]
+tests/test_active_analysis.py::TestMetricValidation::test_haversine_nyc_london PASSED [ 39%]
+tests/test_active_analysis.py::TestMetricValidation::test_minimum_canary_accuracy PASSED [ 39%]
+tests/test_active_analysis.py::TestMetricValidation::test_mock_geo_lookup PASSED [ 40%]
+tests/test_active_analysis.py::TestEdgeCases::test_canary_no_callback_host PASSED [ 40%]
+tests/test_active_analysis.py::TestEdgeCases::test_flux_empty_ip_list PASSED [ 40%]
+tests/test_active_analysis.py::TestEdgeCases::test_geolocate_empty_returns_none PASSED [ 41%]
+tests/test_active_analysis.py::TestEdgeCases::test_geolocate_loopback_returns_none PASSED [ 41%]
+tests/test_active_analysis.py::TestEdgeCases::test_geolocate_private_returns_none PASSED [ 41%]
+tests/test_active_analysis.py::TestEdgeCases::test_graph_no_from_header PASSED [ 41%]
+tests/test_active_analysis.py::TestEdgeCases::test_graph_unicode_domain PASSED [ 42%]
+tests/test_active_analysis.py::TestEdgeCases::test_is_private_ip_invalid PASSED [ 42%]
+tests/test_active_analysis.py::TestEdgeCases::test_is_private_ip_ipv4 PASSED [ 42%]
+tests/test_active_analysis.py::TestEdgeCases::test_is_private_ip_loopback PASSED [ 43%]
+tests/test_active_analysis.py::TestEdgeCases::test_rtg_geo_empty_measurements PASSED [ 43%]
+tests/test_active_analysis.py::TestEdgeCases::test_vpn_probe_malformed_ip PASSED [ 43%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_calibration_gap_above_baseline PASSED [ 43%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_cat1_accuracy_above_70pct PASSED [ 44%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_cat1_charset_china_gbk PASSED [ 44%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_cat1_charset_russia_koi8r PASSED [ 44%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_cat1_charset_ukraine_koi8u PASSED [ 45%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_cat1_charset_vietnam_windows1258 PASSED [ 45%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_cat1_india_timezone_unique PASSED [ 45%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_cat1_iran_timezone_unique PASSED [ 45%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_cat1_real_ip_india PASSED [ 46%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_cat2_accuracy_above_85pct PASSED [ 46%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_cat2_achieves_tier_3_or_4 PASSED [ 46%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_cat2_confidence_above_070 PASSED [ 47%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_cat3_accuracy_above_80pct PASSED [ 47%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_cat3_aci_below_clean PASSED [ 47%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_cat3_geo_excluded_from_signals_used PASSED [ 47%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_cat3_vpn_mode_set PASSED [ 48%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_cat4_no_overconfidence PASSED [ 48%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_cat4_no_signal_is_tier_0 PASSED [ 48%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_cat4_tier_stays_low FAILED [ 49%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_cat5_aci_mae_below_005 PASSED [ 49%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_cat5_all_layers_floor PASSED [ 49%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_cat5_clean_aci_is_1 PASSED [ 49%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_cat5_tor_aci_is_070 PASSED [ 50%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_cat5_tor_vpn_aci_is_052 PASSED [ 50%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_cat5_vpn_aci_is_082 PASSED [ 50%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_no_regression_vs_baseline PASSED [ 50%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_overall_country_accuracy_above_baseline PASSED [ 51%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_overall_tier_mae_below_baseline PASSED [ 51%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_pass_rate_above_80pct PASSED [ 51%]
+tests/test_evaluation.py::TestEvaluationCorpus::test_zero_engine_errors PASSED [ 52%]
+tests/test_p0.py::TestDataclassContract::test_confidence_bounds PASSED   [ 52%]
+tests/test_p0.py::TestDataclassContract::test_detected_technique_fields PASSED [ 52%]
+tests/test_p0.py::TestDataclassContract::test_header_integrity_bounds PASSED [ 52%]
+tests/test_p0.py::TestDataclassContract::test_profile_required_fields PASSED [ 53%]
+tests/test_p0.py::TestDataclassContract::test_risk_labels_valid PASSED   [ 53%]
+tests/test_p0.py::TestDataclassContract::test_risk_score_bounds PASSED   [ 53%]
+tests/test_p0.py::TestDataclassContract::test_sending_method_fields PASSED [ 54%]
+tests/test_p0.py::TestIdentityDetectors::test_amazon_display_name_detected PASSED [ 54%]
+tests/test_p0.py::TestIdentityDetectors::test_display_name_evidence_mentions_brand PASSED [ 54%]
+tests/test_p0.py::TestIdentityDetectors::test_dmarc_fail_detected PASSED [ 54%]
+tests/test_p0.py::TestIdentityDetectors::test_legitimate_from_no_display_name_flag PASSED [ 55%]
+tests/test_p0.py::TestIdentityDetectors::test_microsoft_display_name_detected PASSED [ 55%]
+tests/test_p0.py::TestIdentityDetectors::test_paypal_display_name_detected PASSED [ 55%]
+tests/test_p0.py::TestIdentityDetectors::test_spf_fail_extracts_ip PASSED [ 56%]
+tests/test_p0.py::TestIdentityDetectors::test_spf_hardfail_detected PASSED [ 56%]
+tests/test_p0.py::TestIdentityDetectors::test_spf_pass_no_flag PASSED    [ 56%]
+tests/test_p0.py::TestIdentityDetectors::test_spf_softfail_detected PASSED [ 56%]
+tests/test_p0.py::TestInfrastructureDetectors::test_2hop_clean_no_proxy_flag PASSED [ 57%]
+tests/test_p0.py::TestInfrastructureDetectors::test_6hop_chain_detected PASSED [ 57%]
+tests/test_p0.py::TestInfrastructureDetectors::test_digitalocean_hostname_detected PASSED [ 57%]
+tests/test_p0.py::TestInfrastructureDetectors::test_known_relay_hostname_not_flagged_as_datacenter PASSED [ 58%]
+tests/test_p0.py::TestInfrastructureDetectors::test_proxy_mitre_correct PASSED [ 58%]
+tests/test_p0.py::TestInfrastructureDetectors::test_regular_isp_hostname_no_vpn_flag PASSED [ 58%]
+tests/test_p0.py::TestInfrastructureDetectors::test_tor_redflags_detected PASSED [ 58%]
+tests/test_p0.py::TestInfrastructureDetectors::test_unknown_hop_increases_confidence PASSED [ 59%]
+tests/test_p0.py::TestInfrastructureDetectors::test_vpn_hostname_detected PASSED [ 59%]
+tests/test_p0.py::TestSendingMethodDetectors::test_evilginx_detected PASSED [ 59%]
+tests/test_p0.py::TestSendingMethodDetectors::test_gophish_case_insensitive PASSED [ 60%]
+tests/test_p0.py::TestSendingMethodDetectors::test_gophish_sending_method_populated PASSED [ 60%]
+tests/test_p0.py::TestSendingMethodDetectors::test_gophish_xmailer_detected PASSED [ 60%]
+tests/test_p0.py::TestSendingMethodDetectors::test_kit_evidence_contains_xmailer PASSED [ 60%]
+tests/test_p0.py::TestSendingMethodDetectors::test_normal_outlook_no_kit_flag PASSED [ 61%]
+tests/test_p0.py::TestSendingMethodDetectors::test_pm_me_domain_blocks_passive PASSED [ 61%]
+tests/test_p0.py::TestSendingMethodDetectors::test_protonmail_canary_recommended PASSED [ 61%]
+tests/test_p0.py::TestSendingMethodDetectors::test_protonmail_from_domain_blocks_passive PASSED [ 62%]
+tests/test_p0.py::TestSendingMethodDetectors::test_protonmail_received_hostname_blocks_passive PASSED [ 62%]
+tests/test_p0.py::TestSendingMethodDetectors::test_protonmail_sending_method_strips_ip PASSED [ 62%]
+tests/test_p0.py::TestSendingMethodDetectors::test_regular_provider_does_not_block_passive PASSED [ 62%]
+tests/test_p0.py::TestSendingMethodDetectors::test_sending_method_gophish_conf_high PASSED [ 63%]
+tests/test_p0.py::TestSendingMethodDetectors::test_sending_method_to_dict PASSED [ 63%]
+tests/test_p0.py::TestSendingMethodDetectors::test_setoolkit_detected PASSED [ 63%]
+tests/test_p0.py::TestSendingMethodDetectors::test_tuta_io_blocks_passive PASSED [ 64%]
+tests/test_p0.py::TestSendingMethodDetectors::test_tutanota_blocks_passive PASSED [ 64%]
+tests/test_p0.py::TestEvasionDetectors::test_business_hours_no_anomaly PASSED [ 64%]
+tests/test_p0.py::TestEvasionDetectors::test_consistent_timezone_no_flag PASSED [ 64%]
+tests/test_p0.py::TestEvasionDetectors::test_midnight_0h_detected PASSED [ 65%]
+tests/test_p0.py::TestEvasionDetectors::test_night_send_02h_detected PASSED [ 65%]
+tests/test_p0.py::TestEvasionDetectors::test_no_php_header_no_detection PASSED [ 65%]
+tests/test_p0.py::TestEvasionDetectors::test_no_received_no_timezone_check PASSED [ 66%]
+tests/test_p0.py::TestEvasionDetectors::test_php_evidence_shows_script_path PASSED [ 66%]
+tests/test_p0.py::TestEvasionDetectors::test_php_originating_script_detected PASSED [ 66%]
+tests/test_p0.py::TestEvasionDetectors::test_roundcube_xmailer_detected PASSED [ 66%]
+tests/test_p0.py::TestEvasionDetectors::test_timezone_spoof_3h_gap_detected PASSED [ 67%]
+tests/test_p0.py::TestEvasionDetectors::test_timezone_spoof_4h_contradiction_detected PASSED [ 67%]
+tests/test_p0.py::TestEvasionDetectors::test_timezone_spoof_evidence_shows_discrepancy PASSED [ 67%]
+tests/test_p0.py::TestHeaderIntegrityScore::test_clean_email_integrity_100pct PASSED [ 68%]
+tests/test_p0.py::TestHeaderIntegrityScore::test_integrity_in_0_to_1_range PASSED [ 68%]
+tests/test_p0.py::TestHeaderIntegrityScore::test_integrity_is_float PASSED [ 68%]
+tests/test_p0.py::TestHeaderIntegrityScore::test_integrity_propagated_to_dict PASSED [ 68%]
+tests/test_p0.py::TestSerialisation::test_detected_techniques_serialised PASSED [ 69%]
+tests/test_p0.py::TestSerialisation::test_roundtrip_confidence_precision PASSED [ 69%]
+tests/test_p0.py::TestSerialisation::test_scanned_at_is_iso_timestamp PASSED [ 69%]
+tests/test_p0.py::TestSerialisation::test_sending_method_serialised PASSED [ 70%]
+tests/test_p0.py::TestSerialisation::test_to_dict_json_serialisable PASSED [ 70%]
+tests/test_p0.py::TestSerialisation::test_to_dict_required_keys PASSED   [ 70%]
+tests/test_p0.py::TestSerialisation::test_to_dict_returns_dict PASSED    [ 70%]
+tests/test_p0.py::TestPrintSummary::test_bar_chars_in_output_for_detections PASSED [ 71%]
+tests/test_p0.py::TestPrintSummary::test_gophish_flagged_in_output PASSED [ 71%]
+tests/test_p0.py::TestPrintSummary::test_no_techniques_shows_ok_message PASSED [ 71%]
+tests/test_p0.py::TestPrintSummary::test_phase_0_header_in_output PASSED [ 72%]
+tests/test_p0.py::TestPrintSummary::test_print_summary_no_crash PASSED   [ 72%]
+tests/test_p0.py::TestPrintSummary::test_protonmail_blocked_in_output PASSED [ 72%]
+tests/test_p0.py::TestPrintSummary::test_risk_label_in_output PASSED     [ 72%]
+tests/test_p0.py::TestConvenienceFunction::test_convenience_fn_same_result_as_class PASSED [ 73%]
+tests/test_p0.py::TestConvenienceFunction::test_header_analysis_kwarg_accepted PASSED [ 73%]
+tests/test_p0.py::TestConvenienceFunction::test_profile_attacker_techniques_returns_profile PASSED [ 73%]
+tests/test_p0.py::TestConvenienceFunction::test_verbose_false_no_stdout PASSED [ 74%]
+tests/test_p0.py::TestEdgeCases::test_100_received_headers_no_crash PASSED [ 74%]
+tests/test_p0.py::TestEdgeCases::test_all_techniques_populated_correctly PASSED [ 74%]
+tests/test_p0.py::TestEdgeCases::test_campaign_timestamps_empty_list PASSED [ 74%]
+tests/test_p0.py::TestEdgeCases::test_emoji_in_subject_no_crash PASSED   [ 75%]
+tests/test_p0.py::TestEdgeCases::test_empty_string_no_crash PASSED       [ 75%]
+tests/test_p0.py::TestEdgeCases::test_header_analysis_none_no_crash PASSED [ 75%]
+tests/test_p0.py::TestEdgeCases::test_malformed_spf_header_no_crash PASSED [ 76%]
+tests/test_p0.py::TestEdgeCases::test_missing_date_header_no_crash PASSED [ 76%]
+tests/test_p0.py::TestEdgeCases::test_multiple_from_headers_no_crash PASSED [ 76%]
+tests/test_p0.py::TestEdgeCases::test_null_bytes_in_headers_no_crash PASSED [ 76%]
+tests/test_p0.py::TestEdgeCases::test_unicode_in_from_no_crash PASSED    [ 77%]
+tests/test_p0.py::TestEdgeCases::test_very_long_xmailer_no_crash PASSED  [ 77%]
+tests/test_p0.py::TestEdgeCases::test_whitespace_only_no_crash PASSED    [ 77%]
+tests/test_p0.py::TestPipelineIntegration::test_complete_pipeline_result_line_count PASSED [ 78%]
+tests/test_p0.py::TestPipelineIntegration::test_dataclass_field_present PASSED [ 78%]
+tests/test_p0.py::TestPipelineIntegration::test_header_integrity_discount_present PASSED [ 78%]
+tests/test_p0.py::TestPipelineIntegration::test_import_attacker_technique_profiler PASSED [ 78%]
+tests/test_p0.py::TestPipelineIntegration::test_import_guard_present PASSED [ 79%]
+tests/test_p0.py::TestPipelineIntegration::test_init_wiring_present PASSED [ 79%]
+tests/test_p0.py::TestPipelineIntegration::test_no_unconditional_import PASSED [ 79%]
+tests/test_p0.py::TestPipelineIntegration::test_passive_attribution_blocked_propagated PASSED [ 80%]
+tests/test_p0.py::TestPipelineIntegration::test_phase0_after_stage_1_in_source_order PASSED [ 80%]
+tests/test_p0.py::TestPipelineIntegration::test_phase0_before_stage_2_in_source_order PASSED [ 80%]
+tests/test_p0.py::TestPipelineIntegration::test_phase0_run_block_present PASSED [ 80%]
+tests/test_p0.py::TestPipelineIntegration::test_phase0_warning_in_backtrack_block PASSED [ 81%]
+tests/test_p0.py::TestPipelineIntegration::test_pipeline_ast_valid PASSED [ 81%]
+tests/test_p0.py::TestPipelineIntegration::test_result_construction_wired PASSED [ 81%]
+tests/test_p0.py::TestPipelineIntegration::test_technique_profiler_none_guard PASSED [ 82%]
+tests/test_p0.py::TestMitreMapping::test_all_mitre_ids_in_profile_match_techniques PASSED [ 82%]
+tests/test_p0.py::TestMitreMapping::test_display_name_maps_t1036 PASSED  [ 82%]
+tests/test_p0.py::TestMitreMapping::test_gophish_maps_t1566_001 PASSED   [ 82%]
+tests/test_p0.py::TestMitreMapping::test_mitre_ids_are_strings PASSED    [ 83%]
+tests/test_p0.py::TestMitreMapping::test_no_detections_empty_mitre PASSED [ 83%]
+tests/test_p0.py::TestMitreMapping::test_php_mailer_maps_t1584 PASSED    [ 83%]
+tests/test_p0.py::TestMitreMapping::test_proxy_chain_maps_t1090 PASSED   [ 84%]
+tests/test_p0.py::TestMitreMapping::test_spf_fail_maps_t1036_005 PASSED  [ 84%]
+tests/test_p0.py::TestMitreMapping::test_timezone_spoof_maps_t1036 PASSED [ 84%]
+tests/test_p0.py::TestCanaryTokenRecommendation::test_clean_low_risk_may_not_recommend_canary PASSED [ 84%]
+tests/test_p0.py::TestCanaryTokenRecommendation::test_high_risk_recommends_canary PASSED [ 85%]
+tests/test_p0.py::TestCanaryTokenRecommendation::test_protonmail_always_recommends_canary PASSED [ 85%]
+tests/test_p0.py::TestCanaryTokenRecommendation::test_tutanota_always_recommends_canary PASSED [ 85%]
+tests/test_p0.py::TestProfileProperties::test_high_confidence_techniques_filter PASSED [ 86%]
+tests/test_p0.py::TestProfileProperties::test_technique_count_in_to_dict PASSED [ 86%]
+tests/test_p0.py::TestProfileProperties::test_technique_count_matches_list PASSED [ 86%]
+tests/test_p0.py::TestProfileProperties::test_zero_techniques_on_clean_email PASSED [ 86%]
+tests/test_p0_regressions.py::TestP0A_PosteriorCollapse::test_double_counting_ratio PASSED [ 87%]
+tests/test_p0_regressions.py::TestP0A_PosteriorCollapse::test_monotonic_raw_probability PASSED [ 87%]
+tests/test_p0_regressions.py::TestP0A_PosteriorCollapse::test_n10_not_collapsed PASSED [ 87%]
+tests/test_p0_regressions.py::TestP0A_PosteriorCollapse::test_n10_tier_3_or_4 PASSED [ 88%]
+tests/test_p0_regressions.py::TestP0A_PosteriorCollapse::test_n1_calibrated_range PASSED [ 88%]
+tests/test_p0_regressions.py::TestP0A_PosteriorCollapse::test_n1_lower_than_n10_raw PASSED [ 88%]
+tests/test_p0_regressions.py::TestP0A_PosteriorCollapse::test_n5_calibrated_range PASSED [ 88%]
+tests/test_p0_regressions.py::TestP0A_PosteriorCollapse::test_single_obs_not_collapsed PASSED [ 89%]
+tests/test_p0_regressions.py::TestP0A_PosteriorCollapse::test_single_obs_posterior_spread PASSED [ 89%]
+tests/test_p0_regressions.py::TestP0A_PosteriorCollapse::test_single_obs_tier_not_4 PASSED [ 89%]
+tests/test_p0_regressions.py::TestP0A_PosteriorCollapse::test_ukraine_correct_country PASSED [ 90%]
+tests/test_p0_regressions.py::TestP0A_PosteriorCollapse::test_utc_ambiguous_stays_uncertain PASSED [ 90%]
+tests/test_p0_regressions.py::TestP0B_ACIPipelineConnection::test_all_layers_floor_007 PASSED [ 90%]
+tests/test_p0_regressions.py::TestP0B_ACIPipelineConnection::test_clean_aci_is_1 PASSED [ 90%]
+tests/test_p0_regressions.py::TestP0B_ACIPipelineConnection::test_clean_all_layers_false PASSED [ 91%]
+tests/test_p0_regressions.py::TestP0B_ACIPipelineConnection::test_clean_interpretation_minimal PASSED [ 91%]
+tests/test_p0_regressions.py::TestP0B_ACIPipelineConnection::test_full_obfuscation_tier_0_or_1 PASSED [ 91%]
+tests/test_p0_regressions.py::TestP0B_ACIPipelineConnection::test_none_override_clean_opsec_aci_1 PASSED [ 92%]
+tests/test_p0_regressions.py::TestP0B_ACIPipelineConnection::test_none_override_opsec_70_datacenter PASSED [ 92%]
+tests/test_p0_regressions.py::TestP0B_ACIPipelineConnection::test_none_override_vpn_providers_fires PASSED [ 92%]
+tests/test_p0_regressions.py::TestP0B_ACIPipelineConnection::test_tor_only_aci_070_moderate PASSED [ 92%]
+tests/test_p0_regressions.py::TestP0B_ACIPipelineConnection::test_tor_vpn_052_significant PASSED [ 93%]
+tests/test_p0_regressions.py::TestP0B_ACIPipelineConnection::test_vpn_aci_082 PASSED [ 93%]
+tests/test_p0_regressions.py::TestP0B_ACIPipelineConnection::test_vpn_flag_set_in_breakdown PASSED [ 93%]
+tests/test_p0_regressions.py::TestP0B_ACIPipelineConnection::test_vpn_interpretation_and_penalty PASSED [ 94%]
+tests/test_p0_regressions.py::TestP0B_ACIPipelineConnection::test_vpn_lowers_tier PASSED [ 94%]
+tests/test_p0_regressions.py::TestP0B_ACIPipelineConnection::test_vpn_penalty_applied_018 PASSED [ 94%]
+tests/test_p0_regressions.py::TestP0B_ACIPipelineConnection::test_vpn_reduces_aci_adj PASSED [ 94%]
+tests/test_p0_regressions.py::TestP0Combined::test_large_cluster_clean_reaches_tier_3_plus PASSED [ 95%]
+tests/test_p0_regressions.py::TestP0Combined::test_large_cluster_vpn_still_penalised PASSED [ 95%]
+tests/test_p0_regressions.py::TestP0Combined::test_n_obs_does_not_compensate_obfuscation PASSED [ 95%]
+tests/test_p0_regressions.py::TestP0Combined::test_tor_caps_regardless_of_size PASSED [ 96%]
+tests/test_p0_regressions.py::TestDemoOutputBehavior::test_all_geographic_signals_in_missing PASSED [ 96%]
+tests/test_p0_regressions.py::TestDemoOutputBehavior::test_no_signal_aci_adj_equals_raw PASSED [ 96%]
+tests/test_p0_regressions.py::TestDemoOutputBehavior::test_no_signal_n_obs_does_not_change_posterior PASSED [ 96%]
+tests/test_p0_regressions.py::TestDemoOutputBehavior::test_no_signal_posterior_equals_prior PASSED [ 97%]
+tests/test_p0_regressions.py::TestDemoOutputBehavior::test_no_signal_profile_tier_0 PASSED [ 97%]
+tests/test_p0_regressions.py::TestDemoOutputBehavior::test_unknown_webmail_does_not_shift_posterior PASSED [ 97%]
+tests/test_p0_regressions.py::TestOrchestratorObfuscationAggregation::test_all_clean PASSED [ 98%]
+tests/test_p0_regressions.py::TestOrchestratorObfuscationAggregation::test_datacenter_from_cls PASSED [ 98%]
+tests/test_p0_regressions.py::TestOrchestratorObfuscationAggregation::test_missing_file_graceful PASSED [ 98%]
+tests/test_p0_regressions.py::TestOrchestratorObfuscationAggregation::test_or_logic_one_in_five PASSED [ 98%]
+tests/test_p0_regressions.py::TestOrchestratorObfuscationAggregation::test_timestamp_spoof_from_ha PASSED [ 99%]
+tests/test_p0_regressions.py::TestOrchestratorObfuscationAggregation::test_tor_from_backtrack PASSED [ 99%]
+tests/test_p0_regressions.py::TestOrchestratorObfuscationAggregation::test_vpn_from_backtrack_provider PASSED [ 99%]
+tests/test_p0_regressions.py::TestOrchestratorObfuscationAggregation::test_vpn_from_proxy PASSED [100%]
+
+=================================== FAILURES ===================================
+__________ TestCanaryCallbackAnalyzer.test_evidence_includes_citation __________
+
+self = <test_active_analysis.TestCanaryCallbackAnalyzer testMethod=test_evidence_includes_citation>
+
+    def test_evidence_includes_citation(self):
+        """Signal evidence must include Jain 2025 citation."""
+        result = self.analyzer.register_trigger(
+            "test-token-005", "103.21.244.1")
+        evidence_text = " ".join(result.signal.evidence)
+>       self.assertIn("Jain", evidence_text)
+E       AssertionError: 'Jain' not found in 'Direct webhook trigger: 103.21.244.1 Country geolocated: Canada UA: '
+
+tests/test_active_analysis.py:197: AssertionError
+______________ TestFastFluxAnalyzer.test_single_ip_static_domain _______________
+
+self = <test_active_analysis.TestFastFluxAnalyzer testMethod=test_single_ip_static_domain>
+
+    def test_single_ip_static_domain(self):
+        """Single stable IP should produce is_fast_flux=False."""
+        fa = self._make_analyzer()
+        with patch("socket.getaddrinfo",
+                   _make_dns_mock({"example.static.": ["1.2.3.4"]})):
+            with patch("huntertrace.active.activeAnalysis._geolocate_ip_full",
+                       _make_mock_geo({"1.": "United States"})):
+                result = fa.analyze("example.static.")
+        self.assertFalse(result.is_fast_flux)
+>       self.assertEqual(result.dominant_country, "United States")
+E       AssertionError: None != 'United States'
+
+tests/test_active_analysis.py:288: AssertionError
+_________________ TestRTTGeolocator.test_closest_country_india _________________
+
+self = <test_active_analysis.TestRTTGeolocator testMethod=test_closest_country_india>
+
+    def test_closest_country_india(self):
+        """Centroid near Delhi → India."""
+        country = self.geo._closest_country(28.6, 77.2)
+>       self.assertEqual(country, "India")
+E       AssertionError: 'Pakistan' != 'India'
+E       - Pakistan
+E       + India
+
+tests/test_active_analysis.py:486: AssertionError
+________________ TestRTTGeolocator.test_closest_country_russia _________________
+
+self = <test_active_analysis.TestRTTGeolocator testMethod=test_closest_country_russia>
+
+    def test_closest_country_russia(self):
+        """Centroid near Moscow → Russia."""
+        country = self.geo._closest_country(55.75, 37.62)
+>       self.assertEqual(country, "Russia")
+E       AssertionError: 'Ukraine' != 'Russia'
+E       - Ukraine
+E       + Russia
+
+tests/test_active_analysis.py:481: AssertionError
+_______ TestActiveAnalysisPipeline.test_pipeline_canary_token_integrates _______
+
+self = <test_active_analysis.TestActiveAnalysisPipeline testMethod=test_pipeline_canary_token_integrates>
+
+    def test_pipeline_canary_token_integrates(self):
+        """Canary trigger should inject a high-confidence signal."""
+        pipeline = self._make_pipeline()
+        # Inject a pre-registered canary trigger
+        pipeline.canary_analyzer.register_trigger(
+            "test-pipe-001", "103.21.244.1")
+        # Simulate the token being present in headers
+        # The pipeline checks for X-HunterTrace-Canary in headers
+        with patch("huntertrace.active.activeAnalysis._geolocate_ip_full", return_value={}):
+            with patch.object(
+                pipeline.canary_analyzer, "check",
+                return_value=pipeline.canary_analyzer.register_trigger(
+                    "test-pipe-001", "103.21.244.1")
+            ):
+                result = pipeline.run(
+                    email_headers={
+                        "From": "user@example.com",
+                        "X-HunterTrace-Canary": "test-pipe-001",
+                    },
+                    candidate_ip="1.2.3.4",
+                )
+        # Should have at least the canary signal
+        canary_signals = [
+            s for s in result.signals
+            if hasattr(s, "confidence") and s.confidence == 0.97
+        ]
+>       self.assertGreater(len(canary_signals), 0)
+E       AssertionError: 0 not greater than 0
+
+tests/test_active_analysis.py:763: AssertionError
+__________ TestMetricValidation.test_full_validation_runner_no_crash ___________
+
+self = <test_active_analysis.TestMetricValidation testMethod=test_full_validation_runner_no_crash>
+
+    def test_full_validation_runner_no_crash(self):
+        """
+        ValidationRunner.run_all() should complete without raising even
+        in offline/no-network mode.
+        """
+        with patch("socket.getaddrinfo", side_effect=socket.gaierror):
+>           with patch("activeAnalysis._geolocate_ip_full", return_value={}
+                       if _MODULE_AVAILABLE else {}):
+
+tests/test_active_analysis.py:1155: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/unittest/mock.py:1487: in __enter__
+    self.target = self.getter()
+                  ^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/pkgutil.py:458: in resolve_name
+    mod = importlib.import_module(modname)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/importlib/__init__.py:88: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+<frozen importlib._bootstrap>:1398: in _gcd_import
+    ???
+<frozen importlib._bootstrap>:1371: in _find_and_load
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+name = 'activeAnalysis', import_ = <function _gcd_import at 0x10220be20>
+
+>   ???
+E   ModuleNotFoundError: No module named 'activeAnalysis'
+
+<frozen importlib._bootstrap>:1335: ModuleNotFoundError
+________________ TestEvaluationCorpus.test_cat4_tier_stays_low _________________
+
+self = <test_evaluation.TestEvaluationCorpus testMethod=test_cat4_tier_stays_low>
+
+    def test_cat4_tier_stays_low(self):
+        """Degraded/no-signal cases must all produce Tier ≤ 2."""
+        cat4 = self.by_cat["CAT-4"]
+        high = [r for r in cat4 if r.predicted_tier > 2]
+>       self.assertEqual(len(high), 0,
+            f"{len(high)} degraded cases reached Tier > 2: "
+            f"{[(r.case.case_id, r.predicted_tier) for r in high]}")
+E       AssertionError: 1 != 0 : 1 degraded cases reached Tier > 2: [('CAT4-005', 3)]
+
+tests/test_evaluation.py:1460: AssertionError
+================================ tests coverage ================================
+_______________ coverage: platform darwin, python 3.14.3-final-0 _______________
+
+Name                                                 Stmts   Miss  Cover
+------------------------------------------------------------------------
+huntertrace/__init__.py                                 18      8    56%
+huntertrace/__version__.py                               7      7     0%
+huntertrace/active/__init__.py                           3      0   100%
+huntertrace/active/activeAnalysis.py                   718    185    74%
+huntertrace/active/activeValidation.py                 394    215    45%
+huntertrace/analysis/__init__.py                         4      0   100%
+huntertrace/analysis/actorProfiler.py                  259    231    11%
+huntertrace/analysis/campaignCorrelator.py             488    409    16%
+huntertrace/analysis/correlator.py                       2      2     0%
+huntertrace/analysis/profiler.py                         2      2     0%
+huntertrace/analysis/senderClassifier.py               359    266    26%
+huntertrace/assets/__init__.py                           0      0   100%
+huntertrace/attribution/__init__.py                      3      0   100%
+huntertrace/attribution/analysis.py                    262    227    13%
+huntertrace/attribution/attribution.py                   3      3     0%
+huntertrace/attribution/calibration.py                 197    197     0%
+huntertrace/attribution/engine.py                      556    159    71%
+huntertrace/cli.py                                      45     45     0%
+huntertrace/core/orchestrator.py                       393    357     9%
+huntertrace/core/pipeline.py                          2154   1948    10%
+huntertrace/core/urgency.py                            255    184    28%
+huntertrace/enrichment/__init__.py                       6      0   100%
+huntertrace/enrichment/database.py                     355    297    16%
+huntertrace/enrichment/geolocation.py                  378    333    12%
+huntertrace/enrichment/hosting.py                      124    114     8%
+huntertrace/enrichment/hostingKeys.py                  248    221    11%
+huntertrace/enrichment/ipClassifier.py                 239    189    21%
+huntertrace/extraction/__init__.py                       5      0   100%
+huntertrace/extraction/advanced.py                     314    244    22%
+huntertrace/extraction/basic.py                        181    145    20%
+huntertrace/extraction/vpnBacktrack.py                 628    552    12%
+huntertrace/extraction/webmail.py                      268    123    54%
+huntertrace/forensics/__init__.py                        2      0   100%
+huntertrace/forensics/attackerTechniqueProfiler.py     439     92    79%
+huntertrace/forensics/canaryToken.py                   255    184    28%
+huntertrace/forensics/scanner.py                       413    224    46%
+huntertrace/graph/__init__.py                            5      0   100%
+huntertrace/graph/builder.py                           225    187    17%
+huntertrace/graph/centrality.py                        322    277    14%
+huntertrace/graph/correlator.py                        383    323    16%
+huntertrace/graph/profiler.py                          287    257    10%
+huntertrace/utils/__init__.py                            2      2     0%
+huntertrace/utils/dataset.py                           255    255     0%
+------------------------------------------------------------------------
+TOTAL                                                11456   8464    26%
+Coverage HTML written to dir htmlcov
+=========================== short test summary info ============================
+FAILED tests/test_active_analysis.py::TestCanaryCallbackAnalyzer::test_evidence_includes_citation
+FAILED tests/test_active_analysis.py::TestFastFluxAnalyzer::test_single_ip_static_domain
+FAILED tests/test_active_analysis.py::TestRTTGeolocator::test_closest_country_india
+FAILED tests/test_active_analysis.py::TestRTTGeolocator::test_closest_country_russia
+FAILED tests/test_active_analysis.py::TestActiveAnalysisPipeline::test_pipeline_canary_token_integrates
+FAILED tests/test_active_analysis.py::TestMetricValidation::test_full_validation_runner_no_crash
+FAILED tests/test_evaluation.py::TestEvaluationCorpus::test_cat4_tier_stays_low
+============= 7 failed, 343 passed, 1 skipped in 86.22s (0:01:26) ==============
