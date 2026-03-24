@@ -13,7 +13,7 @@ if version_file.exists():
 else:
     version = {
         '__title__': 'huntertrace',
-        '__version__': '1.1.3',
+        '__version__': '1.2.0',
         '__author__': 'HUNTЕRТRACE Contributors',
         '__author_email__': 'akshayvmudaliar@gmail.com',
         '__description__': 'Advanced phishing actor attribution using Bayesian inference and graph analysis',
