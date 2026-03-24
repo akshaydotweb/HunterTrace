@@ -1,0 +1,58 @@
+# ── Environment & Secrets ──
+.env
+.env.*
+*.pem
+*.key
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# ── Build / Distribution ──
+build/
+dist/
+*.egg-info/
+*.egg
+*.whl
+sdist/
+wheels/
+
+# ── Virtual Environments ──
+.venv/
+venv/
+env/
+
+# ── IDE / Editor ──
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ── Testing / Coverage ──
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.tox/
+
+# ── Project Outputs ──
+ht_output/
+reports/
+results/
+hosting_keywords_cache.json
+
+# ── Mail data (not shipped) ──
+mails/
+
+# ── Legacy / Dev ──
+src/
+huntertrace-release/
+resources/
+tests/
+samples/
+output/
+validation/

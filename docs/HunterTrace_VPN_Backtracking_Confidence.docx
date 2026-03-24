@@ -1,0 +1,100 @@
+HunterTrace VPN Backtracking Techniques — Confidence Calculation
+===============================================================
+
+Overview
+--------
+HunterTrace uses multiple passive techniques to extract the real attacker IP from phishing emails, even when VPNs, proxies, or Tor are used. Each technique produces a confidence score reflecting the reliability of its evidence. No single technique guarantees 100% accuracy due to possible header manipulation, relays, and obfuscation by attackers.
+
+Technique-by-Technique Confidence Calculation
+--------------------------------------------
+
+1. First-hop ISP
+   - Extracts sender’s IP from the last Received header.
+   - Confidence:
+     - 0.88: Public IP, hostname not a known relay/provider.
+     - 0.55: Hostname matches relay/provider.
+     - 0.20–0.30: IP missing/private/obfuscated.
+   - Not 100%: Relays, NAT, or header manipulation can hide real IP.
+
+2. Timezone Correlation
+   - Compares Date: header timezone with Received: header timestamps.
+   - Confidence:
+     - 0.65: Server confirms timezone.
+     - 0.10: Spoofing detected.
+     - 0.30: No confirmation.
+     - Up to 0.73: VPN mismatch bonus.
+   - Not 100%: Client can spoof Date: header; server confirmation helps but isn’t foolproof.
+
+3. Hop Count Analysis
+   - Counts Received headers (SMTP hops).
+   - Confidence:
+     - 0.25: Baseline.
+     - 0.30: Single hop (direct send).
+     - 0.45: ≥6 hops (complex routing).
+     - Up to 0.65: Obfuscation markers present.
+   - Not 100%: Hop count alone is weak; attackers can manipulate routing.
+
+4. Auth Header Analysis (SPF/DKIM/DMARC)
+   - Parses authentication headers for sender IP/domain.
+   - Confidence:
+     - 0.80: Real IP found, server-verified.
+     - 0.45: Only domain evidence.
+   - Not 100%: Attackers can control domains, pass SPF/DKIM with malicious setup.
+
+5. X-Originating-IP Extraction
+   - Extracts client IP from X-Originating-IP headers.
+   - Confidence:
+     - 0.40: Default (client-controlled).
+     - 0.45: IP differs from VPN endpoint.
+     - 0.15: IP matches VPN endpoint.
+   - Not 100%: Client can inject any IP; always capped at 0.50.
+
+6. Behavioral Time Analysis
+   - Analyzes send-hour for anomalies.
+   - Confidence:
+     - 0.45: Night send (00:00–06:00).
+     - 0.40: Early morning.
+     - 0.25: Business hours.
+     - 0.55: Capped.
+   - Not 100%: Sender can manipulate Date: header.
+
+6b. OS Fingerprint Consistency
+   - Checks X-Mailer/User-Agent for OS clues.
+   - Confidence:
+     - 0.20: Apple Mail/macOS detected.
+     - 0.15: Windows/Outlook detected.
+   - Not 100%: User-Agent/X-Mailer can be spoofed.
+
+7. Geolocation Mismatch Inference
+   - Aggregates prior signals, checks mismatch with VPN country.
+   - Confidence:
+     - 0.75: Mismatch detected.
+     - 0.35: No mismatch.
+   - Not 100%: Relies on prior signals, which may be spoofed.
+
+8. DNS Infrastructure Geolocation
+   - Resolves NS/MX/SPF/DKIM/PTR records, geolocates hosting IPs.
+   - Confidence:
+     - 0.85: ≥3 agreeing sub-signals.
+     - 0.70: 2 agreeing.
+     - 0.45: 1 agreeing.
+   - Not 100%: Attackers can use global hosting, manipulate DNS records.
+
+Why No Technique Is 100% Reliable
+---------------------------------
+- Email headers can be manipulated or obfuscated.
+- Relays, NAT, VPNs, and Tor can hide real sender info.
+- Client-controlled fields are always capped.
+- Server-added fields are more trustworthy but not infallible.
+- HunterTrace applies penalties and caps to reflect uncertainty.
+
+Confidence Fusion
+-----------------
+- All signal confidences are combined using Noisy-OR fusion:
+  p_combined = 1 - prod(1 - p_i)
+- Penalized for correlation:
+  p_final = 1 - (1 - p_combined)^(1/sqrt(N))
+
+Summary
+-------
+Each technique assigns confidence based on evidence quality, header source, and context. None can guarantee 100% reliability for all phishing emails, as attackers can use various evasion and spoofing methods. The system fuses multiple signals and applies penalties to ensure forensic rigor and avoid overconfidence.

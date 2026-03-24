@@ -1,0 +1,35 @@
+# Place the full validation_report.json here. (Sample shown below)
+{
+  "total_samples": 5,
+  "scenarios": {
+    "vpn": {
+      "samples": ["sample_0000", "sample_0004"],
+      "accuracy_country": 0.0,
+      "accuracy_obfuscation": 0.0,
+      "avg_confidence": 0.0
+    },
+    "proxy": {
+      "samples": ["sample_0001"],
+      "accuracy_country": 0.0,
+      "accuracy_obfuscation": 0.0,
+      "avg_confidence": 0.0
+    },
+    "tor": {
+      "samples": ["sample_0002"],
+      "accuracy_country": 0.0,
+      "accuracy_obfuscation": 0.0,
+      "avg_confidence": 0.0
+    },
+    "direct": {
+      "samples": ["sample_0003"],
+      "accuracy_country": 0.0,
+      "accuracy_obfuscation": 100.0,
+      "avg_confidence": 0.0
+    }
+  },
+  "overall": {
+    "accuracy_country": 0.0,
+    "accuracy_obfuscation": 20.0,
+    "avg_confidence": 0.0
+  }
+}
