@@ -85,7 +85,7 @@ def _to_signal(raw: Mapping[str, Any], index: int, source: str) -> NormalizedSig
     name = _clean_text(raw.get("name"), max_len=128) or "unknown_signal"
     group = _clean_text(raw.get("group"), max_len=64) or "identity"
     trust_label = _clean_text(raw.get("trust_label") or raw.get("trust_tier"), max_len=64) or "UNKNOWN"
-    candidate_region = _normalize_region(raw.get("candidate_region"))
+    candidate_region = _extract_upstream_region(raw)
 
     anomaly_detail = _clean_text(raw.get("anomaly_detail"), max_len=256)
     excluded_reason = _clean_text(raw.get("excluded_reason"), max_len=256)
@@ -165,6 +165,7 @@ def _load_json_input(path: Path) -> AnalysisInput:
         for idx, row in enumerate(signal_rows)
         if isinstance(row, Mapping)
     ]
+    signals = list(_ensure_candidate_regions(signals))
     anomaly_rows = [_safe_anomaly_entry(item) for item in anomalies]
 
     return AnalysisInput(
@@ -185,6 +186,125 @@ _RE_DKIM = re.compile(r"(?:^|;)\s*d\s*=\s*([^\s;]+)", re.IGNORECASE)
 _RE_RECEIVED_BY = re.compile(r"\bby\s+([^\s;]+)", re.IGNORECASE)
 _RE_RECEIVED_FROM = re.compile(r"\bfrom\s+([^\s;]+)", re.IGNORECASE)
 _RE_RECEIVED_TS = re.compile(r";\s*(.+)$")
+_RE_DOMAIN = re.compile(r"([a-z0-9][a-z0-9.-]*\.[a-z]{2,})", re.IGNORECASE)
+
+
+def _extract_upstream_region(raw: Mapping[str, Any]) -> Optional[str]:
+    direct = _normalize_region(raw.get("candidate_region"))
+    if direct:
+        return direct
+
+    for key in (
+        "region",
+        "region_label",
+        "region_cluster",
+        "candidate_label",
+        "candidate_region_label",
+    ):
+        value = _normalize_region(raw.get(key))
+        if value:
+            return value
+
+    enrichment = raw.get("enrichment")
+    if isinstance(enrichment, Mapping):
+        for key in (
+            "candidate_region",
+            "region",
+            "region_label",
+            "region_cluster",
+            "candidate_label",
+        ):
+            value = _normalize_region(enrichment.get(key))
+            if value:
+                return value
+    return None
+
+
+def _extract_domain_token(value: Any) -> Optional[str]:
+    text = _clean_text(value, max_len=256)
+    if not text:
+        return None
+    if _RE_IPV4.search(text):
+        return None
+    if "@" in text:
+        text = text.rsplit("@", 1)[-1]
+    match = _RE_DOMAIN.search(text.lower())
+    return match.group(1) if match else None
+
+
+def _derive_cluster_candidate(signals: Sequence[NormalizedSignal]) -> Optional[str]:
+    token_counts: Dict[str, int] = {}
+    for signal in signals:
+        token = _extract_domain_token(signal.value)
+        if token:
+            token_counts[token] = token_counts.get(token, 0) + 1
+    eligible = sorted(
+        (
+            (token, count)
+            for token, count in token_counts.items()
+            if count >= 2
+        ),
+        key=lambda row: (-row[1], row[0]),
+    )
+    if not eligible:
+        return None
+    top_token = eligible[0][0]
+    return f"CLUSTER:{top_token}"
+
+
+def _fallback_candidate_trust(label: str) -> str:
+    normalized = str(label or "UNKNOWN").upper()
+    if normalized in {"UNKNOWN", "UNTRUSTED"}:
+        return normalized
+    return "UNKNOWN"
+
+
+def _ensure_candidate_regions(signals: Sequence[NormalizedSignal]) -> Tuple[NormalizedSignal, ...]:
+    if any(_normalize_region(signal.candidate_region) for signal in signals):
+        return tuple(signals)
+
+    cluster_label = _derive_cluster_candidate(signals)
+    adjusted: List[NormalizedSignal] = []
+    if cluster_label:
+        for signal in signals:
+            token = _extract_domain_token(signal.value)
+            if token and (cluster_label == f"CLUSTER:{token}"):
+                adjusted.append(
+                    NormalizedSignal(
+                        signal_id=signal.signal_id,
+                        name=signal.name,
+                        group=signal.group,
+                        value=signal.value,
+                        candidate_region=cluster_label,
+                        source=signal.source,
+                        trust_label=_fallback_candidate_trust(signal.trust_label),
+                        validation_flags=signal.validation_flags,
+                        anomaly_detail=signal.anomaly_detail,
+                        excluded_reason=signal.excluded_reason,
+                    )
+                )
+            else:
+                adjusted.append(signal)
+        if any(_normalize_region(signal.candidate_region) for signal in adjusted):
+            return tuple(adjusted)
+
+    # Last-resort weak candidate to avoid an empty candidate set.
+    for signal in signals:
+        adjusted.append(
+            NormalizedSignal(
+                signal_id=signal.signal_id,
+                name=signal.name,
+                group=signal.group,
+                value=signal.value,
+                candidate_region="UNKNOWN",
+                source=signal.source,
+                trust_label=_fallback_candidate_trust(signal.trust_label),
+                validation_flags=signal.validation_flags,
+                anomaly_detail=signal.anomaly_detail,
+                excluded_reason=signal.excluded_reason,
+            )
+        )
+    return tuple(adjusted)
 
 
 def _load_eml_input(path: Path) -> AnalysisInput:
@@ -198,7 +318,12 @@ def _load_eml_input(path: Path) -> AnalysisInput:
     received_chain: List[Dict[str, Any]] = []
     idx = 0
 
-    injected_region = _normalize_region(message.get("X-HunterTrace-Candidate-Region"))
+    injected_region = (
+        _normalize_region(message.get("X-HunterTrace-Candidate-Region"))
+        or _normalize_region(message.get("X-HunterTrace-Region"))
+        or _normalize_region(message.get("X-HunterTrace-Region-Cluster"))
+        or _normalize_region(message.get("X-Region-Cluster"))
+    )
 
     date_value = _clean_text(message.get("Date"), max_len=256)
     if date_value:
@@ -294,6 +419,7 @@ def _load_eml_input(path: Path) -> AnalysisInput:
                 "detail": "No usable signals could be extracted from .eml input.",
             }
         )
+    signals = list(_ensure_candidate_regions(signals))
 
     return AnalysisInput(
         evidence_id=evidence_id,
@@ -362,34 +488,43 @@ def _build_explanation(
     top_conflicting: Sequence[Mapping[str, Any]],
     limitations: Sequence[str],
 ) -> str:
-    supporting_text = ", ".join(
-        f"{row['name']}[{row['group']}]={float(row.get('effective_weight', 0.0)):.4f}"
-        for row in top_supporting
-    ) or "none"
-    conflicting_text = ", ".join(
-        f"{row['name']}[{row['group']}]={float(row.get('penalty', 0.0)):.4f}"
-        for row in top_conflicting
-    ) or "none"
+    supporting_names = ", ".join(row["name"] for row in top_supporting if row.get("name")) or "none"
+    conflicting_names = ", ".join(row["name"] for row in top_conflicting if row.get("name")) or "none"
+    limitation_blob = " ".join(str(item) for item in limitations).lower()
+    anonymization_detected = "anonymization indicators detected" in limitation_blob
+    conflict_detected = bool(top_conflicting)
 
     if verdict == "inconclusive":
-        why = "; ".join(limitations) if limitations else "insufficient attributable evidence"
+        if conflict_detected:
+            return (
+                f"Conflicting signals ({conflicting_names}) outweighed consistent evidence ({supporting_names}); "
+                f"the result is inconclusive at confidence {confidence:.6f}."
+            )
+        if anonymization_detected:
+            return (
+                f"Anonymization indicators reduced confidence, so HunterTrace stayed inconclusive "
+                f"at {confidence:.6f}."
+            )
         return (
-            f"Inconclusive attribution at confidence {confidence:.6f}. "
-            f"Top supporting signals: {supporting_text}. "
-            f"Top conflicting signals: {conflicting_text}. "
-            f"Abstained because: {why}."
+            f"Signal consistency was insufficient for safe attribution; the result is inconclusive "
+            f"at confidence {confidence:.6f}."
         )
 
+    if anonymization_detected:
+        return (
+            f"Signals supported {region}, but anonymization indicators reduced confidence to "
+            f"{confidence:.6f}."
+        )
     return (
-        f"Attributed to {region} at confidence {confidence:.6f}. "
-        f"Top supporting signals: {supporting_text}. "
-        f"Top conflicting signals: {conflicting_text}."
+        f"Signals were consistent, so attribution to {region} is reported with cautious confidence "
+        f"{confidence:.6f}."
     )
 
 
 class AttributionRunner:
-    def __init__(self, runtime: RuntimeConfig):
+    def __init__(self, runtime: RuntimeConfig, use_correlation: bool = True):
         self.runtime = runtime
+        self.use_correlation = bool(use_correlation)
         self.engine = InferenceEngine(config=runtime.scoring)
         self.policy = InferencePolicy.from_mapping(runtime.inference)
         self._cache: Dict[str, Dict[str, Any]] = {}
@@ -406,6 +541,7 @@ class AttributionRunner:
                 "signals": [asdict(s) for s in payload.signals],
                 "anomalies": list(payload.anomalies),
                 "received_chain": list(payload.received_chain),
+                "use_correlation": self.use_correlation,
                 "scoring_config": {
                     "group_weights": dict(self.runtime.scoring.group_weights),
                     "signal_weights": dict(self.runtime.scoring.signal_weights),
@@ -426,11 +562,49 @@ class AttributionRunner:
         return json.loads(json.dumps(result, sort_keys=True))
 
     def _run(self, payload: AnalysisInput) -> Dict[str, Any]:
-        correlation_adjustment = apply_correlation_adjustment(
-            payload.signals,
-            payload.received_chain,
-        )
-        scoring_signals = correlation_adjustment.adjusted_signals
+        if self.use_correlation:
+            correlation_adjustment = apply_correlation_adjustment(
+                payload.signals,
+                payload.received_chain,
+            )
+            scoring_signals = correlation_adjustment.adjusted_signals
+            confidence_penalty = float(correlation_adjustment.confidence_penalty)
+            correlation_trace = {
+                "enabled": True,
+                "anonymization_detected": bool(correlation_adjustment.anonymization.anonymization_detected),
+                "key_indicators": list(correlation_adjustment.anonymization.indicators),
+                "confidence_impact": correlation_adjustment.confidence_penalty,
+                "anonymization": asdict(correlation_adjustment.anonymization),
+                "hop_correlation": asdict(correlation_adjustment.correlation),
+                "temporal_profile": asdict(correlation_adjustment.temporal),
+                "origin_hypothesis": asdict(correlation_adjustment.origin_hypothesis),
+                "correlation_weight_multiplier": correlation_adjustment.correlation_weight_multiplier,
+                "confidence_penalty": correlation_adjustment.confidence_penalty,
+                "downgraded_signal_ids": list(correlation_adjustment.downgraded_signal_ids),
+                "boosted_signal_ids": list(correlation_adjustment.boosted_signal_ids),
+            }
+            correlation_reasoning = list(correlation_adjustment.reasoning)
+            anonymization_detected = correlation_adjustment.anonymization.anonymization_detected
+            anonymization_confidence = float(correlation_adjustment.anonymization.confidence)
+            anonymization_indicators = list(correlation_adjustment.anonymization.indicators)
+            downgraded_signal_ids = list(correlation_adjustment.downgraded_signal_ids)
+            boosted_signal_ids = list(correlation_adjustment.boosted_signal_ids)
+        else:
+            scoring_signals = payload.signals
+            confidence_penalty = 0.0
+            correlation_trace = {
+                "enabled": False,
+                "anonymization_detected": False,
+                "key_indicators": [],
+                "confidence_impact": 0.0,
+                "reason": "Correlation preprocessing disabled via CLI flag.",
+            }
+            correlation_reasoning = []
+            anonymization_detected = False
+            anonymization_confidence = 0.0
+            anonymization_indicators = []
+            downgraded_signal_ids = []
+            boosted_signal_ids = []
 
         rejected = _signals_rejected(self.engine, scoring_signals)
         candidates = sorted({
@@ -439,22 +613,11 @@ class AttributionRunner:
             if _normalize_region(signal.candidate_region) is not None
         })
 
-        correlation_trace = {
-            "anonymization": asdict(correlation_adjustment.anonymization),
-            "hop_correlation": asdict(correlation_adjustment.correlation),
-            "temporal_profile": asdict(correlation_adjustment.temporal),
-            "origin_hypothesis": asdict(correlation_adjustment.origin_hypothesis),
-            "correlation_weight_multiplier": correlation_adjustment.correlation_weight_multiplier,
-            "confidence_penalty": correlation_adjustment.confidence_penalty,
-            "downgraded_signal_ids": list(correlation_adjustment.downgraded_signal_ids),
-            "boosted_signal_ids": list(correlation_adjustment.boosted_signal_ids),
-        }
-
         if not candidates:
             limitations = ["No candidate regions provided by upstream signals."]
             if rejected:
                 limitations.append(f"{len(rejected)} signals were non-attributable or excluded.")
-            limitations.extend(list(correlation_adjustment.reasoning))
+            limitations.extend(correlation_reasoning)
             result = {
                 "region": None,
                 "confidence": 0.0,
@@ -464,9 +627,10 @@ class AttributionRunner:
                 "anomalies": list(payload.anomalies) + [
                     {
                         "type": "correlation_inference",
-                        "anonymization_detected": correlation_adjustment.anonymization.anonymization_detected,
-                        "anonymization_confidence": correlation_adjustment.anonymization.confidence,
-                        "indicators": list(correlation_adjustment.anonymization.indicators),
+                        "correlation_enabled": self.use_correlation,
+                        "anonymization_detected": anonymization_detected,
+                        "anonymization_confidence": anonymization_confidence,
+                        "indicators": anonymization_indicators,
                     }
                 ],
                 "limitations": limitations,
@@ -500,7 +664,7 @@ class AttributionRunner:
 
         raw_best_confidence = float(best.confidence)
         best_confidence = round(
-            max(0.0, raw_best_confidence * (1.0 - float(correlation_adjustment.confidence_penalty))),
+            max(0.0, raw_best_confidence * (1.0 - confidence_penalty)),
             12,
         )
         ties = [
@@ -550,21 +714,21 @@ class AttributionRunner:
             limitations.append(
                 f"{len(rejected)} non-attributable or excluded signals reduced evidence quality."
             )
-        if correlation_adjustment.anonymization.anonymization_detected:
+        if anonymization_detected:
             limitations.append(
                 "Anonymization indicators detected: "
-                + ", ".join(correlation_adjustment.anonymization.indicators)
+                + ", ".join(anonymization_indicators)
             )
             limitations.append(
-                f"Correlation confidence penalty applied: {correlation_adjustment.confidence_penalty:.6f}."
+                f"Correlation confidence penalty applied: {confidence_penalty:.6f}."
             )
-        if correlation_adjustment.anonymization.confidence >= 0.70:
+        if anonymization_confidence >= 0.70:
             verdict = "inconclusive"
             region = None
             limitations.append(
-                f"High anonymization confidence ({correlation_adjustment.anonymization.confidence:.6f}) forces abstention."
+                f"High anonymization confidence ({anonymization_confidence:.6f}) forces abstention."
             )
-        limitations.extend(list(correlation_adjustment.reasoning))
+        limitations.extend(correlation_reasoning)
 
         support_rows = [asdict(entry) for entry in supporting]
         conflict_rows = [asdict(entry) for entry in conflicting]
@@ -575,11 +739,12 @@ class AttributionRunner:
         anomalies.append(
             {
                 "type": "correlation_inference",
-                "anonymization_detected": correlation_adjustment.anonymization.anonymization_detected,
-                "anonymization_confidence": correlation_adjustment.anonymization.confidence,
-                "indicators": list(correlation_adjustment.anonymization.indicators),
-                "downgraded_signal_ids": list(correlation_adjustment.downgraded_signal_ids),
-                "boosted_signal_ids": list(correlation_adjustment.boosted_signal_ids),
+                "correlation_enabled": self.use_correlation,
+                "anonymization_detected": anonymization_detected,
+                "anonymization_confidence": anonymization_confidence,
+                "indicators": anonymization_indicators,
+                "downgraded_signal_ids": downgraded_signal_ids,
+                "boosted_signal_ids": boosted_signal_ids,
             }
         )
         if float(best.penalty_score) > 0:
@@ -626,7 +791,7 @@ class AttributionRunner:
                     "max_possible_score": float(item.max_possible_score),
                     "confidence": float(item.confidence),
                     "confidence_post_correlation_penalty": round(
-                        float(item.confidence) * (1.0 - float(correlation_adjustment.confidence_penalty)),
+                        float(item.confidence) * (1.0 - confidence_penalty),
                         12,
                     ),
                     "supporting_count": len(item.supporting_signals),
@@ -662,8 +827,9 @@ def parse_input_path(input_path: str) -> List[str]:
 def evaluate_inputs(
     input_path: str,
     runtime: RuntimeConfig,
+    use_correlation: bool = True,
 ) -> Dict[str, Any]:
-    runner = AttributionRunner(runtime)
+    runner = AttributionRunner(runtime, use_correlation=use_correlation)
     item_paths = parse_input_path(input_path)
     reports: List[Dict[str, Any]] = []
     for path in item_paths:

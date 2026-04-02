@@ -1,0 +1,42 @@
+{
+  "evidence_id": "demo-clean-001",
+  "signals": [
+    {
+      "signal_id": "c1",
+      "name": "real_ip_country",
+      "group": "infrastructure",
+      "value": "ip-clean-1",
+      "candidate_region": "Region-C",
+      "source": "demo.clean",
+      "trust_label": "TRUSTED",
+      "validation_flags": [
+        "CLEAN"
+      ]
+    },
+    {
+      "signal_id": "c2",
+      "name": "identity_claim",
+      "group": "identity",
+      "value": "corp-id",
+      "candidate_region": "Region-C",
+      "source": "demo.clean",
+      "trust_label": "TRUSTED",
+      "validation_flags": [
+        "CLEAN"
+      ]
+    },
+    {
+      "signal_id": "c3",
+      "name": "temporal_marker",
+      "group": "temporal",
+      "value": "business-hours",
+      "candidate_region": "Region-C",
+      "source": "demo.clean",
+      "trust_label": "TRUSTED",
+      "validation_flags": [
+        "CLEAN"
+      ]
+    }
+  ],
+  "received_chain": []
+}
