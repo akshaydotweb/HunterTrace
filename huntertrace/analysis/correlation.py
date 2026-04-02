@@ -155,6 +155,8 @@ class CorrelationAdjustment:
 def detect_anonymization(signals: Sequence[NormalizedSignal | Mapping[str, Any] | Any]) -> AnonymizationProfile:
     normalized = [_as_signal(s, idx) for idx, s in enumerate(signals)]
     indicators: List[str] = []
+    weak_indicators: List[str] = []
+    strong_indicators: List[str] = []
     score = 0.0
 
     vpn_like_hits = sum(
@@ -165,12 +167,12 @@ def detect_anonymization(signals: Sequence[NormalizedSignal | Mapping[str, Any] 
         or _VPN_PATTERN.search(str(signal.value or ""))
     )
     if vpn_like_hits > 0:
-        indicators.append("vpn_proxy_tor_pattern_detected")
+        weak_indicators.append("vpn_proxy_tor_pattern_detected")
         score += min(0.35, 0.10 + 0.08 * vpn_like_hits)
 
     candidate_regions = sorted({s.candidate_region for s in normalized if s.candidate_region})
     if len(candidate_regions) > 1:
-        indicators.append("candidate_region_mismatch")
+        weak_indicators.append("candidate_region_mismatch")
         score += 0.22
 
     hop_count_values = [
@@ -178,30 +180,72 @@ def detect_anonymization(signals: Sequence[NormalizedSignal | Mapping[str, Any] 
         for s in normalized
         if s.name == "hop_count" and _safe_float(s.value, 0) > 0
     ]
-    if hop_count_values and max(hop_count_values) >= 6:
-        indicators.append("rapid_or_deep_relay_transitions")
+    if hop_count_values and max(hop_count_values) >= 4:
+        weak_indicators.append("rapid_or_deep_relay_transitions")
         score += 0.16
 
     infra_regions = {s.candidate_region for s in normalized if s.group == "infrastructure" and s.candidate_region}
     temporal_regions = {s.candidate_region for s in normalized if s.group == "temporal" and s.candidate_region}
     if infra_regions and temporal_regions and infra_regions.isdisjoint(temporal_regions):
-        indicators.append("timezone_infrastructure_inconsistency")
-        score += 0.18
+        strong_indicators.append("timezone_infrastructure_inconsistency")
+        score += 0.28
 
     webmail_signals = [
         s for s in normalized
         if (s.name == "webmail_detected" and str(s.value).lower() in {"1", "true", "yes"})
-        or "relay" in (s.name or "").lower()
     ]
-    if webmail_signals:
-        indicators.append("relay_or_webmail_obfuscation_pattern")
+    external_relay_signals = [
+        s for s in normalized
+        if ("relay" in (s.name or "").lower())
+        or ("relay" in (s.source or "").lower())
+        or ("external" in str(s.value or "").lower() and "relay" in str(s.value or "").lower())
+    ]
+    if webmail_signals and external_relay_signals:
+        strong_indicators.append("webmail_external_relay_combo")
+        score += 0.24
+    elif webmail_signals or external_relay_signals:
+        weak_indicators.append("relay_or_webmail_obfuscation_pattern")
         score += 0.12
 
+    rapid_transition_signals = [
+        s for s in normalized
+        if ("rapid_transition" in str(s.name or "").lower())
+        or ("time_reversal" in str(s.name or "").lower())
+        or ("hop_mismatch" in str(s.name or "").lower())
+        or ("rapid_transition" in str(s.anomaly_detail or "").lower())
+        or ("time_reversal" in str(s.anomaly_detail or "").lower())
+    ]
+    if len(rapid_transition_signals) >= 1:
+        strong_indicators.append("rapid_hop_transition_pattern")
+        score += 0.20
+
+    inconsistent_hop_pattern = False
+    if hop_count_values:
+        infra_candidate_values = [
+            s.candidate_region for s in normalized
+            if s.group == "infrastructure" and s.candidate_region is not None
+        ]
+        if len(infra_candidate_values) > 1 and len(set(infra_candidate_values)) > 1:
+            inconsistent_hop_pattern = True
+        if max(hop_count_values) >= 5 and len(infra_candidate_values) >= 2:
+            inconsistent_hop_pattern = True
+    if inconsistent_hop_pattern:
+        strong_indicators.append("multiple_hops_inconsistent_patterns")
+        score += 0.20
+
     confidence = round(_clamp(score), 12)
+    indicators = sorted(set(weak_indicators + strong_indicators))
+    # Sensitivity rule: trigger on confidence threshold, any strong indicator,
+    # or at least two weak indicators.
+    anonymization_detected = (
+        confidence >= 0.18
+        or bool(strong_indicators)
+        or len(set(weak_indicators)) >= 2
+    )
     return AnonymizationProfile(
-        anonymization_detected=confidence >= 0.35,
+        anonymization_detected=anonymization_detected,
         confidence=confidence,
-        indicators=tuple(sorted(set(indicators))),
+        indicators=tuple(indicators),
     )
 
 

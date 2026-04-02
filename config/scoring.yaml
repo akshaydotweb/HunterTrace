@@ -1,0 +1,33 @@
+scoring:
+  group_weights:
+    temporal: 1.0
+    infrastructure: 1.2
+    identity: 1.1
+  signal_weights: {}
+  trust_multipliers:
+    TRUSTED: 1.0
+    PARTIALLY_TRUSTED: 0.8
+    UNKNOWN: 0.6
+    UNTRUSTED: 0.4
+  validation_multipliers:
+    CLEAN: 1.0
+    SUSPICIOUS: 0.7
+    MALFORMED: 0.0
+    MISSING: 0.0
+  conflict_multipliers:
+    default: 0.6
+  evidence_penalties:
+    non_attributable: 0.1
+    anomaly: 0.05
+  confidence_cap: 0.8
+
+inference:
+  confidence_threshold: 0.35
+  tie_epsilon: 0.000000001
+  min_supporting_signals: 2
+  min_contributing_groups: 2
+  min_distinct_supporting_groups: 2
+
+logging:
+  enabled: true
+  level: INFO
