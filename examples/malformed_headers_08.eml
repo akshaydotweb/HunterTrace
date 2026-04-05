@@ -1,0 +1,46 @@
+Received: from [192.0.2.55]
+	by smtp-relay.example.net WITH SMTP ???;
+	Tue, 23 Jan 2024 11:32:47 +0100 (CET)
+Received  :  from mail.sample.org by relay.example.net id 12345
+Return-Path: <user@sample.org>
+Mime-Version: 1.0
+From: Test User <user@sample.org>
+To: reader@target.org
+Date:   Tue, 23 Jan 2024 11:32:47 +0100
+Subject:  Following Up   On Previous Discussion
+Message-ID: <123abc.456def.789ghi@mail.sample.org>
+Content-Type: multipart/mixed;
+ boundary="boundary_unusual_001"
+
+--boundary_unusual_001
+Content-Type: text/plain
+
+Hello,
+
+Following up on our previous discussion regarding the project timeline.
+
+Please advise on next steps.
+
+Thanks,
+User
+
+--boundary_unusual_001
+Content-Type: text/html;  charset="utf-8"
+
+<html>
+<body>
+<P>Hello,</P>
+ <P>Following up on previous discussion regarding project timeline.</P>
+<p>Please advise on next steps.</p>
+</body>
+</html>
+
+--boundary_unusual_001--
+
+Note: This email exhibits malformed header characteristics:
+- Received header missing required fields (no 'by' in first Received)
+- Inconsistent header formatting ("Received  :" with spaces before colon)
+- Non-standard protocol annotation ("WITH SMTP ???")
+- Unusual capitalization patterns in headers
+- Header value spacing inconsistencies (extra spaces in From, Subject, Date)
+- Irregular Received header syntax (incomplete)

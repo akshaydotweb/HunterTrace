@@ -1,0 +1,31 @@
+Return-Path: <sender@unclear-domain.net>
+Received: from [203.0.113.5] (AUTH: PLAIN sender@unclear-domain.net)
+	by mta-relay.isp-01.net with ESMTP id f1e2d3c4b5a6z7y8x9w0v1u2t3s4r5
+	for <admin@bigcorp.com>;
+	Sat, 20 Jan 2024 09:18:04 -0500
+Received from mail.unclear-domain.net by mta-relay.isp-01.net
+Mime-Version: 1.0
+From: Systems Administrator <sender@unclear-domain.net>
+Date: Sat, 20 Jan 2024 09:18:04 -0500
+Message-ID: <20240120091804.F1E2D@mail.unclear-domain.net>
+Subject: System Update Notice
+To: admin@bigcorp.com
+Content-Type: text/plain; charset="us-ascii"
+
+Dear Administrator,
+
+Please be advised that system maintenance is scheduled for this weekend.
+
+Details to follow.
+
+Regards,
+Systems Team
+
+---
+
+Note: This email exhibits broken/malformed header chain indicators:
+- Incomplete Received header (missing 'by' clause in second Received)
+- Hostname resolution unclear ([203.0.113.5] not a FQDN)
+- Missing proper authentication results
+- Incomplete routing information
+- Non-standard header ordering

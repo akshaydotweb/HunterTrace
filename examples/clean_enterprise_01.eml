@@ -1,0 +1,62 @@
+Return-Path: <john.morrison@acmecorp.com>
+Received: from smtp.google.com (smtp.google.com [172.217.32.45])
+	by mx.acmecorp.com with ESMTPS id h8si2918495edw.42.2024.01.15.08.22.37
+	for <alice.chen@acmecorp.com>;
+	Mon, 15 Jan 2024 08:22:37 -0800 (PST)
+Received-SPF: pass (google.com: domain of john.morrison@acmecorp.com designates 172.217.32.45 as permitted sender) client-ip=172.217.32.45;
+Authentication-Results: mx.acmecorp.com;
+	spf=pass (google.com: domain of john.morrison@acmecorp.com designates 172.217.32.45 as permitted sender) smtp.mailfrom=john.morrison@acmecorp.com;
+	dkim=pass header.i=@acmecorp.com header.s=2024a header.b=v9KmH8pQ;
+	dmarc=pass (p=reject sp=reject dis=none) header.from=acmecorp.com
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+	d=acmecorp.com; s=2024a;
+	h=mime-version:from:date:message-id:subject:to:content-type;
+	bh=EmV8sNKq+Lrx3PqJjQwY7KxT9mZ+W2vU5bP8cNR2fK8=;
+	b=v9KmH8pQxL2nR5sT8wY1bC4dE7fG9hJ+kL0mN3oP6qRsUvW3xY5zZ
+X-Google-Smtp-Source: AIGHZ7u4CvQ9KLm2R5tY8bF+jXyZ3a2w1cD5eF7gH9iJ0kL4mN
+X-Originating-IP: [172.217.32.45]
+Mime-Version: 1.0
+From: John Morrison <john.morrison@acmecorp.com>
+Date: Mon, 15 Jan 2024 08:22:37 -0800
+Message-ID: <CAe0Q5+Qw8x9Y1Z2aB3cD4eF5gH6iJ7kL8mN9oP0qR1sT2uV3w@mail.gmail.com>
+Subject: Q1 2024 Departmental Budget Review
+To: Alice Chen <alice.chen@acmecorp.com>
+Content-Type: multipart/alternative; boundary="000000000000abcdef05fbc362da"
+
+--000000000000abcdef05fbc362da
+Content-Type: text/plain; charset="UTF-8"
+
+Hi Alice,
+
+Following up on our meeting last week regarding the Q1 budget allocation for the engineering department.
+
+I've attached the preliminary breakdown by team and would appreciate your feedback by EOW.
+
+Key items for discussion:
+- Infrastructure team headcount expansion
+- Cloud service optimization
+- Developer tooling refresh
+
+Please let me know if you need any clarifications on the numbers.
+
+Best regards,
+John
+
+--000000000000abcdef05fbc362da
+Content-Type: text/html; charset="UTF-8"
+
+<div dir="ltr"><div class="gmail_quote">
+<p>Hi Alice,</p>
+<p>Following up on our meeting last week regarding the Q1 budget allocation for the engineering department.</p>
+<p>I&#39;ve attached the preliminary breakdown by team and would appreciate your feedback by EOW.</p>
+<p><strong>Key items for discussion:</strong></p>
+<ul>
+<li>Infrastructure team headcount expansion</li>
+<li>Cloud service optimization</li>
+<li>Developer tooling refresh</li>
+</ul>
+<p>Please let me know if you need any clarifications on the numbers.</p>
+<p>Best regards,<br>John</p>
+</div></div>
+
+--000000000000abcdef05fbc362da--

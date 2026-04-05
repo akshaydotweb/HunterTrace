@@ -159,12 +159,12 @@ class ScoringConfig:
     quality_factor: float = 0.15
 
     # Confidence caps and thresholds
-    max_confidence_cap: float = 0.80
-    confidence_threshold: float = 0.35
+    max_confidence_cap: float = 0.99
+    confidence_threshold: float = 0.30
 
-    # Minimum evidence requirements
+    # Minimum evidence requirements (geographic groups only)
     minimum_supporting_signals: int = 2
-    minimum_signal_groups: int = 2
+    minimum_signal_groups: int = 1
 
 
 @dataclass

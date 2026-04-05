@@ -114,7 +114,7 @@ class AtlasScoringEngine:
         must_abstain = self._check_abstention_rules(
             final_confidence,
             winner_score["supporting_count"],
-            winner_score["group_count"],
+            winner_score["geographic_group_count"],
             correlation,
         )
 
@@ -148,7 +148,7 @@ class AtlasScoringEngine:
         """PHASE 1: Extract set of candidate regions from signals."""
         candidates = set()
         for signal in signals:
-            if signal.candidate_region:
+            if signal.candidate_region and signal.candidate_region not in ("internal", "local"):
                 candidates.add(signal.candidate_region)
         return candidates
 
@@ -214,6 +214,7 @@ class AtlasScoringEngine:
             "confidence": final_confidence,
             "supporting_count": len(supporting),
             "group_count": len(self._count_groups(supporting)),
+            "geographic_group_count": len(self._count_geographic_groups(supporting)),
             "signals_used": signals_used,
             "signals_rejected": signals_rejected,
             "limitations": limitations,
@@ -294,7 +295,11 @@ class AtlasScoringEngine:
         total = 0.0
 
         for signal in signals:
-            # Only count signals that *could* support this candidate
+            # Only count signals that *could* support or conflict with this candidate
+            # Exclude non-geographic signals (temporal, structure, quality) that lack region info
+            if self._is_non_geographic_signal(signal) and not signal.candidate_region:
+                continue  # Skip non-geographic signals with no region
+
             if signal.candidate_region is None or signal.candidate_region == candidate:
                 group = self.signal_group_map.get(signal.signal_id, "quality")
                 group_weight = self.config.group_weights.get(group, 0.15)
@@ -312,10 +317,9 @@ class AtlasScoringEngine:
         """PHASE 8: Apply evidence quality adjustments."""
         adjusted = base_confidence
 
-        # Non-attributable signals reduce confidence
-        if non_attributable:
-            quality_penalty = self.config.quality_factor * len(non_attributable)
-            adjusted -= quality_penalty
+        # No quality penalties - the presence of unattributable signals is already
+        # reflected in the base confidence through reduced max_possible score.
+        # Only apply penalties for genuine issues (anonymization, contradictions)
 
         # Anonymization impact
         if correlation.anonymization.detected:
@@ -328,6 +332,12 @@ class AtlasScoringEngine:
             adjusted -= 0.1
 
         return adjusted
+
+    def _is_non_geographic_signal(self, signal: Signal) -> bool:
+        """Check if signal is inherently non-geographic (temporal, structure, quality, internal)."""
+        group = self.signal_group_map.get(signal.signal_id, signal.group or "quality")
+        # Non-geographic groups + internal region
+        return group in ("temporal", "structure", "quality") or signal.candidate_region == "internal"
 
     def _select_winner_deterministic(
         self, candidate_scores: Dict[str, Dict]
@@ -480,6 +490,16 @@ class AtlasScoringEngine:
         for signal in signals:
             group = self.signal_group_map.get(signal.signal_id, "quality")
             groups.add(group)
+        return groups
+
+    def _count_geographic_groups(self, signals: List[Signal]) -> Set[str]:
+        """Count unique geographic groups (infrastructure only) in supporting signals."""
+        groups = set()
+        for signal in signals:
+            group = self.signal_group_map.get(signal.signal_id, "quality")
+            # Only count infrastructure group as geographic (has region info)
+            if group == "infrastructure":
+                groups.add(group)
         return groups
 
     def _format_anomalies(self, correlation: CorrelationResult) -> List[Dict]:

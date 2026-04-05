@@ -1,0 +1,101 @@
+Return-Path: <ciso@securityfirst.corp>
+Received: from mail-03.securityfirst.corp (mail-03.securityfirst.corp [198.18.0.50])
+	by mx.enterprise-division.com with ESMTPS id s1t2u3v4w5x6y7z8a9b0c1d2e3f4g5h
+	for <cto@enterprise-division.com>;
+	Mon, 22 Jan 2024 16:05:33 -0500 (EST)
+Received-SPF: pass (securityfirst.corp: domain of ciso@securityfirst.corp designates 198.18.0.50 as permitted sender) client-ip=198.18.0.50;
+Authentication-Results: mx.enterprise-division.com;
+	spf=pass (securityfirst.corp: domain of ciso@securityfirst.corp designates 198.18.0.50 as permitted sender) smtp.mailfrom=ciso@securityfirst.corp;
+	dkim=pass (2048-bit key) header.d=securityfirst.corp header.i=@securityfirst.corp header.b=VwXyZaBcDeF;
+	dmarc=pass (p=reject sp=reject dis=none) header.from=securityfirst.corp;
+	arc=pass (i=1 mc.securityfirst.corp)
+ARC-Seal: i=1; a=rsa-sha256; cv=pass; d=securityfirst.corp; s=arc202401;
+	t=1705961133; h=message-id:subject:to:from:date:mime-version;
+	bh=ElMnOpQrStUvWxYzAbCdEfGhIjKlMnOpQrStUvWxYzAbCdEfGhIjKlMnOp=;
+	b=VwXyZaBcDeF1gHiJ2kLmN3oPqRsT4uVwX5yZaBcD6eF7gHiJ8kLmN9oPqRsT0uVwX1yZaBcD2eF3gHi
+ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/simple; d=securityfirst.corp; s=arc202401;
+	t=1705961133; h=message-id:subject:to:from:date:mime-version:content-transfer-encoding:content-type;
+	bh=ElMnOpQrStUvWxYzAbCdEfGhIjKlMnOpQrStUvWxYzAbCdEfGhIjKlMnOp=;
+	b=ElMnOpQrStUvWxYzAbCdEfGhIjKlMnOpQrStUvWxYzAbCdEfGhIjKlMnOpQrStUvWxYzAbCdEfGhIjKlMnOp
+ARC-Authentication-Results: i=1; mx.enterprise-division.com;
+	spf=pass smtp.mailfrom=ciso@securityfirst.corp;
+	dkim=pass header.d=securityfirst.corp header.i=@securityfirst.corp;
+	dmarc=pass
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+	d=securityfirst.corp; s=email202401;
+	h=content-type:content-transfer-encoding:mime-version:from:date:message-id:subject:to;
+	bh=FgHiJkLmNoPqRsT1uVwXyZaBcD2eF3gHi4jKlMnO5pQrSt6uVwXyZaBcD7eF8gHi=;
+	b=J1kLmN2oPqRsT3uVwXyZaBcD4eF5gHi6jKlMnO7pQrSt8uVwXyZaBcD9eF0gHi1jKlMnO2pQrSt3uVwX
+X-Originating-IP: [198.18.0.50]
+X-Mailer: Apple Mail (2.936.104)
+Mime-Version: 1.0
+From: Chief Information Security Officer <ciso@securityfirst.corp>
+Date: Mon, 22 Jan 2024 16:05:33 -0500
+Message-ID: <CA+VKx2b5mN7pQrSt8uVwXyZaBcD9eF0gHi1jKlMnO2p@mail.securityfirst.corp>
+Subject: Security Policy Update - Mandatory Review
+To: Chief Technology Officer <cto@enterprise-division.com>
+Content-Type: multipart/alternative; boundary="===============9876543210=="; charset="UTF-8"
+
+--===============9876543210==
+Content-Type: text/plain; charset="UTF-8"
+Content-Transfer-Encoding: 7bit
+
+Dear CTO,
+
+Please review the attached updated security policy document and provide your department's sign-off by end of month.
+
+Key updates:
+- Enhanced multi-factor authentication (MFA) requirements
+- Zero-trust network access framework
+- Incident response procedure updates
+
+Please note: This communication is marked as official security policy and has been cryptographically signed and authenticated via DKIM, SPF, DMARC, and ARC protocols for integrity verification.
+
+Best regards,
+Chief Information Security Officer
+SecurityFirst Corporation
+
+--===============9876543210==
+Content-Type: text/html; charset="UTF-8"
+Content-Transfer-Encoding: 7bit
+
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  body { font-family: Arial, sans-serif; }
+  .header { background-color: #003366; color: white; padding: 20px; }
+  .policy-item { margin: 10px 0; padding: 10px; border-left: 4px solid #003366; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h2>SecurityFirst Corporation</h2>
+  <p><strong>Security Policy Update - January 2024</strong></p>
+</div>
+
+<p>Dear CTO,</p>
+
+<p>Please review the attached updated security policy document and provide your department's sign-off by end of month.</p>
+
+<h3>Key Updates:</h3>
+<div class="policy-item">
+  <strong>1. Enhanced Multi-Factor Authentication (MFA)</strong>
+  <p>All user accounts must support hardware security keys by Q2 2024</p>
+</div>
+<div class="policy-item">
+  <strong>2. Zero-Trust Network Access</strong>
+  <p>Implement zero-trust principles for all internal services</p>
+</div>
+<div class="policy-item">
+  <strong>3. Incident Response Procedures</strong>
+  <p>Updated procedures with 30-minute SOC notification requirement</p>
+</div>
+
+<hr>
+<p><em>This communication is authenticated via DKIM, SPF, DMARC, and ARC for integrity verification.</em></p>
+
+</body>
+</html>
+
+--===============9876543210==--

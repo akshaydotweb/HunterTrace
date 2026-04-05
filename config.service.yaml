@@ -1,0 +1,43 @@
+# HunterTrace API Service Configuration
+# Example YAML configuration file
+# Usage: python3 -m huntertrace.service --config config.service.yaml
+
+# Server Settings
+host: 0.0.0.0
+port: 8000
+workers: 4
+reload: false
+
+# API Settings
+title: "HunterTrace Atlas API"
+description: "Secure email origin attribution service"
+version: "1.0.0"
+
+# Request Handling
+max_request_size_mb: 10
+request_timeout_seconds: 30
+max_batch_size: 1000
+
+# Feature flags
+enable_explainability: true
+enable_evaluation: false
+enable_adversarial: false
+adversarial_samples_per_input: 1
+
+# Logging
+log_level: INFO
+log_requests: true
+mask_sensitive_data: true
+
+# Security
+rate_limit_enabled: false
+rate_limit_requests: 100
+rate_limit_window_seconds: 60
+api_key_required: false
+# allowed_api_keys:
+#   - "key1-from-config"
+#   - "key2-from-config"
+
+# Performance
+pipeline_cache_enabled: false
+determinism_hash_enabled: true

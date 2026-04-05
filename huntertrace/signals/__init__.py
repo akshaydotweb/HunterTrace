@@ -1,6 +1,7 @@
 """HunterTrace Atlas signal layer."""
 
 from huntertrace.signals.builder import SignalBuilder
+from huntertrace.signals.enrichment import SignalEnricher
 from huntertrace.signals.models import (
     AtlasAuditResult,
     EvidenceSignal,
@@ -17,6 +18,7 @@ __all__ = [
     "Observability",
     "RejectedSignal",
     "SignalBuilder",
+    "SignalEnricher",
     "TechniqueApplication",
 ]
 

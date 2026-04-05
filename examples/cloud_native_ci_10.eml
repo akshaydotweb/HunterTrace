@@ -1,0 +1,142 @@
+Return-Path: <notifications@cloudtech.io>
+Received: from us-east-1-send-003.ses.amazonaws.com (us-east-1-send-003.ses.amazonaws.com [79.125.113.68])
+	by mail-relay-01.cloudtech.io with ESMTPS id d1c2b3a4z9y8x7w6v5u4t3s2r1q0p9o
+	for <developer@startup-labs.com>;
+	Thu, 25 Jan 2024 14:27:55 -0500 (EST)
+Received: from mailer-prod-west.cloudtech.io (mailer-prod-west.cloudtech.io [10.100.50.25])
+	by us-east-1-send-003.ses.amazonaws.com with ESMTP id o8n7m6l5k4j3i2h1g0f9e8d7c6b5a4z
+	for <developer@startup-labs.com>;
+	Thu, 25 Jan 2024 14:27:48 -0500
+Received-SPF: pass (cloudtech.io: domain of notifications@cloudtech.io designates 79.125.113.68 as permitted sender) client-ip=79.125.113.68;
+Authentication-Results: mail-relay-01.cloudtech.io;
+	spf=pass (cloudtech.io: domain of notifications@cloudtech.io designates 79.125.113.68 as permitted sender) smtp.mailfrom=notifications@cloudtech.io;
+	dkim=pass (1024-bit key) header.d=cloudtech.io header.i=notifications@cloudtech.io header.s=20240101 header.b=MnOpQ1rSt;
+	dmarc=pass (p=quarantine sp=quarantine dis=office) header.from=cloudtech.io
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+	d=cloudtech.io; s=20240101;
+	h=mime-version:from:date:message-id:subject:to:content-type;
+	bh=VwXyZaBcDeF0gHiJ1kLmN2oPqRsT3uVwXyZaBcDeF4gHiJ5kLmN6oP=;
+	b=MnOpQ1rSt2uVwXyZaBcD3eF4gHiJ5kLmN6oPqRsT7uVwXyZaBcD8eF9gHiJ0kLmN
+X-SES-CONFIGURATION-SET: cloudtech-notifications
+X-SES-MESSAGE-TAGS: notification-type=build,service=ci-cd,priority=high
+X-Originating-IP: [10.100.50.25]
+X-AWS-SQS-Message-ID: 12345678-abcd-efgh-ijkl-mnopqrstuvwx
+Mime-Version: 1.0
+From: CloudTech CI/CD Service <notifications@cloudtech.io>
+Date: Thu, 25 Jan 2024 14:27:48 -0500
+Message-ID: <012801d9e1e2c3b4a5f6e7d8c9a0b1c2@mailer-prod-west.cloudtech.io>
+Subject: [BUILD PASSED] main branch deployment to production
+To: developer@startup-labs.com
+Content-Type: multipart/related; boundary="===============5647382910=="
+
+--===============5647382910==
+Content-Type: multipart/alternative; boundary="===============9283746510=="
+
+--===============9283746510==
+Content-Type: text/plain; charset="UTF-8"
+
+Build #4527 PASSED
+
+Repository: startup-labs/api
+Branch: main
+Commit: a7f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f
+
+Build Duration: 4m 23s
+Status: SUCCESS
+
+Changes:
+- Updated authentication middleware
+- Added rate limiting to API endpoints
+- Fixed timezone handling in database queries
+
+Build logs: https://ci.startup-labs.com/builds/4527
+
+The build has been automatically deployed to:
+- Staging: us-east-1 (ecs-cluster-staging-01)
+- Production: us-east-1 (ecs-cluster-prod-01)
+
+All tests passed (2,847 tests, 0 failures).
+
+Deployment verification: PASSED (healthcheck OK, error rate < 0.1%)
+
+---
+CloudTech CI/CD System
+
+--===============9283746510==
+Content-Type: text/html; charset="UTF-8"
+
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  .container { max-width: 600px; margin: 0 auto; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Courier, monospace; }
+  .header { background-color: #28a745; color: white; padding: 20px; border-radius: 5px 5px 0 0; }
+  .content { background-color: #f8f9fa; padding: 20px; }
+  .status-badge { display: inline-block; background-color: #28a745; color: white; padding: 5px 10px; border-radius: 3px; font-weight: bold; }
+  .code-block { background-color: #262626; color: #a8ff60; padding: 10px; border-radius: 3px; font-family: monospace; overflow: auto; }
+  table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+  th { background-color: #e9ecef; padding: 10px; text-align: left; font-weight: bold; }
+  td { padding: 8px; border-bottom: 1px solid #dee2e6; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h2>✓ Build Passed</h2>
+    <p>Build #4527 on main branch</p>
+  </div>
+  <div class="content">
+    <table>
+      <tr>
+        <th>Property</th>
+        <th>Value</th>
+      </tr>
+      <tr>
+        <td>Repository</td>
+        <td>startup-labs/api</td>
+      </tr>
+      <tr>
+        <td>Branch</td>
+        <td>main</td>
+      </tr>
+      <tr>
+        <td>Duration</td>
+        <td>4m 23s</td>
+      </tr>
+      <tr>
+        <td>Status</td>
+        <td><span class="status-badge">SUCCESS</span></td>
+      </tr>
+      <tr>
+        <td>Tests</td>
+        <td>2,847 passed, 0 failed</td>
+      </tr>
+      <tr>
+        <td>Deployment</td>
+        <td>Production US-EAST-1</td>
+      </tr>
+    </table>
+
+    <h3>Recent Changes</h3>
+    <ul>
+      <li>Updated authentication middleware</li>
+      <li>Added rate limiting to API endpoints</li>
+      <li>Fixed timezone handling in database queries</li>
+    </ul>
+
+    <p><strong>Deployment Status:</strong> Production deployment completed successfully with zero errors.</p>
+  </div>
+</div>
+</body>
+</html>
+
+--===============9283746510==
+--===============5647382910==
+Content-Type: image/png; name="build_graph.png"
+Content-ID: <build_graph@cloudtech.io>
+Content-Transfer-Encoding: base64
+Content-Disposition: inline; filename="build_graph.png"
+
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==
+
+--===============5647382910==--

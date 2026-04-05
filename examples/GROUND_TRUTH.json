@@ -1,0 +1,193 @@
+{
+  "ground_truth_labels": [
+    {
+      "sample_id": "clean_enterprise_01",
+      "filename": "clean_enterprise_01.eml",
+      "scenario": "Clean enterprise email",
+      "ground_truth_region": "us-west",
+      "ground_truth_verdict": "attributed",
+      "confidence_range": [0.85, 0.95],
+      "category": "clean",
+      "rationale": "Single-hop Google SMTP routing to corporate MX. Valid SPF/DKIM/DMARC. No anomalies. Should achieve high confidence attribution to us-west.",
+      "expected_signals": {
+        "total": 8,
+        "infrastructure": ["hop_from_ip:172.217.32.45", "hop_from_host:smtp.google.com", "hop_protocol:ESMTPS"],
+        "temporal": ["hop_timestamp_utc:2024-01-15T16:22:37"],
+        "structure": ["completeness:1.0"]
+      },
+      "far_impact": "PASS - True positive attribution"
+    },
+    {
+      "sample_id": "multi_hop_relay_02",
+      "filename": "multi_hop_relay_02.eml",
+      "scenario": "Multi-hop internal relay chain",
+      "ground_truth_region": "us-west",
+      "ground_truth_verdict": "attributed",
+      "confidence_range": [0.75, 0.85],
+      "category": "clean",
+      "rationale": "3-hop relay through internal corporate network (workstation → internal SMTP → relay → AWS). Valid authentication. Complex routing should still achieve high confidence.",
+      "expected_signals": {
+        "total": 12,
+        "infrastructure": ["relay_chain", "internal_smtp", "aws_endpoint"],
+        "temporal": ["timestamp_progression"],
+        "structure": ["3_hop_chain"]
+      },
+      "far_impact": "PASS - Correct identification of internal relay source"
+    },
+    {
+      "sample_id": "forwarded_chain_03",
+      "filename": "forwarded_chain_03.eml",
+      "scenario": "Forwarded message with embedded RFC822",
+      "ground_truth_region": "us-east",
+      "ground_truth_verdict": "attributed",
+      "confidence_range": [0.65, 0.75],
+      "category": "clean",
+      "rationale": "Forwarded analytics report. Outer message from Outlook (us-east), inner message from marketing analytics. Should attribute to us-east (outer/latest hop).",
+      "expected_signals": {
+        "total": 14,
+        "infrastructure": ["two_sender_domains", "outlook_pattern"],
+        "temporal": ["two_timestamps"],
+        "structure": ["embedded_message"]
+      },
+      "far_impact": "PASS - Attribute to forwarding entity, not original"
+    },
+    {
+      "sample_id": "spoofed_headers_04",
+      "filename": "spoofed_headers_04.eml",
+      "scenario": "Spoofed headers with DKIM failure",
+      "ground_truth_region": null,
+      "ground_truth_verdict": "inconclusive",
+      "confidence_range": [0.0, 0.35],
+      "category": "spoofed",
+      "rationale": "Intentional spoofing: DKIM fails, domain/IP mismatch (acmecorp.com but IP 198.51.100.50), X-Originating-IP inconsistency. Should fail authentication and be marked inconclusive.",
+      "expected_signals": {
+        "total": 8,
+        "infrastructure": ["dkim_fail", "domain_ip_mismatch"],
+        "temporal": [],
+        "structure": ["authentication_failure"]
+      },
+      "far_impact": "FLAG - Potential false attribution, reject"
+    },
+    {
+      "sample_id": "anonymized_like_05",
+      "filename": "anonymized_like_05.eml",
+      "scenario": "Anonymized routing via VPN proxy",
+      "ground_truth_region": null,
+      "ground_truth_verdict": "inconclusive",
+      "confidence_range": [0.0, 0.3],
+      "category": "anonymized",
+      "rationale": "VPN proxy routing (anonymous-vpn.net), timezone chaos (UTC+6 → -3 → -8), localhost in routing chain. Cannot reliably attribute origin. Should abstain.",
+      "expected_signals": {
+        "total": 10,
+        "infrastructure": ["proxy_detected", "timezone_inconsistency"],
+        "temporal": ["suspicious_timing"],
+        "structure": ["localhost_hop"]
+      },
+      "far_impact": "ABSTAIN - Anonymous routing prevents attribution"
+    },
+    {
+      "sample_id": "broken_chain_06",
+      "filename": "broken_chain_06.eml",
+      "scenario": "Broken/malformed header chain",
+      "ground_truth_region": null,
+      "ground_truth_verdict": "inconclusive",
+      "confidence_range": [0.0, 0.25],
+      "category": "malformed",
+      "rationale": "Incomplete Received headers, missing required fields, non-FQDN hostname. Parsing warnings expected. Insufficient data for confident attribution.",
+      "expected_signals": {
+        "total": 4,
+        "infrastructure": ["incomplete_parsing"],
+        "temporal": [],
+        "structure": ["broken_chain"]
+      },
+      "far_impact": "REJECT - Insufficient header data"
+    },
+    {
+      "sample_id": "high_security_enterprise_07",
+      "filename": "high_security_enterprise_07.eml",
+      "scenario": "Maximum security with ARC chain",
+      "ground_truth_region": "us-east",
+      "ground_truth_verdict": "attributed",
+      "confidence_range": [0.90, 0.99],
+      "category": "clean",
+      "rationale": "Full authentication: SPF/DKIM/DMARC/ARC. ARC-Seal + ARC-Message-Signature verify trusted forwarding. Highest confidence attribution to us-east. Official security policy.",
+      "expected_signals": {
+        "total": 12,
+        "infrastructure": ["full_arc_chain", "multi_auth"],
+        "temporal": ["verified_timestamp"],
+        "structure": ["arc_verified"]
+      },
+      "far_impact": "PASS - Highest confidence, fully authenticated"
+    },
+    {
+      "sample_id": "malformed_headers_08",
+      "filename": "malformed_headers_08.eml",
+      "scenario": "Unusual formatting but parseable",
+      "ground_truth_region": "us-west",
+      "ground_truth_verdict": "attributed",
+      "confidence_range": [0.55, 0.70],
+      "category": "malformed",
+      "rationale": "Syntactically valid but unconventional formatting (extra spaces, unusual capitalization). Core data recoverable. Should parse with warnings but still extract region from headers.",
+      "expected_signals": {
+        "total": 6,
+        "infrastructure": ["formatparse_warnings"],
+        "temporal": ["recoverable_timestamp"],
+        "structure": ["malformed_syntax"]
+      },
+      "far_impact": "PASS - Despite malformation, core signals recoverable"
+    },
+    {
+      "sample_id": "intl_routing_09",
+      "filename": "intl_routing_09.eml",
+      "scenario": "International cross-region routing (EU→Asia→recipient)",
+      "ground_truth_region": "eu-central",
+      "ground_truth_verdict": "attributed",
+      "confidence_range": [0.70, 0.85],
+      "category": "clean",
+      "rationale": "4-hop international routing: Stuttgart (Germany) → Singapore ISP → AWS EU Central. Should trace to origin (eu-central) despite complex routing through multiple regions.",
+      "expected_signals": {
+        "total": 14,
+        "infrastructure": ["multi_region_routing", "intl_carriers"],
+        "temporal": ["timezone_aware_timing"],
+        "structure": ["4_hop_chain"]
+      },
+      "far_impact": "PASS - Correctly attributes to origin, not intermediate hops"
+    },
+    {
+      "sample_id": "cloud_native_ci_10",
+      "filename": "cloud_native_ci_10.eml",
+      "scenario": "AWS SES cloud-native CI/CD notification",
+      "ground_truth_region": "us-east-1",
+      "ground_truth_verdict": "attributed",
+      "confidence_range": [0.80, 0.92],
+      "category": "clean",
+      "rationale": "AWS SES (Simple Email Service) infrastructure with platform-specific headers. X-SES-CONFIGURATION-SET identifies as SaaS origin. Should confidently attribute to us-east-1 (AWS region).",
+      "expected_signals": {
+        "total": 11,
+        "infrastructure": ["aws_ses_pattern", "platform_headers"],
+        "temporal": ["automation_timestamp"],
+        "structure": ["cloud_native_signals"]
+      },
+      "far_impact": "PASS - Clear SaaS origin identification"
+    }
+  ],
+  "summary": {
+    "total_samples": 10,
+    "attributed": 7,
+    "inconclusive": 3,
+    "by_category": {
+      "clean": 6,
+      "spoofed": 1,
+      "anonymized": 1,
+      "malformed": 2
+    },
+    "test_coverage": {
+      "gap_1_ground_truth": "Samples 1,7 should PASS; Samples 4,5,6 should FAIL appropriately",
+      "gap_2_far_tracking": "Samples 4 triggers false attribution detection",
+      "gap_3_explainability": "Samples 2,9 test multi-hop signal→hop→header chains",
+      "gap_4_adversarial": "Compare Sample 1 (baseline) vs Sample 4 (adversarial)",
+      "gap_5_stratification": "All 4 categories covered (clean/spoofed/anonymized/malformed)",
+      "gap_6_signal_quality": "Sample 7 (highest) vs Sample 5 (lowest)"
+    }
+  }
+}

@@ -16,6 +16,7 @@ from huntertrace.analysis import (
 )
 from huntertrace.parsing import AtlasHeaderPipeline
 from huntertrace.signals import SignalBuilder
+from huntertrace.signals.enrichment import SignalEnricher
 
 
 def _load_eml_file(path: Path) -> str:
@@ -39,23 +40,8 @@ def _process_email(
         # Build signals
         signals, rejected = SignalBuilder.build(hop_chain)
 
-        # We need to enrich signals with candidate_region and group
-        # For now, we'll use a basic enrichment from signal values
-        enriched_signals = []
-        for signal in signals:
-            from huntertrace.analysis import Signal
-
-            enriched_signals.append(
-                Signal(
-                    signal_id=signal.signal_id if hasattr(signal, "signal_id") else f"{signal.source}::{signal.name}",
-                    name=signal.name,
-                    value=signal.value,
-                    source=signal.source,
-                    confidence=signal.confidence_initial,
-                    candidate_region=_extract_region_hint(signal),
-                    group=_extract_group_hint(signal),
-                )
-            )
+        # ENRICHMENT: Add geographic and categorical information
+        enriched_signals = SignalEnricher.enrich_signals(signals)
 
         # Correlate
         correlation = AtlasCorrelationEngine.correlate(enriched_signals)
@@ -72,8 +58,8 @@ def _process_email(
             "consistency_score": round(result.consistency_score, 4),
             "signals_count": len(enriched_signals),
             "rejected_signals_count": len(rejected),
-            "anomalies_count": len(result.anomalies),
-            "limitations": result.limitations,
+            "anomalies_count": len(result.anomalies) if result.anomalies else 0,
+            "limitations": result.limitations if result.limitations else [],
         }
 
     except Exception as e:
@@ -272,8 +258,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--confidence-threshold",
         type=float,
-        default=0.35,
-        help="Custom confidence threshold for scoring (default: 0.35)",
+        default=0.30,
+        help="Custom confidence threshold for scoring (default: 0.30)",
     )
 
     parser.add_argument(
@@ -286,8 +272,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--min-groups",
         type=int,
-        default=2,
-        help="Minimum signal groups required (default: 2)",
+        default=1,
+        help="Minimum signal groups required (default: 1)",
     )
 
     parser.add_argument(

@@ -1,0 +1,121 @@
+Return-Path: <robert.mueller@globaltrade.eu>
+Received: from mail.globaltrade.eu (mail.globaltrade.eu [195.154.163.50])
+	by mx1.amazon-eu-central-1.net with ESMTPS id l0m1n2o3p4q5r6s7t8u9v0w1x2y3z4
+	for <logistics@internationalnow.io>;
+	Wed, 24 Jan 2024 07:42:18 +0100 (CET)
+Received: from mail-relay-de.globaltrade.eu (mail-relay-de.globaltrade.eu [195.154.163.75])
+	by mail.globaltrade.eu with ESMTP id h9i8j7k6l5m4n3o2p1q0r9s8t7u6v5w
+	for <logistics@internationalnow.io>;
+	Wed, 24 Jan 2024 07:42:12 +0100
+Received: from smtp-out.asia-southeast-1.provider.net (smtp-out.asia-southeast-1.provider.net [203.215.91.31])
+	by mail-relay-de.globaltrade.eu with ESMTP id x5y6z7a8b9c0d1e2f3g4h5i6j7k8l9m
+	for <logistics@internationalnow.io>;
+	Wed, 24 Jan 2024 06:42:08 +0100
+Received: from mail.singtech.sg (mail.singtech.sg [60.48.74.20])
+	by smtp-out.asia-southeast-1.provider.net with ESMTPS id n9o0p1q2r3s4t5u6v7w8x9y0z1a2b3c
+	for <logistics@internationalnow.io>;
+	Wed, 24 Jan 2024 13:42:03 +0800 (SGT)
+Received-SPF: pass (globaltrade.eu: domain of robert.mueller@globaltrade.eu designates 195.154.163.50 as permitted sender) client-ip=195.154.163.50;
+Authentication-Results: mx1.amazon-eu-central-1.net;
+	spf=pass (globaltrade.eu: domain of robert.mueller@globaltrade.eu designates 195.154.163.50 as permitted sender) smtp.mailfrom=robert.mueller@globaltrade.eu;
+	dkim=pass header.d=globaltrade.eu header.i=@globaltrade.eu header.b=Qw3ExR2tY1u;
+	dmarc=pass (p=reject sp=reject dis=none) header.from=globaltrade.eu
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/simple;
+	d=globaltrade.eu; s=selector2024;
+	h=content-type:content-transfer-encoding:mime-version:from:date:message-id:subject:to;
+	bh=PqRsT1uVwXyZaBcD2eF3gHiJ4kLmN5oPqRsT6uVwXyZaBcD7eF8gH=;
+	b=Qw3ExR2tY1u0ZaBcD4eF5gHiJ6kLmN7oPqRsT8uVwXyZaBcD9eF0gHiJ1kLmN2oPqRs
+X-Originating-IP: [60.48.74.20]
+X-Mailer: Mozilla Thunderbird 115.0
+Mime-Version: 1.0
+From: Robert Mueller <robert.mueller@globaltrade.eu>
+Date: Wed, 24 Jan 2024 13:42:03 +0800 (SGT)
+Message-ID: <003601d9e1d2c3b4a5f6e7d8c9a0b1c@mail.singtech.sg>
+Subject: Trade Agreement Proposal - APAC Region Q1 2024
+To: Logistics Coordinator <logistics@internationalnow.io>
+Content-Type: multipart/alternative; boundary="===============6283919475=="
+
+--===============6283919475==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Dear Logistics Team,
+
+Following our discussion at the Singapore trade conference, I am forwarding the revised trade agreement proposal for APAC region operations.
+
+Key Points:
+- Shipment volumes: 5,000 TEU quarterly
+- Port of origin: Singapore (PSA), Hong Kong (HIT)
+- Carrier: Maersk / CMA CGM
+- Transit time: 14-16 days to primary markets
+- Rate: $850/TEU (20ft container)
+
+Please review and confirm receipt by end of week.
+
+I will be available for video call on Friday morning (my time) to discuss.
+
+Best regards,
+Robert Mueller
+Global Trade Operations
+Stuttgart, Germany
+
+--===============6283919475==
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #cccccc; padding: 8px; text-align: left; }
+  th { background-color: #f0f0f0; }
+</style>
+</head>
+<body>
+<h2>Trade Agreement Proposal - APAC Region Q1 2024</h2>
+
+<p>Dear Logistics Team,</p>
+
+<p>Following our discussion at the Singapore trade conference, I am forwarding the revised trade agreement proposal for APAC region operations.</p>
+
+<h3>Agreement Summary</h3>
+<table>
+  <tr>
+    <th>Parameter</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>Shipment Volumes</td>
+    <td>5,000 TEU quarterly</td>
+  </tr>
+  <tr>
+    <td>Port of Origin</td>
+    <td>Singapore (PSA), Hong Kong (HIT)</td>
+  </tr>
+  <tr>
+    <td>Carrier</td>
+    <td>Maersk / CMA CGM</td>
+  </tr>
+  <tr>
+    <td>Transit Time</td>
+    <td>14-16 days to primary markets</td>
+  </tr>
+  <tr>
+    <td>Rate</td>
+    <td>USD 850 per TEU</td>
+  </tr>
+</table>
+
+<p>Please review and confirm receipt by end of week.</p>
+
+<p>Best regards,<br>
+Robert Mueller<br>
+Global Trade Operations<br>
+Stuttgart, Germany</p>
+
+</body>
+</html>
+
+--===============6283919475==--

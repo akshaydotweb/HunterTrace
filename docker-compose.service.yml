@@ -1,0 +1,64 @@
+version: '3.8'
+
+services:
+  huntertrace-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+    container_name: huntertrace-api
+    ports:
+      - "8000:8000"
+    environment:
+      HUNTERTRACE_HOST: "0.0.0.0"
+      HUNTERTRACE_PORT: "8000"
+      HUNTERTRACE_WORKERS: "4"
+      HUNTERTRACE_LOG_LEVEL: "INFO"
+      HUNTERTRACE_LOG_REQUESTS: "true"
+      HUNTERTRACE_ENABLE_EXPLAINABILITY: "true"
+      HUNTERTRACE_ENABLE_EVALUATION: "false"
+      HUNTERTRACE_ENABLE_ADVERSARIAL: "false"
+      HUNTERTRACE_MASK_SENSITIVE_DATA: "true"
+      # Uncomment to enable API key authentication
+      # HUNTERTRACE_API_KEY_REQUIRED: "true"
+      # HUNTERTRACE_API_KEYS: "key1,key2,key3"
+    volumes:
+      - ./config.service.yaml:/app/config.service.yaml:ro
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+  # Optional: Reverse proxy with nginx
+  nginx:
+    image: nginx:latest
+    container_name: huntertrace-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      # - ./certs:/etc/nginx/certs:ro  # For HTTPS
+    depends_on:
+      - huntertrace-api
+    restart: unless-stopped
+    profiles:
+      - proxy
+
+  # Optional: Prometheus for metrics (future)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: huntertrace-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    profiles:
+      - monitoring
+
+volumes:
+  logs:
+    driver: local

@@ -1,0 +1,48 @@
+Return-Path: <user@anonymouse.xyz>
+Received: from proxy-relay-99.anonymous-vpn.net (proxy-relay-99.anonymous-vpn.net [198.51.100.99])
+	by mail-broker-03.example-isp.com with ESMTP id x1y2z3a4b5c6d7e8f9g0h1i2j3k4l5m
+	for <recipient@targetcorp.com>;
+	Fri, 19 Jan 2024 03:14:28 +0600
+Received: from mail-gateway.freedns.net (mail-gateway.freedns.net [192.0.2.77])
+	by proxy-relay-99.anonymous-vpn.net with ESMTP id m9l8k7j6i5h4g3f2e1d0c9b8a7z6y5x
+	for <recipient@targetcorp.com>;
+	Fri, 19 Jan 2024 02:47:33 -0300
+Received: from localhost (localhost [127.0.0.1])
+	by mail-gateway.freedns.net with ESMTP id r7q6p5o4n3m2l1k0j9i8h7g6f5e4d3c
+	for <recipient@targetcorp.com>;
+	Thu, 18 Jan 2024 19:22:15 -0800
+Mime-Version: 1.0
+From: Anonymous User <user@anonymouse.xyz>
+Date: Thu, 18 Jan 2024 19:22:15 -0800
+Message-ID: <anon-msg-2024-0118-192215@localhost>
+Subject: Document Review Needed
+To: recipient@targetcorp.com
+Content-Type: multipart/mixed; boundary="===============boundary_anon_001"
+
+===============boundary_anon_001
+Content-Type: text/plain; charset="utf-8"
+
+Hello,
+
+I am writing to request your review of some important documents.
+
+Please review at your earliest convenience and provide feedback.
+
+Thank you.
+
+===============boundary_anon_001
+Content-Type: application/octet-stream; name="documents.zip"
+Content-Transfer-Encoding: base64
+
+UEsDBBQACAAIAP1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQR
+STUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGH
+IJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXY
+ZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOP
+
+===============boundary_anon_001--
+
+Note: This email signature pattern indicates:
+- Infrastructure from multiple jurisdictions (timestamps show -0300, +0600, -0800 across hops)
+- Anonymous routing through VPN services
+- Localhost in routing chain (unusual for legitimate mail)
+- Timing inconsistencies suggest spoofing/manipulation
