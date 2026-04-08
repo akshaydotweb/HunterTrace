@@ -24,6 +24,18 @@ from huntertrace.analysis.senderClassifier import (
     TimezoneAnalysis,
     SenderClassification,
 )
+from huntertrace.analysis.correlation import (
+    AnonymizationProfile,
+    CorrelationResult,
+    TemporalProfile,
+    OriginHypothesis,
+    CorrelationAdjustment,
+    detect_anonymization,
+    correlate_hops,
+    temporal_profile,
+    infer_pre_anonymization_region,
+    apply_correlation_adjustment,
+)
 
 __all__ = [
     "ActorProfiler", "ActorTTPProfile", "MITREMapping",
@@ -31,4 +43,8 @@ __all__ = [
     "CampaignCorrelator", "ThreatActorCluster", "CorrelationReport",
     "HopTimestampAnomalyDetector", "TimezoneValidityChecker", "SendRegularityScorer",
     "HopChainAnalysis", "TimezoneAnalysis", "SenderClassification",
+    "AnonymizationProfile", "CorrelationResult", "TemporalProfile",
+    "OriginHypothesis", "CorrelationAdjustment",
+    "detect_anonymization", "correlate_hops", "temporal_profile",
+    "infer_pre_anonymization_region", "apply_correlation_adjustment",
 ]

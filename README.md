@@ -32,6 +32,40 @@ Traditional email forensics relies on IP geolocation alone (~31% accuracy). HUNT
 | SPF/DKIM/DMARC | Authentication results | Partial |
 | Webmail provider | Header fingerprinting (Gmail/Yahoo/Outlook) | Yes |
 
+
+## Adversarial Validation & Automation
+
+HunterTrace includes a full adversarial validation suite for robust benchmarking and automation. All scripts and datasets are in `validation/adversarial/`.
+
+### Typical Adversarial Workflow
+
+1. **Generate adversarial samples:**
+  ```bash
+  python validation/adversarial/adversarial_dataset_generator.py --count 800 --summary
+  ```
+  Output: `validation/adversarial/adv_dataset.json`
+
+2. **Evaluate against the engine:**
+  ```bash
+  PYTHONPATH=. python3 validation/adversarial/eval_harness.py --dataset validation/adversarial/adv_dataset.json --out validation/adversarial/adv_eval_results.json
+  ```
+  Output: `validation/adversarial/adv_eval_results.json`
+
+3. **Scale up for stress testing:**
+  ```bash
+  python validation/adversarial/adversarial_dataset_generator.py --count 1600 --out validation/adversarial/adv_large.json
+  ```
+
+4. **Isolate a scenario for deep analysis:**
+  ```bash
+  python validation/adversarial/adversarial_dataset_generator.py --scenario compromised_relay --count 200 --out validation/adversarial/adv_compromised_relay.json
+  python validation/adversarial/eval_harness.py --dataset validation/adversarial/adv_compromised_relay.json --scenario compromised_relay --verbose
+  ```
+
+All outputs are written to `validation/adversarial/` by default. Ensure you run with `PYTHONPATH=.` from the project root for correct imports.
+
+---
+
 ## Architecture
 
 ```

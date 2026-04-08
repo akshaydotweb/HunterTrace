@@ -55,4 +55,5 @@ resources/
 tests/
 samples/
 output/
+validation/
 docs/

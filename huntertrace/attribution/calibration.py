@@ -54,8 +54,9 @@ from __future__ import annotations
 import json
 import math
 import bisect
-from dataclasses import dataclass, field
-from typing import List, Optional, Tuple, Dict
+from copy import deepcopy
+from dataclasses import asdict, dataclass, field
+from typing import Any, List, Optional, Tuple, Dict, Mapping, Sequence
 from pathlib import Path
 from datetime import datetime
 
@@ -549,3 +550,317 @@ def evaluate_calibration(
         bin_reports     = bin_reports,
         calibrator      = calibrator,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  PHASE 6C — CONFIG CALIBRATION / WEIGHT OPTIMISATION
+# ─────────────────────────────────────────────────────────────────────────────
+
+try:
+    from huntertrace.attribution.scoring import InferenceEngine, ScoringConfig
+    from huntertrace.attribution.evaluation import AttributionEvaluator, build_default_dataset
+    from huntertrace.attribution.adversarial_testing import (
+        AdversarialTester,
+        ALL_ATTACK_TYPES,
+    )
+except ModuleNotFoundError:  # pragma: no cover - direct-script fallback
+    from scoring import InferenceEngine, ScoringConfig  # type: ignore
+    from evaluation import AttributionEvaluator, build_default_dataset  # type: ignore
+    from adversarial_testing import AdversarialTester, ALL_ATTACK_TYPES  # type: ignore
+
+
+_TUNABLE_GROUPS: Tuple[str, ...] = (
+    "group_weights",
+    "signal_weights",
+    "trust_multipliers",
+    "validation_multipliers",
+    "conflict_multipliers",
+    "evidence_penalties",
+)
+
+_STEP_FACTORS: Tuple[float, ...] = (0.70, 0.85, 1.00, 1.15, 1.30)
+_EPS = 1e-12
+
+
+@dataclass
+class OptimisationState:
+    config_dict: Dict[str, Any]
+    metrics: Dict[str, Any]
+
+
+def _as_config_dict(cfg: ScoringConfig | Mapping[str, Any]) -> Dict[str, Any]:
+    if isinstance(cfg, ScoringConfig):
+        return {
+            "group_weights": dict(cfg.group_weights),
+            "signal_weights": dict(cfg.signal_weights),
+            "trust_multipliers": dict(cfg.trust_multipliers),
+            "validation_multipliers": dict(cfg.validation_multipliers),
+            "conflict_multipliers": dict(cfg.conflict_multipliers),
+            "evidence_penalties": dict(cfg.evidence_penalties),
+            "confidence_cap": float(cfg.confidence_cap),
+        }
+    return {
+        "group_weights": dict(cfg.get("group_weights", {})),
+        "signal_weights": dict(cfg.get("signal_weights", {})),
+        "trust_multipliers": dict(cfg.get("trust_multipliers", {})),
+        "validation_multipliers": dict(cfg.get("validation_multipliers", {})),
+        "conflict_multipliers": dict(cfg.get("conflict_multipliers", {})),
+        "evidence_penalties": dict(cfg.get("evidence_penalties", {})),
+        "confidence_cap": float(cfg.get("confidence_cap", 0.8)),
+    }
+
+
+def _to_config(cfg_dict: Mapping[str, Any]) -> ScoringConfig:
+    return ScoringConfig(
+        group_weights=dict(cfg_dict["group_weights"]),
+        signal_weights=dict(cfg_dict["signal_weights"]),
+        trust_multipliers=dict(cfg_dict["trust_multipliers"]),
+        validation_multipliers=dict(cfg_dict["validation_multipliers"]),
+        conflict_multipliers=dict(cfg_dict["conflict_multipliers"]),
+        evidence_penalties=dict(cfg_dict["evidence_penalties"]),
+        confidence_cap=float(cfg_dict.get("confidence_cap", 0.8)),
+    )
+
+
+def _calibration_gap(conf_cal: Mapping[str, Mapping[str, float]]) -> float:
+    total_n = 0.0
+    total_gap = 0.0
+    for bucket in sorted(conf_cal.keys()):
+        row = conf_cal[bucket]
+        n = float(row.get("attributed_count", row.get("count", 0.0)))
+        if n <= 0.0:
+            continue
+        pred = float(row.get("mean_predicted_confidence", 0.0))
+        acc = float(row.get("empirical_correctness", 0.0))
+        total_gap += abs(pred - acc) * n
+        total_n += n
+    return total_gap / total_n if total_n > 0.0 else 0.0
+
+
+def _has_high_confidence_incorrect(eval_metrics: Mapping[str, Any], adv_metrics: Mapping[str, Any]) -> bool:
+    for row in eval_metrics.get("failure_cases", []) or []:
+        if float(row.get("confidence", 0.0)) > 0.8 + _EPS:
+            return True
+    for row in adv_metrics.get("failures", []) or []:
+        reasons = set(row.get("reasons", []) or [])
+        if "high_confidence_incorrect_attribution" in reasons:
+            return True
+        # Defensive guard if reason list is missing.
+        if float(row.get("attacked_confidence", 0.0)) > 0.8 + _EPS:
+            return True
+    return False
+
+
+def _has_adversarial_confidence_increase(adv_metrics: Mapping[str, Any]) -> bool:
+    for row in adv_metrics.get("failures", []) or []:
+        reasons = set(row.get("reasons", []) or [])
+        if "confidence_increase_under_attack" in reasons:
+            return True
+    return False
+
+
+def _derive_metrics(eval_metrics: Mapping[str, Any], adv_metrics: Mapping[str, Any]) -> Dict[str, Any]:
+    return {
+        "accuracy": float(eval_metrics.get("accuracy", 0.0)),
+        "false_attribution_rate": float(eval_metrics.get("false_attribution_rate", 0.0)),
+        "abstention_rate": float(eval_metrics.get("abstention_rate", 0.0)),
+        "confidence_calibration_error": float(
+            _calibration_gap(eval_metrics.get("confidence_calibration", {}))
+        ),
+        "avg_confidence_correct": float(eval_metrics.get("avg_confidence_correct", 0.0)),
+        "avg_confidence_incorrect": float(eval_metrics.get("avg_confidence_incorrect", 0.0)),
+        "avg_confidence_inconclusive": float(eval_metrics.get("avg_confidence_inconclusive", 0.0)),
+        "robustness_score": float(adv_metrics.get("robustness_score", 0.0)),
+        "attack_success_rate": float(adv_metrics.get("attack_success_rate", 0.0)),
+        "confidence_shift": float(adv_metrics.get("confidence_shift", 0.0)),
+        "abstention_increase": float(adv_metrics.get("abstention_increase", 0.0)),
+        "high_confidence_incorrect": _has_high_confidence_incorrect(eval_metrics, adv_metrics),
+        "confidence_increase_under_attack": _has_adversarial_confidence_increase(adv_metrics),
+        "evaluation": dict(eval_metrics),
+        "adversarial": dict(adv_metrics),
+    }
+
+
+def _is_constraint_safe(candidate: Mapping[str, Any], baseline: Mapping[str, Any]) -> bool:
+    if candidate["false_attribution_rate"] > baseline["false_attribution_rate"] + _EPS:
+        return False
+    if candidate["abstention_rate"] + _EPS < baseline["abstention_rate"]:
+        return False
+    if candidate["high_confidence_incorrect"]:
+        return False
+    if candidate["confidence_increase_under_attack"]:
+        return False
+    return True
+
+
+def _is_better(candidate: Mapping[str, Any], current: Mapping[str, Any]) -> bool:
+    # Keep change only when FAR decreases or calibration improves.
+    far_improved = candidate["false_attribution_rate"] < current["false_attribution_rate"] - _EPS
+    cal_improved = candidate["confidence_calibration_error"] < current["confidence_calibration_error"] - _EPS
+    if not (far_improved or cal_improved):
+        return False
+
+    # Priority order tie-breaks.
+    if far_improved and not cal_improved:
+        return True
+    if cal_improved and not far_improved:
+        return True
+
+    # Both improved or equal within epsilon -> deterministic tie-break tuple.
+    cand_rank = (
+        candidate["false_attribution_rate"],
+        -candidate["abstention_rate"],
+        candidate["confidence_calibration_error"],
+        -candidate["robustness_score"],
+        candidate["attack_success_rate"],
+        -candidate["accuracy"],
+    )
+    curr_rank = (
+        current["false_attribution_rate"],
+        -current["abstention_rate"],
+        current["confidence_calibration_error"],
+        -current["robustness_score"],
+        current["attack_success_rate"],
+        -current["accuracy"],
+    )
+    return cand_rank < curr_rank
+
+
+def _candidate_values(param_group: str, current_value: float) -> List[float]:
+    vals = {round(max(0.0, current_value * f), 6) for f in _STEP_FACTORS}
+    vals.add(round(max(0.0, current_value), 6))
+
+    if param_group in {"validation_multipliers", "evidence_penalties"}:
+        vals = {min(1.0, v) for v in vals}
+    elif param_group == "trust_multipliers":
+        vals = {min(2.0, v) for v in vals}
+    elif param_group == "conflict_multipliers":
+        vals = {min(2.0, v) for v in vals}
+
+    return sorted(vals)
+
+
+def _signal_names_from_dataset(dataset: Sequence[Mapping[str, Any]]) -> List[str]:
+    names = set()
+    for case in dataset:
+        for sig in case.get("signals", []) or []:
+            if isinstance(sig, Mapping):
+                name = str(sig.get("name", "")).strip()
+            else:
+                name = str(getattr(sig, "name", "")).strip()
+            if name:
+                names.add(name)
+    return sorted(names)
+
+
+def _evaluate_config_state(
+    config_dict: Mapping[str, Any],
+    dataset: Sequence[Mapping[str, Any]],
+    attack_types: Sequence[str],
+) -> Dict[str, Any]:
+    engine = InferenceEngine(_to_config(config_dict))
+    evaluator = AttributionEvaluator(engine=engine)
+    eval_report = evaluator.evaluate(dataset).to_dict()
+    adv_report = AdversarialTester(evaluator=evaluator).run(dataset=dataset, attack_types=attack_types).to_dict()
+    return _derive_metrics(eval_report, adv_report)
+
+
+def optimise_scoring_config(
+    evaluation_dataset: Optional[Sequence[Mapping[str, Any]]] = None,
+    adversarial_results: Optional[Mapping[str, Any]] = None,
+    current_config: Optional[ScoringConfig | Mapping[str, Any]] = None,
+    *,
+    attack_types: Sequence[str] = ALL_ATTACK_TYPES,
+    max_passes: int = 2,
+) -> Dict[str, Any]:
+    """
+    Deterministic coordinate-descent tuning for ScoringConfig.
+
+    Priority:
+      1) minimise false attribution
+      2) preserve/improve abstention safety
+      3) maximise safe accuracy
+      4) improve confidence calibration
+    """
+    base_dataset_raw = list(evaluation_dataset) if evaluation_dataset is not None else [
+        asdict(case) for case in build_default_dataset()
+    ]
+    dataset: List[Mapping[str, Any]] = [dict(item) for item in base_dataset_raw]
+
+    cfg_dict = _as_config_dict(current_config or ScoringConfig())
+    # Ensure signal_weights has explicit entries for dataset signal names.
+    for signal_name in _signal_names_from_dataset(dataset):
+        cfg_dict["signal_weights"].setdefault(signal_name, 1.0)
+
+    before_metrics = _evaluate_config_state(cfg_dict, dataset, attack_types)
+    if adversarial_results is not None:
+        before_metrics["adversarial_external"] = dict(adversarial_results)
+
+    best = OptimisationState(
+        config_dict=deepcopy(cfg_dict),
+        metrics=before_metrics,
+    )
+    baseline = deepcopy(before_metrics)
+
+    for _ in range(max(1, int(max_passes))):
+        improved = False
+        for group_name in _TUNABLE_GROUPS:
+            keys = sorted(best.config_dict[group_name].keys())
+            for key in keys:
+                current_val = float(best.config_dict[group_name][key])
+                local_best = best
+                for candidate_val in _candidate_values(group_name, current_val):
+                    if abs(candidate_val - current_val) <= _EPS:
+                        continue
+                    trial_cfg = deepcopy(best.config_dict)
+                    trial_cfg[group_name][key] = candidate_val
+                    trial_metrics = _evaluate_config_state(trial_cfg, dataset, attack_types)
+                    if not _is_constraint_safe(trial_metrics, baseline):
+                        continue
+                    if _is_better(trial_metrics, local_best.metrics):
+                        local_best = OptimisationState(
+                            config_dict=trial_cfg,
+                            metrics=trial_metrics,
+                        )
+                if local_best is not best:
+                    best = local_best
+                    improved = True
+        if not improved:
+            break
+
+    before = {
+        k: v for k, v in before_metrics.items()
+        if k not in {"evaluation", "adversarial", "adversarial_external"}
+    }
+    after = {
+        k: v for k, v in best.metrics.items()
+        if k not in {"evaluation", "adversarial", "adversarial_external"}
+    }
+    improvement = {
+        "false_attribution_rate_delta": round(after["false_attribution_rate"] - before["false_attribution_rate"], 12),
+        "abstention_rate_delta": round(after["abstention_rate"] - before["abstention_rate"], 12),
+        "accuracy_delta": round(after["accuracy"] - before["accuracy"], 12),
+        "confidence_calibration_error_delta": round(
+            after["confidence_calibration_error"] - before["confidence_calibration_error"], 12
+        ),
+        "attack_success_rate_delta": round(after["attack_success_rate"] - before["attack_success_rate"], 12),
+        "robustness_score_delta": round(after["robustness_score"] - before["robustness_score"], 12),
+    }
+
+    return {
+        "before": before,
+        "after": after,
+        "improvement": improvement,
+        "final_config": deepcopy(best.config_dict),
+        "final_evaluation_report": best.metrics["evaluation"],
+        "final_adversarial_report": best.metrics["adversarial"],
+    }
+
+
+def main() -> None:
+    report = optimise_scoring_config()
+    print(json.dumps(report, indent=2, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()

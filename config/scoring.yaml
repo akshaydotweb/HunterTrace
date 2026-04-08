@@ -3,10 +3,7 @@ scoring:
     temporal: 1.0
     infrastructure: 1.2
     identity: 1.1
-    authentication: 1.05
-  signal_weights:
-    dkim_valid: 1.15
-    dkim_domain: 1.05
+  signal_weights: {}
   trust_multipliers:
     TRUSTED: 1.0
     PARTIALLY_TRUSTED: 0.8
