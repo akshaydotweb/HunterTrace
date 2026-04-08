@@ -110,8 +110,17 @@ class ScoringConfig:
     })
 
     signal_weights: Mapping[str, float] = field(default_factory=lambda: {
+        # DKIM signals
         "dkim_valid": 1.15,
         "dkim_domain": 1.05,
+
+        # Authentication group signals (Phase 9)
+        "dmarc_result": 1.40,           # DMARC pass = strong positive signal
+        "dmarc_policy": 1.10,           # Policy presence = moderate positive
+        "spf_result": 1.20,             # SPF pass = strong positive
+        "spf_aligned": 1.25,            # Alignment critical for DMARC
+        "dkim_aligned": 1.20,           # DKIM alignment = strong indicator
+        "arc_valid": 1.15,              # ARC chain = forwarding indicator
     })
 
     trust_multipliers: Mapping[str, float] = field(default_factory=lambda: {

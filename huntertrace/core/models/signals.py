@@ -558,4 +558,14 @@ def build_signals(extracted: ExtractedEmail) -> List[ForensicSignal]:
         constructed_at    = ts,
     ))
 
+    # ── 10. Authentication signals (Phase 8+) ──────────────────────────────────
+    # Extracted from authentication validation (SPF, DKIM, DMARC, ARC).
+    # Only emitted if authentication validation is performed; otherwise omitted.
+    #
+    # Note: These signals require the authentication.py module to be called
+    # from the enrichment/scoring pipeline, not directly from this signal
+    # construction layer. This preserves Layer 2's "no inference" constraint.
+    # Authentication evaluation happens downstream and these signals are
+    # injected into the signals list after this function returns.
+
     return signals
