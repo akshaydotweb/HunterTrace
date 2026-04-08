@@ -85,6 +85,9 @@ class ARCValidation:
     latest_result: Optional[str] = None  # pass, fail, neutral, none
     explanation: str = ""
     failure_reason: Optional[str] = None
+    failed_instance: Optional[int] = None
+    upstream_auth_results: Tuple[Dict[str, str], ...] = ()
+    upstream_summary: str = ""
     forwarded: bool = False
 
 
