@@ -1,6 +1,6 @@
 """Version information for HUNTЕRТRACE."""
 
-__version__ = '1.2.1'
+__version__ = '1.2.2'
 __title__ = 'huntertrace'
 __description__ = 'Advanced phishing actor attribution using Bayesian inference and graph analysis'
 __author__ = 'Akshay V'
