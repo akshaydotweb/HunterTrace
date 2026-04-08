@@ -40,6 +40,12 @@ from email.utils import parsedate_to_datetime
 import argparse
 from pathlib import Path
 
+try:
+    from huntertrace.attribution.dkim import verify_message
+    DKIM_VERIFICATION_AVAILABLE = True
+except ImportError:
+    DKIM_VERIFICATION_AVAILABLE = False
+
 # Import live hosting keywords integration
 try:
     from huntertrace.enrichment.hosting import get_hosting_keywords, classify_hosting_by_keywords
@@ -149,7 +155,7 @@ except ImportError:
 
 # ── Active Analysis (5 live-probe techniques) ─────────────────────────────────
 try:
-    from huntertrace.active.active_analysis import (
+    from huntertrace.active.activeAnalysis import (
         ActiveAnalysisPipeline,
         ActiveAnalysisResult,
         patch_backtracker_with_active_analysis,
@@ -161,7 +167,7 @@ except ImportError:
 
 # ── Active Validation (offline + live validation framework) ───────────────────
 try:
-    from huntertrace.active.active_validation import (
+    from huntertrace.active.activeValidation import (
         ValidationRunner,
         ValidationReport,
     )
@@ -206,12 +212,16 @@ class ReceivedChainAnalysis:
     confidence: float
     red_flags: List[str]
     email_charset: Optional[str] = None    # Charset from Content-Type / subject encoding
+    auth_results_raw: Optional[str] = None
+    dkim_signature: Optional[str] = None
+    dkim_signatures: List[str] = field(default_factory=list)
+    dkim_verification: Dict[str, Any] = field(default_factory=dict)
 
 
 class HeaderExtractor:
     """Stage 1: Extract headers from email - SUPPORTS BOTH IPv4 AND IPv6"""
     
-    def __init__(self):
+    def __init__(self, dkim_resolver: Optional[Any] = None):
         self.patterns = {
             "ipv4_only": re.compile(r'\[(\d+\.\d+\.\d+\.\d+)\]|(?:^|\bfrom\s+)(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(?!\])', re.IGNORECASE),
             "ipv6_with_brackets": re.compile(r'\[([a-fA-F0-9:]+)\]', re.IGNORECASE),  # IPv6 in brackets
@@ -226,26 +236,52 @@ class HeaderExtractor:
             "protocol": re.compile(r'with\s+(ESMTP|SMTP|HTTP|HTTPS|LMTP)', re.IGNORECASE),
             "by_clause": re.compile(r'by\s+(\S+)', re.IGNORECASE),
         }
+        self.dkim_resolver = dkim_resolver
     
     def parse_email_file(self, file_path: str) -> Optional[ReceivedChainAnalysis]:
         """Parse email file"""
         try:
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                email_raw = f.read()
-            return self.parse_email_raw(email_raw)
+            with open(file_path, 'rb') as f:
+                raw_bytes = f.read()
+            email_raw = raw_bytes.decode('utf-8', errors='ignore')
+            return self.parse_email_raw(email_raw, raw_bytes=raw_bytes)
         except Exception as e:
             print(f"[ERROR] Failed to read {file_path}: {e}")
             return None
     
-    def parse_email_raw(self, email_raw: str) -> Optional[ReceivedChainAnalysis]:
+    def parse_email_raw(self, email_raw: str, raw_bytes: Optional[bytes] = None) -> Optional[ReceivedChainAnalysis]:
         """Parse raw email"""
         
-        msg = email.message_from_string(email_raw)
+        if raw_bytes is not None:
+            msg = email.message_from_bytes(raw_bytes)
+        else:
+            msg = email.message_from_string(email_raw)
         
         email_from = msg.get('From', 'Unknown')
         email_to = msg.get('To', 'Unknown')
         email_subject = msg.get('Subject', 'Unknown')
         message_id = msg.get('Message-ID', 'Unknown')
+        auth_results_raw = msg.get('Authentication-Results', None)
+        dkim_signatures = msg.get_all('DKIM-Signature', []) or []
+        dkim_signature = dkim_signatures[0] if dkim_signatures else None
+        dkim_verification: Dict[str, Any] = {}
+        if raw_bytes is not None and DKIM_VERIFICATION_AVAILABLE:
+            try:
+                dkim_verification = verify_message(raw_bytes, resolver=self.dkim_resolver).to_dict()
+            except Exception as exc:
+                dkim_verification = {
+                    "dkim_present": bool(dkim_signatures),
+                    "dkim_valid": False,
+                    "failure_reason": f"verification_error:{type(exc).__name__}",
+                    "domain": None,
+                    "selector": None,
+                    "algorithm": None,
+                    "signed_headers": [],
+                    "canonicalization": "simple/simple",
+                    "key_type": None,
+                    "flags": [],
+                    "signatures": [],
+                }
 
         # ── Charset extraction ──────────────────────────────────────────────
         # Priority 1: Content-Type header  (most reliable)
@@ -344,6 +380,10 @@ class HeaderExtractor:
             confidence=1.0 - (spoofing_risk * 0.3),
             red_flags=red_flags,
             email_charset=email_charset,
+            auth_results_raw=auth_results_raw,
+            dkim_signature=dkim_signature,
+            dkim_signatures=dkim_signatures,
+            dkim_verification=dkim_verification,
         )
         
         return analysis
@@ -2480,6 +2520,22 @@ class CompletePipelineReport:
         lines.append(f"  Message-ID: {self.header.message_id}")
         lines.append(f"\n  Spoofing Risk: {self.header.spoofing_risk:.0%}")
         lines.append(f"  Header Confidence: {self.header.confidence:.0%}")
+        dkim_info = getattr(self.header, "dkim_verification", {}) or {}
+        lines.append(f"  DKIM Present: {'Yes' if dkim_info.get('dkim_present') else 'No'}")
+        if dkim_info.get("dkim_present"):
+            lines.append(f"  DKIM Valid: {'Yes' if dkim_info.get('dkim_valid') else 'No'}")
+            lines.append(
+                f"  DKIM Domain/Selector: "
+                f"{dkim_info.get('domain') or 'Unknown'} / {dkim_info.get('selector') or 'Unknown'}"
+            )
+            lines.append(f"  DKIM Canonicalization: {dkim_info.get('canonicalization') or 'Unknown'}")
+            if dkim_info.get("failure_reason"):
+                lines.append(f"  DKIM Failure Reason: {dkim_info.get('failure_reason')}")
+            if dkim_info.get("signed_headers"):
+                lines.append(
+                    "  DKIM Signed Headers: "
+                    + ", ".join(dkim_info.get("signed_headers", [])[:12])
+                )
         
         if self.header.red_flags:
             lines.append(f"\n  Red Flags ({len(self.header.red_flags)}):")
@@ -2990,14 +3046,23 @@ class CompletePipelineReport:
                 "date": self.header.email_date,
                 "message_id": self.header.message_id,
                 "spoofing_risk": self.header.spoofing_risk,
-                "red_flags": self.header.red_flags
+                "red_flags": self.header.red_flags,
+                "authentication_results": self.header.auth_results_raw,
+                "dkim_signature": self.header.dkim_signature,
+                "dkim_verification": self.header.dkim_verification,
             },
             "stage1_header_extraction": {
                 "hops_found": self.header.hop_count,
                 "origin_ip": self.header.origin_ip,
                 "destination_ip": self.header.destination_ip,
                 "confidence": self.header.confidence,
-                "hop_details": [asdict(hop) for hop in self.header.hops]
+                "hop_details": [asdict(hop) for hop in self.header.hops],
+                "authentication": {
+                    "authentication_results": self.header.auth_results_raw,
+                    "dkim_signature": self.header.dkim_signature,
+                    "dkim_signatures": self.header.dkim_signatures,
+                    "dkim_verification": self.header.dkim_verification,
+                },
             },
             "stage2_ip_classification": {
                 ip: asdict(c) for ip, c in self.classifications.items()
@@ -3424,6 +3489,30 @@ class CompletePipeline:
                 seen_ipv6.add(hop.ipv6)
         
         print(f"[INFO] Unique IPs found: {', '.join(unique_ips + unique_ipv6)}")
+
+        dkim_info = getattr(header_analysis, "dkim_verification", {}) or {}
+        if dkim_info.get("dkim_present"):
+            print(
+                "  [AUTH] DKIM present: yes"
+                f" | valid: {'yes' if dkim_info.get('dkim_valid') else 'no'}"
+            )
+            if dkim_info.get("domain") or dkim_info.get("selector"):
+                print(
+                    "    Domain/selector: "
+                    f"{dkim_info.get('domain') or 'unknown'}"
+                    f" / {dkim_info.get('selector') or 'unknown'}"
+                )
+            if dkim_info.get("canonicalization"):
+                print(f"    Canonicalization: {dkim_info.get('canonicalization')}")
+            if dkim_info.get("failure_reason"):
+                print(f"    Failure reason: {dkim_info.get('failure_reason')}")
+            if dkim_info.get("signed_headers"):
+                print(
+                    "    Signed headers: "
+                    + ", ".join(dkim_info.get("signed_headers", [])[:12])
+                )
+        else:
+            print("  [AUTH] DKIM present: no")
         
         # WEBMAIL EXTRACTION: run immediately after header parsing on raw file
         webmail_extraction = None

@@ -142,6 +142,7 @@ SIGNAL_LIKELIHOOD_RATIOS: Dict[str, float] = {
     "hop_pattern":            1.4,  # Network latency hints
     "subject_language":       1.3,  # Subject language
     "charset_region":         2.5,  # Email charset — reveals locale, VPN-resistant
+    "dkim_valid":             1.2,  # Authentication integrity corroboration
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -157,7 +158,7 @@ SIGNAL_SOURCE_RELIABILITY: Dict[str, Dict[str, float]] = {
         "timezone_offset": 1.00,      "timezone_region": 1.00,
         "vpn_exit_country": 1.00,     "webmail_provider": 1.00,
         "send_hour_local": 1.00,      "hop_pattern": 1.00,
-        "subject_language": 1.00,
+        "subject_language": 1.00,     "dkim_valid": 1.00,
         "ipv6_country":  1.00,        # Direct IPv6 geolocation
         "charset_region": 1.00,       # Email locale charset
         "dns_infra_country": 1.00,    # NS/MX/SPF/DKIM/PTR consensus
@@ -176,6 +177,7 @@ SIGNAL_SOURCE_RELIABILITY: Dict[str, Dict[str, float]] = {
         "send_hour_local":       1.30,
         "hop_pattern":           0.50,
         "subject_language":      1.20,
+        "dkim_valid":            1.05,
         "ipv6_country":          1.50,  # BOOST: most VPNs don't tunnel IPv6 → real device IP
         "charset_region":        1.20,  # VPN doesn't change email client locale
         "dns_infra_country":     1.40,  # BOOST: DNS infra registered before VPN — fully VPN-resistant
@@ -187,6 +189,7 @@ SIGNAL_SOURCE_RELIABILITY: Dict[str, Dict[str, float]] = {
         "timezone_offset":       1.20, "timezone_region": 1.20,
         "webmail_provider":      1.10, "send_hour_local": 1.30,
         "hop_pattern":           0.20, "subject_language": 1.20,
+        "dkim_valid":            1.05,
         "ipv6_country":          1.50,  # Tor rarely carries IPv6 traffic — if present, likely real
         "charset_region":        1.20,
         "dns_infra_country":     1.40,  # DNS infra unaffected by Tor
@@ -199,6 +202,7 @@ SIGNAL_SOURCE_RELIABILITY: Dict[str, Dict[str, float]] = {
         "timezone_offset":       1.00, "timezone_region": 1.00,
         "webmail_provider":      1.00, "send_hour_local": 1.00,
         "hop_pattern":           1.00, "subject_language": 1.00,
+        "dkim_valid":            1.00,
         "ipv6_country":          1.00,
         "charset_region":        1.00,
         "dns_infra_country":     1.00,
@@ -570,6 +574,7 @@ class SignalExtractor:
         bt  = getattr(result, "vpn_backtrack_analysis",None)
         ri  = getattr(result, "real_ip_analysis",      None)
         pa  = getattr(result, "proxy_analysis",        None)
+        dkim = getattr(ha, "dkim_verification", {}) if ha else {}
 
         # ── Obfuscation flags ─────────────────────────────────────────────
         for ip, c in cl.items():
@@ -741,6 +746,18 @@ class SignalExtractor:
             _cs_norm = _charset.lower().strip()
             if CHARSET_REGION_MAP.get(_cs_norm):   # only set if non-empty mapping
                 signals["charset_region"] = _cs_norm
+
+        # ── DKIM authentication integrity ─────────────────────────────────
+        if isinstance(dkim, dict) and dkim.get("dkim_present"):
+            signals["dkim_present"] = True
+            if dkim.get("domain"):
+                signals["dkim_domain"] = dkim.get("domain")
+            if dkim.get("selector"):
+                signals["dkim_selector"] = dkim.get("selector")
+            if dkim.get("failure_reason"):
+                signals["dkim_failure_reason"] = dkim.get("failure_reason")
+            if dkim.get("dkim_valid"):
+                signals["dkim_valid"] = True
 
         return signals, obfuscation
 
@@ -1673,6 +1690,19 @@ class AttributionEngine:
         aci_adj = min(raw_prob * aci.final_aci, _conf_cap)
         if not used_signals:
             aci_adj = 0.0
+
+        # ── DKIM confidence shaping ───────────────────────────────────────
+        # DKIM is not geographic evidence, but valid cryptographic auth
+        # increases message integrity confidence while present-but-invalid
+        # suggests tampering or header/body mismatch.
+        if signals.get("dkim_valid"):
+            if "dkim_valid" not in used_signals:
+                used_signals.append("dkim_valid")
+            aci_adj = min(_conf_cap, aci_adj * 1.03 + 0.01)
+        elif signals.get("dkim_present"):
+            if "dkim_invalid" not in used_signals:
+                used_signals.append("dkim_invalid")
+            aci_adj *= 0.85
 
         # ── Layer 5: False flag detection ────────────────────────────────
         ff = self._ff_detector.detect(signals, posterior, used_signals)
