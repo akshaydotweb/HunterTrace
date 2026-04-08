@@ -621,17 +621,24 @@ def validate_arc(
     config: Optional[AuthenticationConfig] = None,
 ) -> ARCValidation:
     """Validate ARC chain using phase 7 implementation."""
-    validator = ARCValidator()
-    valid, chain_count, explanation = validator.validate(fields.arc_headers)
-    latest_result = validator.extract_arc_result(fields.arc_headers)
-    failure_reason = None if valid else explanation
+    config = config or AuthenticationConfig()
+    validator = ARCValidator(cache_path=config.cache_path)
+    result = validator.validate(raw_message, resolver=resolver)
+
+    latest_result = None
+    if result.upstream_auth_results:
+        latest = result.upstream_auth_results[-1]
+        latest_result = latest.get("dmarc") or latest.get("dkim") or latest.get("spf")
 
     return ARCValidation(
         valid=result.valid,
         chain_count=result.chain_count,
         latest_result=latest_result,
-        explanation=explanation,
-        failure_reason=failure_reason,
+        explanation=result.explanation,
+        failure_reason=result.failure_reason,
+        failed_instance=result.failed_instance,
+        upstream_auth_results=tuple(result.upstream_auth_results),
+        upstream_summary=result.upstream_summary,
         forwarded=False,
     )
 
@@ -712,7 +719,12 @@ def evaluate_email_authentication(
     )
 
     # 6. Validate ARC
-    arc = validate_arc(extracted.raw_bytes if hasattr(extracted, "raw_bytes") else b"", fields)
+    arc = validate_arc(
+        extracted.raw_bytes if hasattr(extracted, "raw_bytes") else b"",
+        fields,
+        resolver=arc_resolver or resolver,
+        config=config,
+    )
 
     dmarc_status = _classify_dmarc_status(
         spf=spf,
@@ -741,16 +753,6 @@ def evaluate_email_authentication(
         dkim_status=dkim_status,
         dkim_aligned=dkim_aligned.aligned if dkim_aligned else False,
     )
-
-    if forwarded:
-        arc = ARCValidation(
-            valid=arc.valid,
-            chain_count=arc.chain_count,
-            latest_result=arc.latest_result,
-            explanation=arc.explanation,
-            failure_reason=arc.failure_reason,
-            forwarded=True,
-        )
 
     if forwarded:
         arc = ARCValidation(
@@ -866,7 +868,7 @@ def build_authentication_signals(
     ts = _utc_now_iso()
 
     # Helper to create signal
-    def _make_auth_signal(name: str, value, explanation: str) -> ForensicSignal:
+    def _make_auth_signal(name: str, value, explanation: str) -> object:
         return ForensicSignal(
             signal_id=str(__import__('uuid').uuid4()),
             evidence_id=evidence_id,
@@ -952,6 +954,23 @@ def build_authentication_signals(
             auth_result.arc.valid,
             f"ARC chain with {auth_result.arc.chain_count} instance(s): {auth_result.arc.explanation}"
         ))
+        signals.append(_make_auth_signal(
+            "arc_chain_length",
+            auth_result.arc.chain_count,
+            f"ARC chain length: {auth_result.arc.chain_count}"
+        ))
+        if auth_result.arc.failure_reason:
+            signals.append(_make_auth_signal(
+                "arc_failure_reason",
+                auth_result.arc.failure_reason,
+                f"ARC failure reason: {auth_result.arc.failure_reason}"
+            ))
+        if auth_result.arc.upstream_summary:
+            signals.append(_make_auth_signal(
+                "arc_upstream_auth",
+                auth_result.arc.upstream_summary,
+                f"ARC upstream auth: {auth_result.arc.upstream_summary}"
+            ))
         if auth_result.arc.forwarded:
             signals.append(_make_auth_signal(
                 "arc_forwarded",

@@ -416,6 +416,7 @@ class HeaderExtractor:
                     extracted=extracted_email,
                     dkim_valid=dkim_valid,
                     dkim_summary=dkim_verification,
+                    arc_resolver=self.dkim_resolver,
                 )
 
                 authentication_evaluation = {
