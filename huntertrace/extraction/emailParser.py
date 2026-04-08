@@ -21,6 +21,7 @@ def parse_email(envelope: EvidenceEnvelope) -> ExtractedEmail:
 
     return ExtractedEmail(
         evidence_id=envelope.evidence_id,
+        raw_bytes=envelope.raw_bytes,
         from_header=msg.get("From"),
         to_header=msg.get("To"),
         subject_raw=msg.get("Subject"),

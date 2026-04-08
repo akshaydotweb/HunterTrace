@@ -617,6 +617,8 @@ def evaluate_dmarc(
 def validate_arc(
     raw_message: bytes,
     fields: AuthenticationFields,
+    resolver: Optional[TXTResolver] = None,
+    config: Optional[AuthenticationConfig] = None,
 ) -> ARCValidation:
     """Validate ARC chain using phase 7 implementation."""
     validator = ARCValidator()
@@ -625,8 +627,8 @@ def validate_arc(
     failure_reason = None if valid else explanation
 
     return ARCValidation(
-        valid=valid,
-        chain_count=chain_count,
+        valid=result.valid,
+        chain_count=result.chain_count,
         latest_result=latest_result,
         explanation=explanation,
         failure_reason=failure_reason,
@@ -747,6 +749,19 @@ def evaluate_email_authentication(
             latest_result=arc.latest_result,
             explanation=arc.explanation,
             failure_reason=arc.failure_reason,
+            forwarded=True,
+        )
+
+    if forwarded:
+        arc = ARCValidation(
+            valid=arc.valid,
+            chain_count=arc.chain_count,
+            latest_result=arc.latest_result,
+            explanation=arc.explanation,
+            failure_reason=arc.failure_reason,
+            failed_instance=arc.failed_instance,
+            upstream_auth_results=arc.upstream_auth_results,
+            upstream_summary=arc.upstream_summary,
             forwarded=True,
         )
 

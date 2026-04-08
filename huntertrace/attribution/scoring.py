@@ -121,6 +121,10 @@ class ScoringConfig:
         "spf_aligned": 1.25,            # Alignment critical for DMARC
         "dkim_aligned": 1.20,           # DKIM alignment = strong indicator
         "arc_valid": 1.15,              # ARC chain = forwarding indicator
+        "arc_chain_length": 0.10,
+        "arc_upstream_auth": 0.20,
+        "arc_forwarded": 0.35,
+        "arc_failure_reason": 0.0,
     })
 
     trust_multipliers: Mapping[str, float] = field(default_factory=lambda: {
