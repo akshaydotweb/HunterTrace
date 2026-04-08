@@ -10,7 +10,7 @@
 [![Python Versions](https://img.shields.io/pypi/pyversions/huntertrace.svg)](https://pypi.org/project/huntertrace/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Current release: 1.2.2
+Current release: 1.2.3
 
 ## Overview
 
