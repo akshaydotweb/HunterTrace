@@ -517,7 +517,7 @@ class AttackerTechniqueProfiler:
         spf_ev = self._check_spf_fail(msg)
         if spf_ev:
             results.append(DetectedTechnique(
-                name="SPF failure / domain impersonation",
+                name="SPF / DMARC alignment validation",
                 category=CAT_IDENTITY,
                 confidence=0.88,
                 mitre_id="T1036.005",

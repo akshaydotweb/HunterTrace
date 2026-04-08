@@ -470,8 +470,9 @@ class HeaderExtractor:
             dkim_signature=dkim_signature,
             dkim_signatures=dkim_signatures,
             dkim_verification=dkim_verification,
+            authentication_evaluation=authentication_evaluation,
         )
-        
+
         return analysis
     
     def _convert_received_details_to_hops(self, details: List[ReceivedHeaderDetail]) -> List[ReceivedHop]:
