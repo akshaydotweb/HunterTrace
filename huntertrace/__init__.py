@@ -12,7 +12,7 @@ from importlib.metadata import version, PackageNotFoundError
 try:
     __version__ = version("huntertrace")
 except PackageNotFoundError:
-    __version__ = "1.1.3"
+    __version__ = "1.2.1"
 
 # Core imports
 try:

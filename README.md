@@ -10,6 +10,8 @@
 [![Python Versions](https://img.shields.io/pypi/pyversions/huntertrace.svg)](https://pypi.org/project/huntertrace/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+Current release: 1.2.1
+
 ## Overview
 
 HUNTERTRACE is an open-source phishing attribution engine that identifies the
