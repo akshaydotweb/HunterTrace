@@ -391,6 +391,7 @@ class HeaderExtractor:
                     evidence_id="pipeline-extract",
                     extraction_timestamp=email_date or "",
                     received_chain=received_hops,
+                    raw_bytes=raw_bytes,
                     from_header=email_from,
                     to_header=email_to,
                     subject_raw=email_subject,
@@ -409,6 +410,7 @@ class HeaderExtractor:
                 auth_result = evaluate_email_authentication(
                     extracted=extracted_email,
                     dkim_valid=dkim_valid,
+                    arc_resolver=self.dkim_resolver,
                 )
 
                 authentication_evaluation = {
@@ -441,6 +443,10 @@ class HeaderExtractor:
                     # ARC (forwarding detection)
                     "arc_valid": auth_result.arc.valid,
                     "arc_chain_count": auth_result.arc.chain_count,
+                    "arc_failure_reason": auth_result.arc.failure_reason,
+                    "arc_failed_instance": auth_result.arc.failed_instance,
+                    "arc_upstream_auth": auth_result.arc.upstream_summary,
+                    "arc_forwarded": auth_result.arc.forwarded,
 
                     # Overall explanation
                     "explanation": auth_result.explanation,
@@ -3659,6 +3665,12 @@ class CompletePipeline:
             arc_valid = auth_eval.get("arc_valid")
             if arc_valid:
                 print(f"  ARC: VALID (chain_count: {auth_eval.get('arc_chain_count', 0)})")
+            elif arc_valid is False:
+                reason = auth_eval.get("arc_failure_reason")
+                failed = auth_eval.get("arc_failed_instance")
+                detail = f" (failed instance: {failed})" if failed else ""
+                if reason:
+                    print(f"  ARC: INVALID ({reason}){detail}")
 
             # Summary
             if auth_eval.get("explanation"):

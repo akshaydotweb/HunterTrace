@@ -452,20 +452,29 @@ def evaluate_dmarc(
 def validate_arc(
     raw_message: bytes,
     fields: AuthenticationFields,
+    resolver: Optional[TXTResolver] = None,
+    config: Optional[AuthenticationConfig] = None,
 ) -> ARCValidation:
     """Validate ARC chain using phase 7 implementation."""
-    validator = ARCValidator()
-    valid, chain_count, explanation = validator.validate(fields.arc_headers)
+    config = config or AuthenticationConfig()
+    validator = ARCValidator(cache_path=config.cache_path)
+    result = validator.validate(raw_message, resolver=resolver)
 
     latest_result = None
-    if valid:
-        latest_result = validator.extract_arc_result(fields.arc_headers)
+    if result.upstream_auth_results:
+        latest = result.upstream_auth_results[-1]
+        latest_result = latest.get("dmarc") or latest.get("dkim") or latest.get("spf")
 
     return ARCValidation(
-        valid=valid,
-        chain_count=chain_count,
+        valid=result.valid,
+        chain_count=result.chain_count,
         latest_result=latest_result,
-        explanation=explanation
+        explanation=result.explanation,
+        failure_reason=result.failure_reason,
+        failed_instance=result.failed_instance,
+        upstream_auth_results=tuple(result.upstream_auth_results),
+        upstream_summary=result.upstream_summary,
+        forwarded=False,
     )
 
 
@@ -478,6 +487,7 @@ def evaluate_email_authentication(
     extracted: ExtractedEmail,
     dkim_valid: bool,
     resolver: Optional[TXTResolver] = None,
+    arc_resolver: Optional[TXTResolver] = None,
     config: Optional[AuthenticationConfig] = None,
 ) -> AuthenticationResult:
     """
@@ -528,15 +538,33 @@ def evaluate_email_authentication(
     )
 
     # 6. Validate ARC
-    arc = validate_arc(extracted.raw_bytes if hasattr(extracted, 'raw_bytes') else b"", fields)
+    arc = validate_arc(
+        extracted.raw_bytes if hasattr(extracted, 'raw_bytes') else b"",
+        fields,
+        resolver=arc_resolver or resolver,
+        config=config,
+    )
 
     # 7. Determine verdict
-    verdict, summary = _determine_verdict(
+    verdict, summary, forwarded = _determine_verdict(
         dmarc=dmarc,
         arc=arc,
         spf_aligned=spf_aligned.aligned,
         dkim_aligned=dkim_aligned.aligned if dkim_aligned else False
     )
+
+    if forwarded:
+        arc = ARCValidation(
+            valid=arc.valid,
+            chain_count=arc.chain_count,
+            latest_result=arc.latest_result,
+            explanation=arc.explanation,
+            failure_reason=arc.failure_reason,
+            failed_instance=arc.failed_instance,
+            upstream_auth_results=arc.upstream_auth_results,
+            upstream_summary=arc.upstream_summary,
+            forwarded=True,
+        )
 
     return AuthenticationResult(
         spf=spf,
@@ -557,16 +585,29 @@ def _determine_verdict(
     arc: ARCValidation,
     spf_aligned: bool,
     dkim_aligned: bool,
-) -> Tuple[str, str]:
+) -> Tuple[str, str, bool]:
     """Determine overall verdict and summary explanation."""
+    upstream_pass = _arc_upstream_pass(arc)
     if dmarc.result == "pass":
-        return "pass", "Message passed DMARC authentication"
+        return "pass", "Message passed DMARC authentication", False
 
-    if dmarc.result == "fail" and arc.valid:
+    if dmarc.result == "fail" and arc.valid and upstream_pass:
         return "forwarded", (
-            f"Message failed DMARC but ARC chain is valid; "
-            f"message was likely forwarded by a trusted relay"
-        )
+            "Message failed DMARC but ARC chain is valid and upstream auth passed; "
+            "message was likely forwarded by a trusted relay"
+        ), True
+
+    if dmarc.result == "fail" and arc.valid and not upstream_pass:
+        return "suspicious", (
+            "Message failed DMARC and ARC chain did not show upstream pass results; "
+            "forwarding could not be confirmed"
+        ), False
+
+    if dmarc.result == "fail" and not arc.valid and upstream_pass:
+        return "suspicious", (
+            "Message failed DMARC and ARC chain is invalid but upstream auth claims pass; "
+            "possible header injection"
+        ), False
 
     if dmarc.result == "fail" and not arc.valid:
         # Distinguish between alignment failures vs outright failures
@@ -574,10 +615,20 @@ def _determine_verdict(
             return "fail", (
                 f"Message failed DMARC: neither SPF nor DKIM were aligned with From domain. "
                 f"This may indicate spoofing."
-            )
-        return "suspicious", f"Message failed DMARC: {dmarc.explanation}"
+            ), False
+        return "suspicious", f"Message failed DMARC: {dmarc.explanation}", False
 
-    return "unknown", "Could not determine authentication verdict"
+    return "unknown", "Could not determine authentication verdict", False
+
+
+def _arc_upstream_pass(arc: ARCValidation) -> bool:
+    if not arc.upstream_auth_results:
+        return False
+    latest = arc.upstream_auth_results[-1]
+    return any(
+        latest.get(key) == "pass"
+        for key in ("spf", "dkim", "dmarc")
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -681,5 +732,28 @@ def build_authentication_signals(
             auth_result.arc.valid,
             f"ARC chain with {auth_result.arc.chain_count} instance(s): {auth_result.arc.explanation}"
         ))
+        signals.append(_make_auth_signal(
+            "arc_chain_length",
+            auth_result.arc.chain_count,
+            f"ARC chain length: {auth_result.arc.chain_count}"
+        ))
+        if auth_result.arc.failure_reason:
+            signals.append(_make_auth_signal(
+                "arc_failure_reason",
+                auth_result.arc.failure_reason,
+                f"ARC failure reason: {auth_result.arc.failure_reason}"
+            ))
+        if auth_result.arc.upstream_summary:
+            signals.append(_make_auth_signal(
+                "arc_upstream_auth",
+                auth_result.arc.upstream_summary,
+                f"ARC upstream auth: {auth_result.arc.upstream_summary}"
+            ))
+        if auth_result.arc.forwarded:
+            signals.append(_make_auth_signal(
+                "arc_forwarded",
+                True,
+                "ARC chain valid with upstream pass; message classified as forwarded"
+            ))
 
     return signals
