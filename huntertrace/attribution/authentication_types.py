@@ -73,6 +73,7 @@ class DMARCEvaluation:
     dkim_pass: bool
     dkim_aligned: bool
     explanation: str = ""
+    dmarc_status: str = ""
 
 
 @dataclass(frozen=True)
@@ -84,9 +85,6 @@ class ARCValidation:
     latest_result: Optional[str] = None  # pass, fail, neutral, none
     explanation: str = ""
     failure_reason: Optional[str] = None
-    failed_instance: Optional[int] = None
-    upstream_auth_results: Tuple[Dict[str, str], ...] = ()
-    upstream_summary: str = ""
     forwarded: bool = False
 
 
@@ -98,14 +96,19 @@ class AuthenticationResult:
     spf_aligned: SPFAlignmentResult
     dkim_present: bool
     dkim_valid: bool
+    dkim_status: str
+    dkim_failure_reason: Optional[str]
     dkim_domain: Optional[str]
     dkim_aligned: Optional[DKIMAlignmentResult]
     dmarc: DMARCEvaluation
+    dmarc_status: str
     arc: ARCValidation
 
     # Forensic summary
     verdict: str  # pass, fail, suspicious
     explanation: str
+    auth_score: float
+    auth_score_explanation: str
 
 
 @dataclass(frozen=True)
@@ -117,6 +120,7 @@ class AuthenticationFields:
     connecting_ip: str
     dkim_domain: Optional[str]
     received_chain: List[ReceivedHop]
+    dkim_domains: Tuple[str, ...] = ()
     auth_results_raw: Optional[str] = None
     received_spf_raw: Optional[str] = None
     date_raw: Optional[str] = None

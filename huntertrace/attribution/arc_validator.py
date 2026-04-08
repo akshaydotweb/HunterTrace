@@ -151,7 +151,12 @@ class ARCValidator:
                     explanation="ARC validation failed: missing ARC headers in set",
                 )
 
-        active_resolver = resolver or self.resolver or self._default_resolver()
+            if "ARC-Seal:" in header:
+                seal_count += 1
+            if "ARC-Message-Signature:" in header:
+                msg_sig_count += 1
+            if "ARC-Authentication-Results:" in header:
+                auth_results_count += 1
 
         for instance in instances:
             arc_set = arc_sets[instance]
@@ -191,30 +196,9 @@ class ARCValidator:
             explanation=f"ARC chain valid across {chain_count} instance(s)",
         )
 
-    def _collect_arc_sets(self, headers: Sequence[dkim_utils._RawHeader]) -> Dict[int, ARCSet]:
-        arc_sets: Dict[int, ARCSet] = {}
-        for header in headers:
-            name = header.lowercase_name
-            if name not in ("arc-seal", "arc-message-signature", "arc-authentication-results"):
-                continue
-            tags = self._parse_tag_values(header.raw_value_bytes)
-            instance = self._parse_instance(tags)
-            if instance is None:
-                continue
-            arc_set = arc_sets.setdefault(instance, ARCSet(instance=instance))
-            if name == "arc-seal":
-                if arc_set.arc_seal is not None:
-                    arc_set.duplicate = True
-                arc_set.arc_seal = header
-            elif name == "arc-message-signature":
-                if arc_set.arc_message_signature is not None:
-                    arc_set.duplicate = True
-                arc_set.arc_message_signature = header
-            elif name == "arc-authentication-results":
-                if arc_set.arc_authentication_results is not None:
-                    arc_set.duplicate = True
-                arc_set.arc_authentication_results = header
-        return arc_sets
+        # Verify we have matching counts (should be 1:1:1 or 1:1 for seal)
+        if not (seal_count > 0 and msg_sig_count > 0 and auth_results_count > 0):
+            return False, chain_count, "missing_arc_chain_components"
 
     def _parse_tag_values(self, raw_value_bytes: bytes) -> Dict[str, str]:
         unfolded = raw_value_bytes.replace(b"\r\n", b"").decode("utf-8", errors="ignore")
@@ -523,6 +507,21 @@ class ARCValidator:
             cache_path = str(default_root / "huntertrace" / "arc_dns_cache.json")
         return dkim_utils.DefaultTXTResolver(cache=dkim_utils.DNSCache(cache_path=cache_path))
 
+        # Find ARC-Authentication-Results for this instance
+        for instance, header in arc_headers.items():
+            if instance == latest_instance and "ARC-Authentication-Results:" in header:
+                header_lower = header.lower()
+                if re.search(r"\b(dkim|spf|dmarc)=pass\b", header_lower):
+                    return "pass"
+                if re.search(r"\b(dkim|spf|dmarc)=fail\b", header_lower):
+                    return "fail"
+                if re.search(r"\b(dkim|spf|dmarc)=neutral\b", header_lower):
+                    return "neutral"
+                if re.search(r"\b(dkim|spf|dmarc)=none\b", header_lower):
+                    return "none"
+                match = re.search(r";\s*(pass|fail|neutral|none)\b", header_lower)
+                if match:
+                    return match.group(1)
 
 def _remove_b_tag_value(raw_header: bytes) -> bytes:
     return _B_TAG_PATTERN.sub(rb"\1", raw_header, count=1)

@@ -189,6 +189,12 @@ class ExtractedEmail:
         Complete — nothing is pre-filtered.
         All values are UNTRUSTED by default.
 
+    arc_headers : Dict[str, List[str]]
+        All "ARC-*" headers found in the email.
+        Key: normalised header name (lowercase, hyphens preserved).
+        Value: list of all values for that header name.
+        These are UNTRUSTED by default until ARC validation succeeds.
+
     unique_ipv4 : List[str]
         Deduplicated list of all public IPv4 addresses found across
         the entire email (Received: chain + X-* headers).
@@ -249,6 +255,7 @@ class ExtractedEmail:
 
     # ── Extended headers (complete) ───────────────────────────────────────────
     x_headers:            Dict[str, List[str]] = field(default_factory=dict)
+    arc_headers:          Dict[str, List[str]] = field(default_factory=dict)
 
     # ── Deduplicated address lists ────────────────────────────────────────────
     unique_ipv4:          List[str] = field(default_factory=list)
