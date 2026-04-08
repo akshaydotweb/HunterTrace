@@ -17,7 +17,7 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional, Protocol, Tuple
 
-from huntertrace.attribution.authentication import DMARCPolicy, DMARCEvaluation
+from huntertrace.attribution.authentication_types import DMARCPolicy, DMARCEvaluation
 
 
 class TXTResolver(Protocol):

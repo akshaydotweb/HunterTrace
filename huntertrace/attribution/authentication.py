@@ -30,136 +30,35 @@ from typing import Dict, List, Optional, Protocol, Sequence, Tuple
 import os
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  EXTERNAL IMPORTS (for signal creation)
+#  EXTERNAL IMPORTS
 # ─────────────────────────────────────────────────────────────────────────────
 
+from huntertrace.core.models.extracted import ExtractedEmail, ReceivedHop
+from huntertrace.attribution.spf_validator import SPFValidator
+from huntertrace.attribution.dmarc_validator import DMARCValidator
+from huntertrace.attribution.arc_validator import ARCValidator
+from huntertrace.attribution.authentication_types import (
+    SPFEvaluation,
+    DKIMAlignmentResult,
+    SPFAlignmentResult,
+    DMARCPolicy,
+    DMARCEvaluation,
+    ARCValidation,
+    AuthenticationResult,
+    AuthenticationFields,
+    AuthenticationConfig,
+)
 try:
-    from huntertrace.core.models.signal import ForensicSignal, SignalClass, TrustTier
-except ImportError:
+    # Try to import from signals module directly to avoid circular imports
+    from huntertrace.core.models.signals import ForensicSignal, SignalClass, TrustTier
+except (ImportError, ModuleNotFoundError):
     ForensicSignal = None  # type: ignore[assignment]
     SignalClass = None  # type: ignore[assignment]
     TrustTier = None  # type: ignore[assignment]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  DATACLASSES
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class SPFEvaluation:
-    """Result of SPF validation against connecting IP."""
-
-    result: str  # pass, fail, softfail, neutral, none
-    domain: str  # envelope sender domain
-    connecting_ip: str
-    mechanisms_checked: Tuple[str, ...] = ()
-    explanation: str = ""
-
-
-@dataclass(frozen=True)
-class DKIMAlignmentResult:
-    """Result of DKIM domain alignment check."""
-
-    dkim_domain: Optional[str]
-    from_domain: str
-    aligned: bool
-    mode: str  # strict or relaxed
-    explanation: str = ""
-
-
-@dataclass(frozen=True)
-class SPFAlignmentResult:
-    """Result of SPF domain alignment check."""
-
-    spf_domain: str
-    from_domain: str
-    aligned: bool
-    mode: str  # strict or relaxed
-    explanation: str = ""
-
-
-@dataclass(frozen=True)
-class DMARCPolicy:
-    """Parsed DMARC policy record."""
-
-    policy: str  # none, quarantine, reject
-    aspf: str = "r"  # strict or relaxed (r=relaxed)
-    adkim: str = "r"
-    subdomain_policy: Optional[str] = None
-    reporting_email: Optional[str] = None
-    percentage: int = 100
-    raw_record: str = ""
-
-
-@dataclass(frozen=True)
-class DMARCEvaluation:
-    """Result of DMARC evaluation."""
-
-    result: str  # pass or fail
-    policy: Optional[DMARCPolicy]
-    spf_pass: bool
-    spf_aligned: bool
-    dkim_pass: bool
-    dkim_aligned: bool
-    explanation: str = ""
-
-
-@dataclass(frozen=True)
-class ARCValidation:
-    """Result of ARC chain validation."""
-
-    valid: bool
-    chain_count: int = 0
-    latest_result: Optional[str] = None  # pass, fail, neutral, none
-    explanation: str = ""
-
-
-@dataclass(frozen=True)
-class AuthenticationResult:
-    """Complete authentication evaluation for an email."""
-
-    spf: SPFEvaluation
-    spf_aligned: SPFAlignmentResult
-    dkim_present: bool
-    dkim_valid: bool
-    dkim_domain: Optional[str]
-    dkim_aligned: Optional[DKIMAlignmentResult]
-    dmarc: DMARCEvaluation
-    arc: ARCValidation
-
-    # Forensic summary
-    verdict: str  # pass, fail, suspicious
-    explanation: str
-
-
-@dataclass(frozen=True)
-class AuthenticationFields:
-    """Extracted authentication-relevant fields from email."""
-
-    from_domain: str
-    return_path_domain: str
-    connecting_ip: str
-    dkim_domain: Optional[str]
-    received_chain: List[ReceivedHop]
-    arc_headers: Dict[str, str]  # i -> full ARC-* header value
-    auth_results_hints: Optional[str]
-
-
-@dataclass
-class AuthenticationConfig:
-    """Configuration for authentication validation."""
-
-    spf_alignment_mode: str = "relaxed"  # strict or relaxed
-    dkim_alignment_mode: str = "relaxed"
-    dmarc_alignment_mode: str = "relaxed"
-    cache_path: Optional[str] = None
-    max_spf_recursion: int = 10
-    follow_spf_includes: bool = True
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  RESOLVER PROTOCOL & CACHE
+#  CONFIGURATION & HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
 

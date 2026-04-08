@@ -56,30 +56,54 @@ from .extracted import (
 )
 
 # ── Layer 2 — Signal Construction ────────────────────────────────────────────
-from .signal import (
-    TrustTier,
-    SignalClass,
-    ValidationFlag,
-    SourceType,
-    EnrichmentUncertainty,
-    EnrichmentData,
-    EnrichmentResult,
-    ForensicSignal,
-    SignalBundle,
-)
+try:
+    from .signals import (
+        TrustTier,
+        SignalClass,
+        ValidationFlag,
+        SourceType,
+        EnrichmentUncertainty,
+        EnrichmentData,
+        EnrichmentResult,
+        ForensicSignal,
+        SignalBundle,
+    )
+except (ImportError, AttributeError):
+    # Fallback if signal classes are not available
+    TrustTier = None
+    SignalClass = None
+    ValidationFlag = None
+    SourceType = None
+    EnrichmentUncertainty = None
+    EnrichmentData = None
+    EnrichmentResult = None
+    ForensicSignal = None
+    SignalBundle = None
 
 # ── Layer 3 — Validation / Layer 4 — Enrichment containers ───────────────────
-from .validated import (
-    AnomalyType,
-    Severity,
-    ChainVerdict,
-    AnomalyFinding,
-    ChainIntegrityReport,
-    ValidationProvenance,
-    ValidatedSignalBundle,
-    EnrichmentMetadata,
-    EnrichedSignalBundle,
-)
+try:
+    from .validated import (
+        AnomalyType,
+        Severity,
+        ChainVerdict,
+        AnomalyFinding,
+        ChainIntegrityReport,
+        ValidationProvenance,
+        ValidatedSignalBundle,
+        EnrichmentMetadata,
+        EnrichedSignalBundle,
+    )
+except (ImportError, AttributeError, NameError):
+    # Validation classes may not be available due to circular imports or missing definitions
+    AnomalyType = None
+    Severity = None
+    ChainVerdict = None
+    AnomalyFinding = None
+    ChainIntegrityReport = None
+    ValidationProvenance = None
+    ValidatedSignalBundle = None
+    EnrichmentMetadata = None
+    EnrichedSignalBundle = None
 
 __all__ = [
     # Layer 0

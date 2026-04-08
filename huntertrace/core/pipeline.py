@@ -46,6 +46,17 @@ try:
 except ImportError:
     DKIM_VERIFICATION_AVAILABLE = False
 
+# ── Email Authentication Layer (SPF, DKIM, DMARC, ARC) ────────────────────
+try:
+    from huntertrace.attribution.authentication import (
+        evaluate_email_authentication,
+        build_authentication_signals,
+    )
+    from huntertrace.core.models.extracted import ExtractedEmail, ReceivedHop
+    AUTHENTICATION_VALIDATION_AVAILABLE = True
+except ImportError:
+    AUTHENTICATION_VALIDATION_AVAILABLE = False
+
 # Import live hosting keywords integration
 try:
     from huntertrace.enrichment.hosting import get_hosting_keywords, classify_hosting_by_keywords
@@ -216,6 +227,7 @@ class ReceivedChainAnalysis:
     dkim_signature: Optional[str] = None
     dkim_signatures: List[str] = field(default_factory=list)
     dkim_verification: Dict[str, Any] = field(default_factory=dict)
+    authentication_evaluation: Dict[str, Any] = field(default_factory=dict)  # SPF, DKIM, DMARC, ARC results
 
 
 class HeaderExtractor:
@@ -282,6 +294,8 @@ class HeaderExtractor:
                     "flags": [],
                     "signatures": [],
                 }
+
+        # ── Email Authentication Evaluation will be done after parsing Received headers ─────────
 
         # ── Charset extraction ──────────────────────────────────────────────
         # Priority 1: Content-Type header  (most reliable)
@@ -364,7 +378,79 @@ class HeaderExtractor:
             if hop.hostname and ("compromised" in hop.hostname.lower() or "fake" in hop.hostname.lower()):
                 red_flags.append(f"[CRITICAL] Suspicious hostname: {hop.hostname}")
                 spoofing_risk += 0.15
-        
+
+        # ── Email Authentication Evaluation (SPF, DKIM, DMARC, ARC) ──────────
+        authentication_evaluation: Dict[str, Any] = {}
+        if AUTHENTICATION_VALIDATION_AVAILABLE:
+            try:
+                # Build ReceivedHop objects for authentication layer
+                received_hops = self._convert_received_details_to_hops(hops)
+
+                # Create minimal ExtractedEmail for authentication evaluation
+                extracted_email = ExtractedEmail(
+                    evidence_id="pipeline-extract",
+                    extraction_timestamp=email_date or "",
+                    received_chain=received_hops,
+                    from_header=email_from,
+                    to_header=email_to,
+                    subject_raw=email_subject,
+                    date_raw=email_date,
+                    message_id=message_id,
+                    auth_results_raw=auth_results_raw,
+                    received_spf_raw=msg.get('Received-SPF'),
+                    dkim_signature_raws=dkim_signatures,
+                    content_type_raw=msg.get('Content-Type'),
+                    charset_raw=email_charset,
+                )
+
+                dkim_valid = dkim_verification.get("dkim_valid", False) if dkim_verification else False
+
+                # Perform authentication evaluation
+                auth_result = evaluate_email_authentication(
+                    extracted=extracted_email,
+                    dkim_valid=dkim_valid,
+                )
+
+                authentication_evaluation = {
+                    # Overall verdict
+                    "verdict": auth_result.verdict,
+
+                    # SPF validation & alignment
+                    "spf_result": auth_result.spf.result,
+                    "spf_domain": auth_result.spf.domain,
+                    "spf_aligned": auth_result.spf_aligned.aligned,
+                    "spf_alignment_mode": auth_result.spf_aligned.mode,
+                    "spf_alignment_explanation": auth_result.spf_aligned.explanation,
+
+                    # DKIM validation & alignment
+                    "dkim_valid": auth_result.dkim_valid,
+                    "dkim_domain": auth_result.dkim_domain,
+                    "dkim_present": auth_result.dkim_present,
+                    "dkim_aligned": auth_result.dkim_aligned.aligned if auth_result.dkim_aligned else None,
+                    "dkim_alignment_mode": auth_result.dkim_aligned.mode if auth_result.dkim_aligned else None,
+                    "dkim_alignment_explanation": auth_result.dkim_aligned.explanation if auth_result.dkim_aligned else None,
+
+                    # DMARC evaluation
+                    "dmarc_result": auth_result.dmarc.result,
+                    "dmarc_policy": auth_result.dmarc.policy.policy if auth_result.dmarc.policy else None,
+                    "dmarc_spf_pass": auth_result.dmarc.spf_pass,
+                    "dmarc_spf_aligned": auth_result.dmarc.spf_aligned,
+                    "dmarc_dkim_pass": auth_result.dmarc.dkim_pass,
+                    "dmarc_dkim_aligned": auth_result.dmarc.dkim_aligned,
+
+                    # ARC (forwarding detection)
+                    "arc_valid": auth_result.arc.valid,
+                    "arc_chain_count": auth_result.arc.chain_count,
+
+                    # Overall explanation
+                    "explanation": auth_result.explanation,
+                }
+            except Exception as exc:
+                authentication_evaluation = {
+                    "error": f"authentication_evaluation_error:{type(exc).__name__}",
+                    "details": str(exc),
+                }
+
         analysis = ReceivedChainAnalysis(
             email_from=email_from,
             email_to=email_to,
@@ -388,9 +474,28 @@ class HeaderExtractor:
         
         return analysis
     
+    def _convert_received_details_to_hops(self, details: List[ReceivedHeaderDetail]) -> List[ReceivedHop]:
+        """Convert ReceivedHeaderDetail (pipeline format) to ReceivedHop (models format) for authentication layer."""
+        hops = []
+        for detail in details:
+            hop = ReceivedHop(
+                position=detail.hop_number - 1,  # Position is 0-indexed
+                raw_text=detail.raw_header,
+                ip_v4=detail.ip,
+                ip_v6=detail.ipv6,
+                by_hostname=detail.hostname,  # "by" clause maps to by_hostname
+                from_hostname=None,  # Would need additional parsing to extract "from" clause
+                timestamp_raw=detail.timestamp,
+                protocol=detail.protocol if detail.protocol != "UNKNOWN" else None,
+                tls=detail.authentication.get("tls", False),
+                parsing_confidence=detail.parsing_confidence,
+            )
+            hops.append(hop)
+        return hops
+
     def _parse_header(self, header_text: str, hop_number: int) -> ReceivedHeaderDetail:
         """Parse single Received header - SUPPORTS IPv4 AND IPv6"""
-        
+
         ipv4 = None
         ipv6 = None
         hostname = None
@@ -398,7 +503,7 @@ class HeaderExtractor:
         timestamp = None
         authentication = {}
         parsing_confidence = 0.5
-        
+
         # Extract IPv4 address — match bracketed [1.2.3.4] first, then bare IP after 'from'
         ipv4_match = self.patterns["ipv4_only"].search(header_text)
         if ipv4_match:
@@ -415,7 +520,7 @@ class HeaderExtractor:
                         ipv4 = None  # discard private IP, keep looking
             if ipv4:
                 parsing_confidence = 0.95
-        
+
         # Extract IPv6 address (priority: bracketed form first)
         ipv6_match = self.patterns["ipv6_with_brackets"].search(header_text)
         if ipv6_match:
@@ -425,7 +530,7 @@ class HeaderExtractor:
                 ipv6 = potential_ipv6
                 if not ipv4:
                     parsing_confidence = 0.95
-        
+
         # If no IPv4/IPv6 in brackets, try loose IPv6 pattern
         if not ipv6:
             ipv6_loose_match = self.patterns["ipv6_loose"].search(header_text.replace('[', '').replace(']', ''))
@@ -433,21 +538,21 @@ class HeaderExtractor:
                 potential_ipv6 = ipv6_loose_match.group(1)
                 if self._is_valid_ipv6(potential_ipv6) and ':' in potential_ipv6:
                     ipv6 = potential_ipv6
-        
+
         # Extract hostname
         by_match = self.patterns["by_clause"].search(header_text)
         if by_match:
             hostname = by_match.group(1)
-        
+
         # Extract protocol
         protocol_match = self.patterns["protocol"].search(header_text)
         if protocol_match:
             protocol = protocol_match.group(1).upper()
-        
+
         # Check for TLS
         if "TLS" in header_text or "encrypted" in header_text.lower():
             authentication["tls"] = True
-        
+
         return ReceivedHeaderDetail(
             hop_number=hop_number,
             ip=ipv4,
@@ -456,7 +561,7 @@ class HeaderExtractor:
             protocol=protocol,
             timestamp=timestamp,
             authentication=authentication,
-            raw_header=header_text[:100],
+            raw_header=header_text,
             parsing_confidence=parsing_confidence
         )
     
@@ -3513,7 +3618,53 @@ class CompletePipeline:
                 )
         else:
             print("  [AUTH] DKIM present: no")
-        
+
+        # ── EMAIL AUTHENTICATION VALIDATION (SPF, DMARC, ALIGNMENT) ──────────
+        auth_eval = getattr(header_analysis, "authentication_evaluation", {}) or {}
+        if auth_eval and not auth_eval.get("error"):
+            print(f"\n[EMAIL AUTHENTICATION]")
+            print(f"  Verdict: {auth_eval.get('verdict', 'unknown').upper()}")
+
+            # SPF validation & alignment
+            spf_result = auth_eval.get("spf_result", "unknown")
+            spf_aligned = auth_eval.get("spf_aligned")
+            spf_mode = auth_eval.get("spf_alignment_mode", "unknown")
+            print(f"  SPF: {spf_result.upper()} | Aligned ({spf_mode}): {spf_aligned}")
+            if auth_eval.get("spf_alignment_explanation"):
+                print(f"    → {auth_eval.get('spf_alignment_explanation')}")
+
+            # DKIM validation & alignment
+            dkim_valid = auth_eval.get("dkim_valid")
+            dkim_aligned = auth_eval.get("dkim_aligned")
+            dkim_mode = auth_eval.get("dkim_alignment_mode")
+            dkim_present = auth_eval.get("dkim_present")
+            if dkim_present:
+                print(f"  DKIM: {'VALID' if dkim_valid else 'INVALID'} | Aligned ({dkim_mode if dkim_mode else 'n/a'}): {dkim_aligned}")
+                if auth_eval.get("dkim_alignment_explanation"):
+                    print(f"    → {auth_eval.get('dkim_alignment_explanation')}")
+
+            # DMARC evaluation
+            dmarc_result = auth_eval.get("dmarc_result", "unknown")
+            dmarc_policy = auth_eval.get("dmarc_policy", "unknown")
+            dmarc_spf_pass = auth_eval.get("dmarc_spf_pass")
+            dmarc_spf_aligned = auth_eval.get("dmarc_spf_aligned")
+            dmarc_dkim_pass = auth_eval.get("dmarc_dkim_pass")
+            dmarc_dkim_aligned = auth_eval.get("dmarc_dkim_aligned")
+            print(f"  DMARC: {dmarc_result.upper()} (policy: {dmarc_policy})")
+            print(f"    SPF: pass={dmarc_spf_pass}, aligned={dmarc_spf_aligned}")
+            print(f"    DKIM: pass={dmarc_dkim_pass}, aligned={dmarc_dkim_aligned}")
+
+            # ARC for forwarding detection
+            arc_valid = auth_eval.get("arc_valid")
+            if arc_valid:
+                print(f"  ARC: VALID (chain_count: {auth_eval.get('arc_chain_count', 0)})")
+
+            # Summary
+            if auth_eval.get("explanation"):
+                print(f"  Summary: {auth_eval.get('explanation')}")
+        elif auth_eval and auth_eval.get("error"):
+            print(f"  [WARNING] Authentication evaluation error: {auth_eval.get('error')}")
+
         # WEBMAIL EXTRACTION: run immediately after header parsing on raw file
         webmail_extraction = None
         if WEBMAIL_V2_AVAILABLE:

@@ -77,15 +77,17 @@ from huntertrace.core.models.signals import (
     TrustTier,
     ValidationFlag,
 )
-from huntertrace.core.models.validated import (
-    AnomalyFinding,
-    AnomalyType,
-    ChainIntegrityReport,
-    ChainVerdict,
-    Severity,
-    ValidatedSignalBundle,
-    ValidationProvenance,
-)
+
+# Import validation types - but only if they exist elsewhere
+# The following import is trying to import from itself, which causes a circular import
+# This appears to be a typo in the original code
+# For now, we'll skip this import to avoid the circular dependency
+try:
+    # These should be defined in this same file (validated.py), not imported back from it
+    # So we'll just allow them to be defined below
+    pass
+except ImportError:
+    pass
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  CONSTANTS
