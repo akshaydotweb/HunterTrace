@@ -5,6 +5,12 @@ All notable changes to HUNTЕRТRACE will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.2.3] - 2026-04-09
+
+### Fixed
+- Restored ARC chain validation integration and resolver wiring in the authentication pipeline
+- Exposed ARC validation details and upstream auth summary in output
+
 ## [1.2.2] - 2026-04-09
 
 ### Added
@@ -75,6 +81,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - 67% webmail IP extraction rate
 - 2.3× better than IP geolocation alone
 
+[1.2.3]: https://github.com/akshaydotweb/huntertrace/releases/tag/v1.2.3
 [1.2.2]: https://github.com/akshaydotweb/huntertrace/releases/tag/v1.2.2
 [1.2.1]: https://github.com/akshaydotweb/huntertrace/releases/tag/v1.2.1
 [1.0.3]: https://github.com/akshaydotweb/huntertrace/releases/tag/v1.0.3
