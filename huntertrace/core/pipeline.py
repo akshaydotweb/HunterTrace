@@ -399,6 +399,11 @@ class HeaderExtractor:
                     auth_results_raw=auth_results_raw,
                     received_spf_raw=msg.get('Received-SPF'),
                     dkim_signature_raws=dkim_signatures,
+                    arc_headers={
+                        "arc-seal": msg.get_all("ARC-Seal", []) or [],
+                        "arc-message-signature": msg.get_all("ARC-Message-Signature", []) or [],
+                        "arc-authentication-results": msg.get_all("ARC-Authentication-Results", []) or [],
+                    },
                     content_type_raw=msg.get('Content-Type'),
                     charset_raw=email_charset,
                 )
@@ -409,11 +414,14 @@ class HeaderExtractor:
                 auth_result = evaluate_email_authentication(
                     extracted=extracted_email,
                     dkim_valid=dkim_valid,
+                    dkim_summary=dkim_verification,
                 )
 
                 authentication_evaluation = {
                     # Overall verdict
                     "verdict": auth_result.verdict,
+                    "auth_score": auth_result.auth_score,
+                    "auth_score_explanation": auth_result.auth_score_explanation,
 
                     # SPF validation & alignment
                     "spf_result": auth_result.spf.result,
@@ -424,6 +432,8 @@ class HeaderExtractor:
 
                     # DKIM validation & alignment
                     "dkim_valid": auth_result.dkim_valid,
+                    "dkim_status": auth_result.dkim_status,
+                    "dkim_failure_reason": auth_result.dkim_failure_reason,
                     "dkim_domain": auth_result.dkim_domain,
                     "dkim_present": auth_result.dkim_present,
                     "dkim_aligned": auth_result.dkim_aligned.aligned if auth_result.dkim_aligned else None,
@@ -432,6 +442,7 @@ class HeaderExtractor:
 
                     # DMARC evaluation
                     "dmarc_result": auth_result.dmarc.result,
+                    "dmarc_status": auth_result.dmarc_status,
                     "dmarc_policy": auth_result.dmarc.policy.policy if auth_result.dmarc.policy else None,
                     "dmarc_spf_pass": auth_result.dmarc.spf_pass,
                     "dmarc_spf_aligned": auth_result.dmarc.spf_aligned,

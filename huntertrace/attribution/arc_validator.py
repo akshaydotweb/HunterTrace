@@ -43,9 +43,9 @@ class ARCValidator:
 
             if "ARC-Seal:" in header:
                 seal_count += 1
-            elif "ARC-Message-Signature:" in header:
+            if "ARC-Message-Signature:" in header:
                 msg_sig_count += 1
-            elif "ARC-Authentication-Results:" in header:
+            if "ARC-Authentication-Results:" in header:
                 auth_results_count += 1
 
         chain_count = len(instances)
@@ -57,7 +57,7 @@ class ARCValidator:
                 return False, chain_count, "non_sequential_instance_numbers"
 
         # Verify we have matching counts (should be 1:1:1 or 1:1 for seal)
-        if not (seal_count > 0 and msg_sig_count > 0):
+        if not (seal_count > 0 and msg_sig_count > 0 and auth_results_count > 0):
             return False, chain_count, "missing_arc_chain_components"
 
         # Basic validation passed
@@ -79,14 +79,18 @@ class ARCValidator:
         # Find ARC-Authentication-Results for this instance
         for instance, header in arc_headers.items():
             if instance == latest_instance and "ARC-Authentication-Results:" in header:
-                # Extract the result (pass, fail, neutral, none)
-                match = re.search(
-                    r";\s*(pass|fail|neutral|none)\s*(?:;|$)",
-                    header,
-                    re.IGNORECASE
-                )
+                header_lower = header.lower()
+                if re.search(r"\b(dkim|spf|dmarc)=pass\b", header_lower):
+                    return "pass"
+                if re.search(r"\b(dkim|spf|dmarc)=fail\b", header_lower):
+                    return "fail"
+                if re.search(r"\b(dkim|spf|dmarc)=neutral\b", header_lower):
+                    return "neutral"
+                if re.search(r"\b(dkim|spf|dmarc)=none\b", header_lower):
+                    return "none"
+                match = re.search(r";\s*(pass|fail|neutral|none)\b", header_lower)
                 if match:
-                    return match.group(1).lower()
+                    return match.group(1)
 
         return None
 
