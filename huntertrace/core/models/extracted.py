@@ -177,6 +177,10 @@ class ExtractedEmail:
         All verbatim "DKIM-Signature:" header values found.
         Multiple signatures are possible (e.g. Gmail adds its own).
 
+    raw_bytes : Optional[bytes]
+        Original RFC 5322 message bytes. Used for cryptographic
+        authentication (e.g. DKIM/ARC) verification.
+
     x_headers : Dict[str, List[str]]
         All "X-*" extended headers found in the email.
         Key: normalised header name (lowercase, hyphens preserved).
@@ -184,6 +188,12 @@ class ExtractedEmail:
                multiple times).
         Complete — nothing is pre-filtered.
         All values are UNTRUSTED by default.
+
+    arc_headers : Dict[str, List[str]]
+        All "ARC-*" headers found in the email.
+        Key: normalised header name (lowercase, hyphens preserved).
+        Value: list of all values for that header name.
+        These are UNTRUSTED by default until ARC validation succeeds.
 
     unique_ipv4 : List[str]
         Deduplicated list of all public IPv4 addresses found across
@@ -241,9 +251,11 @@ class ExtractedEmail:
     auth_results_raw:     Optional[str] = None
     received_spf_raw:     Optional[str] = None
     dkim_signature_raws:  List[str]     = field(default_factory=list)
+    raw_bytes:            Optional[bytes] = None
 
     # ── Extended headers (complete) ───────────────────────────────────────────
     x_headers:            Dict[str, List[str]] = field(default_factory=dict)
+    arc_headers:          Dict[str, List[str]] = field(default_factory=dict)
 
     # ── Deduplicated address lists ────────────────────────────────────────────
     unique_ipv4:          List[str] = field(default_factory=list)

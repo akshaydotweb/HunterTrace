@@ -10,7 +10,7 @@
 [![Python Versions](https://img.shields.io/pypi/pyversions/huntertrace.svg)](https://pypi.org/project/huntertrace/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Current release: 1.2.1
+Current release: 1.2.2
 
 ## Overview
 
@@ -31,7 +31,7 @@ Traditional email forensics relies on IP geolocation alone (~31% accuracy). HUNT
 | Infrastructure reuse | Graph centrality across campaigns | Yes |
 | Hop chain forgery | Received header consistency | Partial |
 | VPN exit node mapping | ASN + hosting provider classification | N/A |
-| SPF/DKIM/DMARC | Authentication results | Partial |
+| SPF/DKIM/DMARC/ARC | Authentication results (incl. ARC chain validation) | Partial |
 | Webmail provider | Header fingerprinting (Gmail/Yahoo/Outlook) | Yes |
 
 ## Architecture

@@ -23,11 +23,11 @@ No external dependencies beyond stdlib + dnspython (already required).
 from __future__ import annotations
 
 import json
-import re
-from dataclasses import asdict, dataclass, field
-from pathlib import Path
-from typing import Dict, List, Optional, Protocol, Sequence, Tuple
 import os
+import re
+from dataclasses import asdict, dataclass, field, replace
+from pathlib import Path
+from typing import Any, Dict, List, Mapping, Optional, Protocol, Sequence, Tuple
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  EXTERNAL IMPORTS
@@ -160,6 +160,7 @@ def extract_auth_fields(extracted: ExtractedEmail) -> AuthenticationFields:
 
     # Extract DKIM domain
     dkim_domain = _extract_dkim_domain(extracted.dkim_signature_raws)
+    dkim_domains = _extract_dkim_domains(extracted.dkim_signature_raws)
 
     # Get connecting IP (first hop = sender-side = position 0)
     connecting_ip = ""
@@ -168,13 +169,15 @@ def extract_auth_fields(extracted: ExtractedEmail) -> AuthenticationFields:
         connecting_ip = first_hop.ip_v4 or first_hop.ip_v6 or ""
 
     # Extract ARC headers (if present)
-    arc_headers = _extract_arc_headers(extracted.x_headers)
+    arc_source = getattr(extracted, "arc_headers", None) or extracted.x_headers
+    arc_headers = _extract_arc_headers(arc_source)
 
     return AuthenticationFields(
         from_domain=from_domain,
         return_path_domain=return_path_domain,
         connecting_ip=connecting_ip,
         dkim_domain=dkim_domain,
+        dkim_domains=dkim_domains,
         received_chain=extracted.received_chain,
         arc_headers=arc_headers,
         auth_results_hints=extracted.auth_results_raw,
@@ -234,6 +237,25 @@ def _extract_dkim_domain(dkim_signature_raws: List[str]) -> Optional[str]:
     return None
 
 
+def _extract_dkim_domains(dkim_signature_raws: List[str]) -> Tuple[str, ...]:
+    """Extract all d= tags from DKIM-Signature headers."""
+    domains: List[str] = []
+    for raw in dkim_signature_raws:
+        match = re.search(r"(?:^|;)\s*d\s*=\s*([^\s;]+)", raw, re.IGNORECASE)
+        if match:
+            domain = match.group(1).strip().rstrip(".")
+            domains.append(domain.lower())
+    return tuple(domains)
+
+
+def _format_arc_header_name(key: str) -> str:
+    normalized = key.strip().lower()
+    if not normalized.startswith("arc-"):
+        return key.strip()
+    parts = normalized.split("-")
+    return "ARC-" + "-".join(part.capitalize() for part in parts[1:])
+
+
 def _extract_arc_headers(x_headers: Dict[str, List[str]]) -> Dict[str, str]:
     """Extract ARC-* headers by instance number."""
     arc_headers: Dict[str, str] = {}
@@ -246,9 +268,152 @@ def _extract_arc_headers(x_headers: Dict[str, List[str]]) -> Dict[str, str]:
                 match = re.search(r"i\s*=\s*(\d+)", value, re.IGNORECASE)
                 if match:
                     instance = match.group(1)
-                    arc_headers[instance] = value
+                    header_name = _format_arc_header_name(key)
+                    header_value = value
+                    if not value.lower().startswith("arc-"):
+                        header_value = f"{header_name}: {value}"
+                    if instance in arc_headers:
+                        arc_headers[instance] = arc_headers[instance] + "\n" + header_value
+                    else:
+                        arc_headers[instance] = header_value
 
     return arc_headers
+
+
+def _normalize_dkim_summary(dkim_summary: Optional[object]) -> Optional[Mapping[str, Any]]:
+    if dkim_summary is None:
+        return None
+    if isinstance(dkim_summary, Mapping):
+        return dkim_summary
+    if hasattr(dkim_summary, "to_dict"):
+        return dkim_summary.to_dict()  # type: ignore[no-any-return]
+    return None
+
+
+def _select_dkim_alignment(
+    domains: Sequence[str],
+    from_domain: str,
+    mode: str,
+) -> Optional[DKIMAlignmentResult]:
+    if not from_domain:
+        return None
+    first_unaligned: Optional[DKIMAlignmentResult] = None
+    for domain in domains:
+        alignment = check_dkim_alignment(domain, from_domain, mode=mode)
+        if alignment is None:
+            continue
+        if alignment.aligned:
+            return alignment
+        if first_unaligned is None:
+            first_unaligned = alignment
+    return first_unaligned
+
+
+def _classify_dkim(
+    signatures: Sequence[Mapping[str, Any]],
+    dkim_present: bool,
+    from_domain: str,
+    mode: str,
+    fallback_domains: Sequence[str],
+) -> Tuple[str, Optional[str], Optional[DKIMAlignmentResult], Optional[str]]:
+    valid_domains = [
+        str(sig.get("domain"))
+        for sig in signatures
+        if sig.get("dkim_valid") is True and sig.get("domain")
+    ]
+    if valid_domains:
+        alignment = _select_dkim_alignment(valid_domains, from_domain, mode)
+        selected_domain = alignment.dkim_domain if alignment else valid_domains[0]
+        if alignment and alignment.aligned:
+            return "pass_aligned", None, alignment, selected_domain
+        return "pass_unaligned", None, alignment, selected_domain
+
+    if not dkim_present:
+        return "none", None, None, None
+
+    reasons = [
+        str(sig.get("failure_reason"))
+        for sig in signatures
+        if sig.get("failure_reason")
+    ]
+    if "body_hash_mismatch" in reasons:
+        return "fail_modified", "body_hash_mismatch", None, None
+
+    missing_key_reasons = {"missing_key", "invalid_key_record", "invalid_key"}
+    if reasons and all(reason in missing_key_reasons for reason in reasons):
+        return "none", "missing_key", None, None
+
+    if reasons:
+        return "fail_invalid", reasons[0], None, None
+
+    fallback_domain = fallback_domains[0] if fallback_domains else None
+    return "fail_invalid", None, None, fallback_domain
+
+
+def _classify_dmarc_status(
+    spf: SPFEvaluation,
+    spf_aligned: SPFAlignmentResult,
+    dkim_status: str,
+    dkim_aligned: Optional[DKIMAlignmentResult],
+    dmarc: DMARCEvaluation,
+    arc: ARCValidation,
+) -> str:
+    spf_pass = spf.result == "pass"
+    dkim_pass = dkim_status in {"pass_aligned", "pass_unaligned"}
+    dkim_aligned_bool = dkim_aligned.aligned if dkim_aligned else False
+
+    if dmarc.result == "pass":
+        return "pass_strong"
+
+    if arc.valid and arc.latest_result == "pass":
+        return "fail_forwarded"
+
+    if spf_pass or dkim_pass:
+        return "pass_weak"
+
+    if (not spf_pass or not spf_aligned.aligned) and (not dkim_pass or not dkim_aligned_bool):
+        return "fail_spoofed"
+
+    return "fail_spoofed"
+
+
+def _arc_is_partial_or_absent(arc: ARCValidation) -> bool:
+    if arc.chain_count == 0:
+        return True
+    return arc.failure_reason in {"no_arc_headers", "missing_arc_chain_components"}
+
+
+def _score_authentication(
+    dmarc: DMARCEvaluation,
+    arc: ARCValidation,
+    spf: SPFEvaluation,
+    spf_aligned: bool,
+    dkim_status: str,
+    dkim_aligned: bool,
+) -> Tuple[float, str]:
+    """Compute a conservative auth score using multiple signals."""
+    spf_pass = spf.result == "pass"
+    strong_auth = dkim_status == "pass_aligned" or (spf_pass and spf_aligned)
+    weak_auth = (
+        dkim_status == "pass_unaligned"
+        or spf_pass
+        or (dkim_status == "fail_modified" and spf_pass)
+    )
+    forwarded = dmarc.dmarc_status == "fail_forwarded" and arc.valid and arc.latest_result == "pass"
+    spoof_indicators = (
+        dmarc.dmarc_status == "fail_spoofed"
+        or (dkim_status == "fail_invalid" and not spf_pass and arc.chain_count == 0)
+    )
+
+    if spoof_indicators and not strong_auth:
+        return -0.7, "Multiple authentication failures indicate likely spoofing"
+    if strong_auth:
+        return 0.6, "Aligned SPF or DKIM passed; strong authentication signal"
+    if forwarded:
+        return 0.0, "Forwarded path detected; authentication score left neutral"
+    if weak_auth:
+        return 0.2, "Partial authentication pass without alignment; weak positive signal"
+    return 0.0, "Insufficient authentication signal strength for scoring"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -452,20 +617,22 @@ def evaluate_dmarc(
 def validate_arc(
     raw_message: bytes,
     fields: AuthenticationFields,
+    resolver: Optional[TXTResolver] = None,
+    config: Optional[AuthenticationConfig] = None,
 ) -> ARCValidation:
     """Validate ARC chain using phase 7 implementation."""
     validator = ARCValidator()
     valid, chain_count, explanation = validator.validate(fields.arc_headers)
-
-    latest_result = None
-    if valid:
-        latest_result = validator.extract_arc_result(fields.arc_headers)
+    latest_result = validator.extract_arc_result(fields.arc_headers)
+    failure_reason = None if valid else explanation
 
     return ARCValidation(
-        valid=valid,
-        chain_count=chain_count,
+        valid=result.valid,
+        chain_count=result.chain_count,
         latest_result=latest_result,
-        explanation=explanation
+        explanation=explanation,
+        failure_reason=failure_reason,
+        forwarded=False,
     )
 
 
@@ -477,7 +644,9 @@ def validate_arc(
 def evaluate_email_authentication(
     extracted: ExtractedEmail,
     dkim_valid: bool,
+    dkim_summary: Optional[Mapping[str, Any]] = None,
     resolver: Optional[TXTResolver] = None,
+    arc_resolver: Optional[TXTResolver] = None,
     config: Optional[AuthenticationConfig] = None,
 ) -> AuthenticationResult:
     """
@@ -510,74 +679,160 @@ def evaluate_email_authentication(
         mode=config.spf_alignment_mode
     )
 
-    # 4. Check DKIM alignment
-    dkim_aligned = check_dkim_alignment(
-        fields.dkim_domain,
-        fields.from_domain,
-        mode=config.dkim_alignment_mode
-    ) if dkim_valid else None
+    # 4. Check DKIM alignment with multi-signature support
+    summary = _normalize_dkim_summary(dkim_summary)
+    summary_signatures: Tuple[Mapping[str, Any], ...] = ()
+    if summary and isinstance(summary.get("signatures"), list):
+        summary_signatures = tuple(
+            sig for sig in summary.get("signatures", [])
+            if isinstance(sig, Mapping)
+        )
+    dkim_present = bool(summary_signatures) or bool(extracted.dkim_signature_raws)
+    dkim_status, dkim_failure_reason, dkim_aligned, selected_domain = _classify_dkim(
+        signatures=summary_signatures,
+        dkim_present=dkim_present,
+        from_domain=fields.from_domain,
+        mode=config.dkim_alignment_mode,
+        fallback_domains=fields.dkim_domains,
+    )
+    dkim_valid_effective = bool(summary.get("dkim_valid")) if summary else bool(dkim_valid)
+    if dkim_status in {"pass_aligned", "pass_unaligned"}:
+        dkim_valid_effective = True
+    if dkim_status in {"fail_modified", "fail_invalid"}:
+        dkim_valid_effective = False
 
     # 5. Evaluate DMARC
     dmarc = evaluate_dmarc(
         spf,
         spf_aligned,
-        dkim_valid,
+        dkim_valid_effective,
         dkim_aligned,
         fields,
         resolver=resolver
     )
 
     # 6. Validate ARC
-    arc = validate_arc(extracted.raw_bytes if hasattr(extracted, 'raw_bytes') else b"", fields)
+    arc = validate_arc(extracted.raw_bytes if hasattr(extracted, "raw_bytes") else b"", fields)
 
-    # 7. Determine verdict
-    verdict, summary = _determine_verdict(
+    dmarc_status = _classify_dmarc_status(
+        spf=spf,
+        spf_aligned=spf_aligned,
+        dkim_status=dkim_status,
+        dkim_aligned=dkim_aligned,
         dmarc=dmarc,
         arc=arc,
+    )
+    dmarc = replace(dmarc, dmarc_status=dmarc_status)
+
+    # 7. Determine verdict
+    verdict, summary, forwarded = _determine_verdict(
+        dmarc=dmarc,
+        arc=arc,
+        spf=spf,
         spf_aligned=spf_aligned.aligned,
+        dkim_status=dkim_status,
         dkim_aligned=dkim_aligned.aligned if dkim_aligned else False
     )
+    auth_score, auth_score_explanation = _score_authentication(
+        dmarc=dmarc,
+        arc=arc,
+        spf=spf,
+        spf_aligned=spf_aligned.aligned,
+        dkim_status=dkim_status,
+        dkim_aligned=dkim_aligned.aligned if dkim_aligned else False,
+    )
+
+    if forwarded:
+        arc = ARCValidation(
+            valid=arc.valid,
+            chain_count=arc.chain_count,
+            latest_result=arc.latest_result,
+            explanation=arc.explanation,
+            failure_reason=arc.failure_reason,
+            forwarded=True,
+        )
+
+    if forwarded:
+        arc = ARCValidation(
+            valid=arc.valid,
+            chain_count=arc.chain_count,
+            latest_result=arc.latest_result,
+            explanation=arc.explanation,
+            failure_reason=arc.failure_reason,
+            failed_instance=arc.failed_instance,
+            upstream_auth_results=arc.upstream_auth_results,
+            upstream_summary=arc.upstream_summary,
+            forwarded=True,
+        )
 
     return AuthenticationResult(
         spf=spf,
         spf_aligned=spf_aligned,
-        dkim_present=len(extracted.dkim_signature_raws) > 0,
-        dkim_valid=dkim_valid,
-        dkim_domain=fields.dkim_domain,
+        dkim_present=dkim_present,
+        dkim_valid=dkim_valid_effective,
+        dkim_status=dkim_status,
+        dkim_failure_reason=dkim_failure_reason,
+        dkim_domain=selected_domain or fields.dkim_domain,
         dkim_aligned=dkim_aligned,
         dmarc=dmarc,
+        dmarc_status=dmarc_status,
         arc=arc,
         verdict=verdict,
-        explanation=summary
+        explanation=summary,
+        auth_score=auth_score,
+        auth_score_explanation=auth_score_explanation,
     )
 
 
 def _determine_verdict(
     dmarc: DMARCEvaluation,
     arc: ARCValidation,
+    spf: SPFEvaluation,
     spf_aligned: bool,
+    dkim_status: str,
     dkim_aligned: bool,
-) -> Tuple[str, str]:
+) -> Tuple[str, str, bool]:
     """Determine overall verdict and summary explanation."""
-    if dmarc.result == "pass":
-        return "pass", "Message passed DMARC authentication"
+    spf_pass = spf.result == "pass"
+    arc_claims_pass = arc.latest_result == "pass"
 
-    if dmarc.result == "fail" and arc.valid:
+    if dkim_status == "pass_aligned":
+        return "pass", "DKIM aligned signature passed; trusted regardless of SPF", False
+
+    if spf_pass and spf_aligned and dkim_status in {"none", "pass_unaligned", "fail_modified"}:
+        return "pass", "SPF passed and aligned; DKIM not required for acceptance", False
+
+    if dmarc.dmarc_status == "fail_forwarded" and arc.valid and arc.latest_result == "pass":
         return "forwarded", (
-            f"Message failed DMARC but ARC chain is valid; "
-            f"message was likely forwarded by a trusted relay"
-        )
+            "DMARC failed but ARC chain is valid and upstream auth passed; "
+            "message classified as forwarded"
+        ), True
 
-    if dmarc.result == "fail" and not arc.valid:
-        # Distinguish between alignment failures vs outright failures
-        if not spf_aligned and not dkim_aligned:
-            return "fail", (
-                f"Message failed DMARC: neither SPF nor DKIM were aligned with From domain. "
-                f"This may indicate spoofing."
-            )
-        return "suspicious", f"Message failed DMARC: {dmarc.explanation}"
+    if dkim_status == "fail_modified" and spf_pass:
+        return "pass", (
+            "DKIM failed due to body modification (mailing list/footer); SPF passed, "
+            "not treated as spoof"
+        ), False
 
-    return "unknown", "Could not determine authentication verdict"
+    if not arc.valid and arc_claims_pass and not _arc_is_partial_or_absent(arc):
+        return "suspicious", (
+            "ARC chain invalid but claims upstream pass; possible header injection"
+        ), False
+
+    if dmarc.dmarc_status == "pass_weak":
+        return "suspicious", (
+            "SPF or DKIM passed without alignment; DMARC failed but weak authentication present"
+        ), False
+
+    if (not spf_pass or not spf_aligned) and dkim_status == "fail_invalid" and arc.chain_count == 0:
+        return "fail", (
+            "SPF failed and DKIM signature invalid with no ARC chain; spoofing likely"
+        ), False
+
+    if dmarc.result == "fail":
+        return "suspicious", f"Message failed DMARC: {dmarc.explanation}", False
+
+    return "pass", "Message passed authentication checks", False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -654,6 +909,17 @@ def build_authentication_signals(
             auth_result.dkim_valid,
             f"DKIM signature present and {'valid' if auth_result.dkim_valid else 'invalid'}"
         ))
+        signals.append(_make_auth_signal(
+            "dkim_status",
+            auth_result.dkim_status,
+            f"DKIM status: {auth_result.dkim_status}"
+        ))
+        if auth_result.dkim_failure_reason:
+            signals.append(_make_auth_signal(
+                "dkim_failure_reason",
+                auth_result.dkim_failure_reason,
+                f"DKIM failure reason: {auth_result.dkim_failure_reason}"
+            ))
         if auth_result.dkim_aligned is not None:
             signals.append(_make_auth_signal(
                 "dkim_aligned",
@@ -666,6 +932,11 @@ def build_authentication_signals(
         "dmarc_result",
         auth_result.dmarc.result,
         auth_result.dmarc.explanation
+    ))
+    signals.append(_make_auth_signal(
+        "dmarc_status",
+        auth_result.dmarc_status,
+        f"DMARC status: {auth_result.dmarc_status}"
     ))
     if auth_result.dmarc.policy:
         signals.append(_make_auth_signal(
@@ -681,5 +952,23 @@ def build_authentication_signals(
             auth_result.arc.valid,
             f"ARC chain with {auth_result.arc.chain_count} instance(s): {auth_result.arc.explanation}"
         ))
+        if auth_result.arc.forwarded:
+            signals.append(_make_auth_signal(
+                "arc_forwarded",
+                True,
+                "ARC chain valid with upstream pass; message classified as forwarded"
+            ))
+
+    signals.append(_make_auth_signal(
+        "auth_verdict",
+        auth_result.verdict,
+        auth_result.explanation
+    ))
+
+    signals.append(_make_auth_signal(
+        "auth_score",
+        auth_result.auth_score,
+        auth_result.auth_score_explanation
+    ))
 
     return signals
