@@ -116,6 +116,12 @@ from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime
 from collections import defaultdict
 
+from huntertrace.atlas.provenance import (
+    ProvenanceClass,
+    derive_provenance,
+    trust_weight_for,
+)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  CONSTANTS — Signal likelihood tables
@@ -207,6 +213,26 @@ SIGNAL_SOURCE_RELIABILITY: Dict[str, Dict[str, float]] = {
         "charset_region":        1.00,
         "dns_infra_country":     1.00,
     },
+}
+
+_SIGNAL_HEADER_HINTS: Dict[str, str] = {
+    "timezone_offset": "Date",
+    "send_hour_local": "Date",
+    "timezone_region": "Date",
+    "webmail_provider": "Received",
+    "geolocation_country": "Received",
+    "vpn_exit_country": "Received",
+    "isp_country": "Received",
+    "real_ip_country": "Received",
+    "dns_infra_country": "Received",
+    "ipv6_country": "Received",
+    "charset_region": "Content-Type",
+    "subject_language": "Subject",
+    "dkim_valid": "DKIM-Signature",
+    "dkim_present": "DKIM-Signature",
+    "dkim_domain": "DKIM-Signature",
+    "dkim_selector": "DKIM-Signature",
+    "dkim_failure_reason": "DKIM-Signature",
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -434,6 +460,7 @@ class AttributionResult:
     # Layer 1: Canarytoken
     canarytoken_active:  bool  = False
     reliability_mode:    str   = "no_obfuscation"
+    signal_provenance:   Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     def summary(self) -> str:
         """One-line human summary."""
@@ -483,6 +510,16 @@ class AttributionResult:
         lines.append("")
         lines.append(f"  Signals used ({len(self.signals_used)}): "
                      f"{', '.join(self.signals_used) or 'none'}")
+        if self.signal_provenance:
+            lines.append("  Signal provenance:")
+            for sig in self.signals_used:
+                meta = self.signal_provenance.get(sig)
+                if not meta:
+                    continue
+                header = meta.get("source_header") or "unknown"
+                prov = meta.get("provenance_class") or "unknown"
+                weight = meta.get("trust_weight_base")
+                lines.append(f"    {sig}: {header} → {prov} (weight={weight:.2f})")
         if self.signals_missing:
             lines.append(f"  Missing signals: {', '.join(self.signals_missing)}")
         lines.append("=" * 68)
@@ -518,6 +555,7 @@ class AttributionResult:
             "conflict_regions":    self.conflict_regions,
             "canarytoken_active":  self.canarytoken_active,
             "reliability_mode":    self.reliability_mode,
+            "signal_provenance":   self.signal_provenance,
         }
 
 
@@ -1619,9 +1657,17 @@ class AttributionEngine:
         attribute_from_profile passes _corroboration_scale(n_obs).
         """
 
+        provenance_meta = self._build_provenance_meta(signals)
+
         # ── Layer 5: Signal reliability weighting ────────────────────────
         reliability_mode = self._reliability.get_reliability_mode(obfuscation, signals)
         effective_lrs    = self._reliability.get_effective_lrs(reliability_mode)
+
+        effective_lrs = self._apply_provenance_weights(
+            signals=signals,
+            effective_lrs=effective_lrs,
+            provenance_meta=provenance_meta,
+        )
 
         if self.verbose and reliability_mode != "no_obfuscation":
             zeroed = [s for s, lr in effective_lrs.items() if lr == 0.0]
@@ -1738,6 +1784,7 @@ class AttributionEngine:
             conflict_regions    = ff.conflict_regions,
             canarytoken_active  = canarytoken_active,
             reliability_mode    = reliability_mode,
+            signal_provenance   = provenance_meta,
         )
 
     def _empty_result(self) -> "AttributionResult":
@@ -1765,7 +1812,43 @@ class AttributionEngine:
             conflict_regions    = [],
             canarytoken_active  = False,
             reliability_mode    = "no_obfuscation",
+            signal_provenance   = {},
         )
+
+    def _build_provenance_meta(self, signals: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+        meta: Dict[str, Dict[str, Any]] = {}
+        for sig_name in signals:
+            hint = _SIGNAL_HEADER_HINTS.get(sig_name)
+            header, provenance, trust_weight = derive_provenance(
+                signal_name=sig_name,
+                source_hint=hint,
+            )
+            meta[sig_name] = {
+                "source_header": header or hint,
+                "provenance_class": provenance.value,
+                "trust_weight_base": float(trust_weight),
+            }
+        return meta
+
+    def _apply_provenance_weights(
+        self,
+        *,
+        signals: Dict[str, Any],
+        effective_lrs: Dict[str, float],
+        provenance_meta: Dict[str, Dict[str, Any]],
+    ) -> Dict[str, float]:
+        adjusted = dict(effective_lrs)
+        dkim_valid = bool(signals.get("dkim_valid"))
+        for sig_name, lr in effective_lrs.items():
+            meta = provenance_meta.get(sig_name)
+            if not meta:
+                continue
+            trust_weight = float(meta.get("trust_weight_base", trust_weight_for(ProvenanceClass.sender_controlled)))
+            adjusted_lr = lr * trust_weight
+            if dkim_valid and meta.get("provenance_class") == ProvenanceClass.sender_controlled.value:
+                adjusted_lr *= 0.2
+            adjusted[sig_name] = adjusted_lr
+        return adjusted
 
     def reset_campaign(self, actor_id: str) -> None:
         """Clear accumulated state for a campaign (call between batch runs)."""

@@ -22,6 +22,7 @@ scoring:
   evidence_penalties:
     non_attributable: 0.1
     anomaly: 0.05
+    relay_disagreement: 0.12
   confidence_cap: 0.8
 
 inference:

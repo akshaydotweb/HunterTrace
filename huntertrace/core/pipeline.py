@@ -4231,6 +4231,15 @@ class CompletePipeline:
                     f"{', '.join(bayes_result.signals_used) if bayes_result.signals_used else 'none'}"
                 )
 
+                if getattr(bayes_result, "signal_provenance", None) and bayes_result.signals_used:
+                    print("  Signal provenance:")
+                    for sig in bayes_result.signals_used:
+                        meta = bayes_result.signal_provenance.get(sig, {})
+                        header = meta.get("source_header") or "unknown"
+                        prov = meta.get("provenance_class") or "unknown"
+                        weight = meta.get("trust_weight_base", 0.0)
+                        print(f"    {sig}: {header} → {prov} (weight={weight:.2f})")
+
                 # ── False flag warning ────────────────────────────────────
                 if bayes_result.false_flag_warning:
                     print(
