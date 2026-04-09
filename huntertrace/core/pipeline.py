@@ -198,6 +198,9 @@ class ReceivedHeaderDetail:
     hop_number: int
     ip: Optional[str]  # IPv4 address
     hostname: Optional[str] = None
+    from_hostname: Optional[str] = None
+    by_hostname: Optional[str] = None
+    ehlo: Optional[str] = None
     protocol: str = "UNKNOWN"
     timestamp: Optional[str] = None
     authentication: Dict = field(default_factory=dict)
@@ -246,7 +249,10 @@ class HeaderExtractor:
                 re.IGNORECASE
             ),  # IPv6 without brackets
             "protocol": re.compile(r'with\s+(ESMTP|SMTP|HTTP|HTTPS|LMTP)', re.IGNORECASE),
+            "from_clause": re.compile(r'\bfrom\s+([^\s\(\[]+)', re.IGNORECASE),
             "by_clause": re.compile(r'by\s+(\S+)', re.IGNORECASE),
+            "ehlo": re.compile(r'(?:helo=|ehlo\s+)([^\s\)]+)', re.IGNORECASE),
+            "timestamp": re.compile(r';\s*(.+)$', re.IGNORECASE),
         }
         self.dkim_resolver = dkim_resolver
     
@@ -501,8 +507,8 @@ class HeaderExtractor:
                 raw_text=detail.raw_header,
                 ip_v4=detail.ip,
                 ip_v6=detail.ipv6,
-                by_hostname=detail.hostname,  # "by" clause maps to by_hostname
-                from_hostname=None,  # Would need additional parsing to extract "from" clause
+                by_hostname=detail.by_hostname or detail.hostname,
+                from_hostname=detail.from_hostname,
                 timestamp_raw=detail.timestamp,
                 protocol=detail.protocol if detail.protocol != "UNKNOWN" else None,
                 tls=detail.authentication.get("tls", False),
@@ -517,6 +523,9 @@ class HeaderExtractor:
         ipv4 = None
         ipv6 = None
         hostname = None
+        from_hostname = None
+        by_hostname = None
+        ehlo = None
         protocol = "UNKNOWN"
         timestamp = None
         authentication = {}
@@ -561,11 +570,24 @@ class HeaderExtractor:
         by_match = self.patterns["by_clause"].search(header_text)
         if by_match:
             hostname = by_match.group(1)
+            by_hostname = hostname
+
+        from_match = self.patterns["from_clause"].search(header_text)
+        if from_match:
+            from_hostname = from_match.group(1)
+
+        ehlo_match = self.patterns["ehlo"].search(header_text)
+        if ehlo_match:
+            ehlo = ehlo_match.group(1)
 
         # Extract protocol
         protocol_match = self.patterns["protocol"].search(header_text)
         if protocol_match:
             protocol = protocol_match.group(1).upper()
+
+        ts_match = self.patterns["timestamp"].search(header_text)
+        if ts_match:
+            timestamp = ts_match.group(1).strip()
 
         # Check for TLS
         if "TLS" in header_text or "encrypted" in header_text.lower():
@@ -576,6 +598,9 @@ class HeaderExtractor:
             ip=ipv4,
             ipv6=ipv6,
             hostname=hostname,
+            from_hostname=from_hostname,
+            by_hostname=by_hostname,
+            ehlo=ehlo,
             protocol=protocol,
             timestamp=timestamp,
             authentication=authentication,

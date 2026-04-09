@@ -63,6 +63,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
+from huntertrace.analysis.correlation import validate_received_chain_semantics
+
 # ── Internal import — scanner.py is the source of truth for all 8 detectors ──
 try:
     from huntertrace.forensics.scanner import (
@@ -204,6 +206,9 @@ class AttackerTechniqueProfile:
 
     scanned_at:             str
 
+    # Semantic validation of the Received: chain (optional)
+    semantic_profile:        Optional[Dict[str, Any]] = None
+
     @property
     def technique_count(self) -> int:
         return len(self.detected_techniques)
@@ -218,6 +223,7 @@ class AttackerTechniqueProfile:
             "composite_risk_score":     round(self.composite_risk_score, 3),
             "risk_label":               self.risk_label,
             "header_integrity_score":   round(self.header_integrity_score, 3),
+            "semantic_profile":         self.semantic_profile,
             "passive_attribution_blocked": self.passive_attribution_blocked,
             "canary_token_recommended": self.canary_token_recommended,
             "all_mitre_ids":            self.all_mitre_ids,
@@ -242,6 +248,16 @@ class AttackerTechniqueProfile:
               + ("  [OK — chain appears authentic]"
                  if self.header_integrity_score >= 0.85
                  else "  [WARNING — Received: chain may be forged]"))
+        if self.semantic_profile:
+            semantic_score = self.semantic_profile.get("chain_semantic_score")
+            flags = self.semantic_profile.get("anomaly_flags", [])
+            if semantic_score is not None:
+                print(
+                    f"  Header semantics: {semantic_score:.0%}"
+                    + ("" if semantic_score >= 0.85 else "  [WARNING — semantic anomalies detected]")
+                )
+            if flags:
+                print(f"  Semantic anomalies: {', '.join(flags[:4])}")
 
         if self.sending_method:
             sm = self.sending_method
@@ -397,6 +413,31 @@ class AttackerTechniqueProfiler:
         # Used by backtracking engine to discount Received: signals
         forgery_score = scan.hop_forgery.forgery_score if scan else 0.0
         header_integrity = max(0.0, 1.0 - forgery_score)
+        semantic_profile: Optional[Dict[str, Any]] = None
+        if header_analysis and getattr(header_analysis, "hops", None):
+            hop_chain = []
+            for hop in header_analysis.hops:
+                hop_chain.append(
+                    {
+                        "position": getattr(hop, "hop_number", 0),
+                        "from_hostname": getattr(hop, "from_hostname", None),
+                        "by_hostname": getattr(hop, "by_hostname", None) or getattr(hop, "hostname", None),
+                        "from_ip": getattr(hop, "ip", None) or getattr(hop, "ipv6", None),
+                        "timestamp_raw": getattr(hop, "timestamp", None),
+                        "protocol": getattr(hop, "protocol", None),
+                        "tls": getattr(hop, "authentication", {}).get("tls", False),
+                        "ehlo": getattr(hop, "ehlo", None),
+                    }
+                )
+            semantic = validate_received_chain_semantics(hop_chain)
+            semantic_profile = {
+                "temporal_consistency_score": semantic.temporal_consistency_score,
+                "chain_semantic_score": semantic.chain_semantic_score,
+                "anomaly_flags": list(semantic.anomaly_flags),
+                "hop_results": list(semantic.hop_results),
+            }
+            if semantic.chain_semantic_score < header_integrity:
+                header_integrity = semantic.chain_semantic_score
 
         # ── CATEGORY 1: Identity Obfuscation ─────────────────────────────
         techniques += self._detect_identity_techniques(msg, scan)
@@ -430,7 +471,7 @@ class AttackerTechniqueProfiler:
             "LOW"
         )
 
-        flags = self._build_flags(techniques, sending_method, scan)
+        flags = self._build_flags(techniques, sending_method, scan, semantic_profile)
 
         passive_blocked = bool(
             sending_method and (sending_method.strips_ip or
@@ -451,6 +492,7 @@ class AttackerTechniqueProfiler:
             passive_attribution_blocked=passive_blocked,
             canary_token_recommended=canary_recommended,
             forensic_scan=scan,
+            semantic_profile=semantic_profile,
             scanned_at=datetime.now(timezone.utc).isoformat(),
         )
 
@@ -1283,10 +1325,15 @@ class AttackerTechniqueProfiler:
         techniques: List[DetectedTechnique],
         sending_method: Optional[SendingMethod],
         scan: Optional[Any],
+        semantic_profile: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
         flags: List[str] = []
         if scan:
             flags.extend(scan.flags)
+
+        if semantic_profile and semantic_profile.get("anomaly_flags"):
+            flag_list = ", ".join(semantic_profile.get("anomaly_flags", [])[:3])
+            flags.append(f"RECEIVED CHAIN ANOMALIES — {flag_list}")
 
         for t in techniques:
             if t.confidence >= 0.90 and t.category in (CAT_EVASION, CAT_INFRA):
