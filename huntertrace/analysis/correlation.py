@@ -12,6 +12,7 @@ from email.utils import parsedate_to_datetime
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from huntertrace.attribution.scoring import NormalizedSignal
+from huntertrace.atlas.provenance import derive_provenance, trust_weight_for
 
 
 _VPN_PATTERN = re.compile(
@@ -36,6 +37,27 @@ def _as_signal(raw: Any, index: int = 0) -> NormalizedSignal:
     if isinstance(raw, NormalizedSignal):
         return raw
     if isinstance(raw, Mapping):
+        source_hint = str(raw.get("source") or raw.get("source_field") or "")
+        hop_index = raw.get("hop_index") or raw.get("hop_position")
+        source_header = raw.get("source_header")
+        provenance_class = raw.get("provenance_class")
+        trust_weight_base = raw.get("trust_weight_base")
+        if not provenance_class:
+            source_header, provenance, derived_weight = derive_provenance(
+                signal_name=str(raw.get("name", "")),
+                source_hint=source_hint,
+                hop_index=hop_index if isinstance(hop_index, int) else None,
+            )
+            provenance_class = provenance.value
+            trust_weight_base = derived_weight
+        if trust_weight_base is None:
+            trust_weight_base = trust_weight_for(
+                derive_provenance(
+                    signal_name=str(raw.get("name", "")),
+                    source_hint=source_hint,
+                    hop_index=hop_index if isinstance(hop_index, int) else None,
+                )[1]
+            )
         return NormalizedSignal(
             signal_id=str(raw.get("signal_id", f"signal-{index}")),
             name=str(raw.get("name", "unknown_signal")),
@@ -43,11 +65,28 @@ def _as_signal(raw: Any, index: int = 0) -> NormalizedSignal:
             value=raw.get("value"),
             candidate_region=(str(raw["candidate_region"]).strip() if raw.get("candidate_region") is not None else None),
             source=str(raw.get("source", "correlation")),
+            source_header=source_header,
             trust_label=str(raw.get("trust_label", "UNKNOWN")),
             validation_flags=tuple(raw.get("validation_flags", ()) or ()),
             anomaly_detail=(str(raw["anomaly_detail"]).strip() if raw.get("anomaly_detail") else None),
             excluded_reason=(str(raw["excluded_reason"]).strip() if raw.get("excluded_reason") else None),
+            provenance_class=str(provenance_class),
+            trust_weight_base=float(trust_weight_base) if trust_weight_base is not None else 1.0,
+            confidence=float(raw.get("confidence", 1.0)),
         )
+    source_hint = getattr(raw, "source", "correlation")
+    hop_index = getattr(raw, "hop_index", None)
+    source_header = getattr(raw, "source_header", None)
+    provenance_class = getattr(raw, "provenance_class", None)
+    trust_weight_base = getattr(raw, "trust_weight_base", None)
+    if not provenance_class:
+        source_header, provenance, derived_weight = derive_provenance(
+            signal_name=getattr(raw, "name", ""),
+            source_hint=str(source_hint or ""),
+            hop_index=hop_index if isinstance(hop_index, int) else None,
+        )
+        provenance_class = provenance.value
+        trust_weight_base = derived_weight
     return NormalizedSignal(
         signal_id=f"signal-{index}",
         name=getattr(raw, "name", "unknown_signal"),
@@ -55,10 +94,14 @@ def _as_signal(raw: Any, index: int = 0) -> NormalizedSignal:
         value=getattr(raw, "value", None),
         candidate_region=getattr(raw, "candidate_region", None),
         source=getattr(raw, "source", "correlation"),
+        source_header=source_header,
         trust_label=getattr(raw, "trust_label", "UNKNOWN"),
         validation_flags=tuple(getattr(raw, "validation_flags", ()) or ()),
         anomaly_detail=getattr(raw, "anomaly_detail", None),
         excluded_reason=getattr(raw, "excluded_reason", None),
+        provenance_class=str(provenance_class),
+        trust_weight_base=float(trust_weight_base) if trust_weight_base is not None else 1.0,
+        confidence=float(getattr(raw, "confidence", 1.0)),
     )
 
 
@@ -96,6 +139,13 @@ def _trust_to_score(label: str) -> float:
         "UNKNOWN": 0.6,
         "UNTRUSTED": 0.4,
     }.get(str(label or "UNKNOWN"), 0.6)
+
+
+def _signal_weight_score(signal: NormalizedSignal) -> float:
+    trust_score = _trust_to_score(signal.trust_label)
+    trust_weight = float(getattr(signal, "trust_weight_base", 1.0))
+    confidence = float(getattr(signal, "confidence", 1.0))
+    return trust_score * trust_weight * confidence
 
 
 def _score_to_trust(score: float) -> str:
@@ -438,8 +488,7 @@ def infer_pre_anonymization_region(
         if signal.excluded_reason:
             continue
 
-        trust_score = _trust_to_score(signal.trust_label)
-        base_weight = trust_score
+        base_weight = _signal_weight_score(signal)
         base_scores[signal.candidate_region] += base_weight
 
         adjusted_weight = base_weight
@@ -522,7 +571,7 @@ def apply_correlation_adjustment(
             identity_adj = _clamp(0.95 + (0.10 * (1.0 - anonymization.confidence)), 0.90, 1.05)
             multiplier *= identity_adj
 
-        old_score = _trust_to_score(signal.trust_label)
+        old_score = _signal_weight_score(signal)
         new_score = _clamp(old_score * multiplier, 0.2, 1.0)
         new_label = _score_to_trust(new_score)
 

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from huntertrace.analysis.correlation import apply_correlation_adjustment
+from huntertrace.atlas.provenance import derive_provenance, extract_hop_index
 from huntertrace.attribution.config_loader import RuntimeConfig
 from huntertrace.attribution.dkim import DKIMVerificationSummary, verify_message
 from huntertrace.attribution.scoring import (
@@ -96,6 +97,27 @@ def _to_signal(raw: Mapping[str, Any], index: int, source: str) -> NormalizedSig
     if isinstance(value, (dict, list)):
         value = json.loads(json.dumps(value, sort_keys=True))
 
+    source_hint = _clean_text(raw.get("source_field") or raw.get("source"), max_len=256)
+    hop_index = raw.get("hop_position")
+    if not isinstance(hop_index, int):
+        hop_index = extract_hop_index(source_hint)
+
+    source_header = _clean_text(raw.get("source_header"), max_len=64)
+    provenance_class = _clean_text(raw.get("provenance_class"), max_len=64)
+    trust_weight_base = raw.get("trust_weight_base")
+    if not provenance_class or trust_weight_base is None:
+        header, provenance, derived_weight = derive_provenance(
+            signal_name=name,
+            source_hint=source_hint,
+            hop_index=hop_index if isinstance(hop_index, int) else None,
+        )
+        if not source_header:
+            source_header = header
+        if not provenance_class:
+            provenance_class = provenance.value
+        if trust_weight_base is None:
+            trust_weight_base = derived_weight
+
     return NormalizedSignal(
         signal_id=signal_id,
         name=name,
@@ -103,10 +125,14 @@ def _to_signal(raw: Mapping[str, Any], index: int, source: str) -> NormalizedSig
         value=value,
         candidate_region=candidate_region,
         source=_clean_text(raw.get("source"), max_len=128) or source,
+        source_header=source_header,
         trust_label=trust_label.split(".")[-1],
         validation_flags=_to_flag_list(raw.get("validation_flags")),
         anomaly_detail=anomaly_detail,
         excluded_reason=excluded_reason,
+        provenance_class=str(provenance_class or "sender_controlled"),
+        trust_weight_base=float(trust_weight_base) if trust_weight_base is not None else 0.2,
+        confidence=float(raw.get("confidence", 1.0)),
     )
 
 
@@ -280,10 +306,14 @@ def _ensure_candidate_regions(signals: Sequence[NormalizedSignal]) -> Tuple[Norm
                         value=signal.value,
                         candidate_region=cluster_label,
                         source=signal.source,
+                        source_header=signal.source_header,
                         trust_label=_fallback_candidate_trust(signal.trust_label),
                         validation_flags=signal.validation_flags,
                         anomaly_detail=signal.anomaly_detail,
                         excluded_reason=signal.excluded_reason,
+                        provenance_class=signal.provenance_class,
+                        trust_weight_base=signal.trust_weight_base,
+                        confidence=signal.confidence,
                     )
                 )
             else:
@@ -301,10 +331,14 @@ def _ensure_candidate_regions(signals: Sequence[NormalizedSignal]) -> Tuple[Norm
                 value=signal.value,
                 candidate_region="UNKNOWN",
                 source=signal.source,
+                source_header=signal.source_header,
                 trust_label=_fallback_candidate_trust(signal.trust_label),
                 validation_flags=signal.validation_flags,
                 anomaly_detail=signal.anomaly_detail,
                 excluded_reason=signal.excluded_reason,
+                provenance_class=signal.provenance_class,
+                trust_weight_base=signal.trust_weight_base,
+                confidence=signal.confidence,
             )
         )
     return tuple(adjusted)
@@ -323,6 +357,10 @@ def _dkim_to_signals(
         return signals, anomalies, index
 
     if summary.domain:
+        header, provenance, trust_weight = derive_provenance(
+            signal_name="dkim_domain",
+            source_hint="DKIM-Signature",
+        )
         signals.append(
             NormalizedSignal(
                 signal_id=f"eml-{index}",
@@ -331,13 +369,21 @@ def _dkim_to_signals(
                 value=summary.domain,
                 candidate_region=candidate_region,
                 source="eml.dkim.domain",
+                source_header=header,
                 trust_label="TRUSTED" if summary.dkim_valid else "PARTIALLY_TRUSTED",
                 validation_flags=("CLEAN",) if summary.dkim_valid else ("SUSPICIOUS",),
                 anomaly_detail=None if summary.dkim_valid else summary.failure_reason,
+                provenance_class=provenance.value,
+                trust_weight_base=trust_weight,
+                confidence=1.0,
             )
         )
         index += 1
 
+    header, provenance, trust_weight = derive_provenance(
+        signal_name="dkim_valid",
+        source_hint="DKIM-Signature",
+    )
     signals.append(
         NormalizedSignal(
             signal_id=f"eml-{index}",
@@ -346,9 +392,13 @@ def _dkim_to_signals(
             value=summary.dkim_valid,
             candidate_region=candidate_region,
             source="eml.dkim.verify",
+            source_header=header,
             trust_label="TRUSTED" if summary.dkim_valid else "PARTIALLY_TRUSTED",
             validation_flags=("CLEAN",) if summary.dkim_valid else ("SUSPICIOUS",),
             anomaly_detail=None if summary.dkim_valid else summary.failure_reason,
+            provenance_class=provenance.value,
+            trust_weight_base=trust_weight,
+            confidence=1.0,
         )
     )
     index += 1
@@ -391,6 +441,10 @@ def _load_eml_input(path: Path) -> AnalysisInput:
     date_value = _clean_text(message.get("Date"), max_len=256)
     if date_value:
         tz_match = _RE_TZ.search(date_value)
+        header, provenance, trust_weight = derive_provenance(
+            signal_name="timezone_offset",
+            source_hint="Date",
+        )
         signals.append(
             NormalizedSignal(
                 signal_id=f"eml-{idx}",
@@ -399,9 +453,13 @@ def _load_eml_input(path: Path) -> AnalysisInput:
                 value=tz_match.group(1) if tz_match else date_value,
                 candidate_region=injected_region,
                 source="eml.header.date",
+                source_header=header,
                 trust_label="UNKNOWN",
                 validation_flags=("CLEAN",) if tz_match else ("SUSPICIOUS",),
                 anomaly_detail=None if tz_match else "No timezone token found in Date header",
+                provenance_class=provenance.value,
+                trust_weight_base=trust_weight,
+                confidence=1.0,
             )
         )
         idx += 1
@@ -409,6 +467,10 @@ def _load_eml_input(path: Path) -> AnalysisInput:
     message_id = _clean_text(message.get("Message-ID"), max_len=256)
     if message_id and "@" in message_id:
         domain = message_id.rsplit("@", 1)[-1].strip(" >")
+        header, provenance, trust_weight = derive_provenance(
+            signal_name="message_id_domain",
+            source_hint="Message-ID",
+        )
         signals.append(
             NormalizedSignal(
                 signal_id=f"eml-{idx}",
@@ -417,8 +479,12 @@ def _load_eml_input(path: Path) -> AnalysisInput:
                 value=domain,
                 candidate_region=injected_region,
                 source="eml.header.message-id",
+                source_header=header,
                 trust_label="UNKNOWN",
                 validation_flags=("CLEAN",),
+                provenance_class=provenance.value,
+                trust_weight_base=trust_weight,
+                confidence=1.0,
             )
         )
         idx += 1
@@ -447,6 +513,12 @@ def _load_eml_input(path: Path) -> AnalysisInput:
         if not ips:
             continue
         for ip in ips:
+            header, provenance, trust_weight = derive_provenance(
+                signal_name="first_hop_ip" if hop_index == 0 else "all_ips",
+                source_hint=f"Received[{hop_index}]",
+                hop_index=hop_index,
+                hop_count=len(received_headers),
+            )
             signals.append(
                 NormalizedSignal(
                     signal_id=f"eml-{idx}",
@@ -455,8 +527,12 @@ def _load_eml_input(path: Path) -> AnalysisInput:
                     value=ip,
                     candidate_region=injected_region,
                     source=f"eml.header.received[{hop_index}]",
+                    source_header=header,
                     trust_label="PARTIALLY_TRUSTED",
                     validation_flags=("CLEAN",),
+                    provenance_class=provenance.value,
+                    trust_weight_base=trust_weight,
+                    confidence=1.0,
                 )
             )
             idx += 1

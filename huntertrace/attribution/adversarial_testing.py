@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass, replace
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 try:
+    from huntertrace.atlas.provenance import derive_provenance
     from huntertrace.attribution.evaluation import (
         AttributionEvaluator,
         CaseOutcome,
@@ -27,6 +28,12 @@ except ModuleNotFoundError:  # pragma: no cover - direct-script fallback
         build_default_dataset,
     )
     from scoring import NormalizedSignal  # type: ignore
+
+    class _FallbackProv:
+        value = "sender_controlled"
+
+    def derive_provenance(*_args, **_kwargs):  # type: ignore
+        return None, _FallbackProv(), 0.2
 
 
 ATTACK_SPOOFED_INFRASTRUCTURE = "spoofed_infrastructure"
@@ -63,17 +70,23 @@ def _as_case(case: EvaluationCase | Mapping[str, Any]) -> EvaluationCase:
     return EvaluationCase(
         case_id=str(case["case_id"]),
         signals=[
-            signal if isinstance(signal, NormalizedSignal) else NormalizedSignal(
-                signal_id=str(signal.get("signal_id", "")),
-                name=str(signal.get("name", "")),
-                group=str(signal.get("group", "identity")),
-                value=signal.get("value"),
-                candidate_region=_normalize_text(signal.get("candidate_region")),
-                source=str(signal.get("source", "adversarial")),
-                trust_label=str(signal.get("trust_label", "UNKNOWN")),
-                validation_flags=tuple(signal.get("validation_flags", ()) or ()),
-                anomaly_detail=_normalize_text(signal.get("anomaly_detail")),
-                excluded_reason=_normalize_text(signal.get("excluded_reason")),
+            signal if isinstance(signal, NormalizedSignal) else _with_provenance(
+                NormalizedSignal(
+                    signal_id=str(signal.get("signal_id", "")),
+                    name=str(signal.get("name", "")),
+                    group=str(signal.get("group", "identity")),
+                    value=signal.get("value"),
+                    candidate_region=_normalize_text(signal.get("candidate_region")),
+                    source=str(signal.get("source", "adversarial")),
+                    source_header=signal.get("source_header"),
+                    trust_label=str(signal.get("trust_label", "UNKNOWN")),
+                    validation_flags=tuple(signal.get("validation_flags", ()) or ()),
+                    anomaly_detail=_normalize_text(signal.get("anomaly_detail")),
+                    excluded_reason=_normalize_text(signal.get("excluded_reason")),
+                    provenance_class=str(signal.get("provenance_class") or "sender_controlled"),
+                    trust_weight_base=float(signal.get("trust_weight_base", 0.2)),
+                    confidence=float(signal.get("confidence", 1.0)),
+                )
             )
             for signal in list(case.get("signals", []))
         ],
@@ -81,6 +94,24 @@ def _as_case(case: EvaluationCase | Mapping[str, Any]) -> EvaluationCase:
         difficulty=str(case.get("difficulty", "medium")),
         notes=str(case.get("notes", "")),
     )
+
+
+def _with_provenance(signal: NormalizedSignal) -> NormalizedSignal:
+    header, provenance, trust_weight = derive_provenance(
+        signal_name=signal.name,
+        source_hint=str(signal.source or ""),
+    )
+    return replace(
+        signal,
+        source_header=signal.source_header or header,
+        provenance_class=provenance.value,
+        trust_weight_base=trust_weight,
+        confidence=float(getattr(signal, "confidence", 1.0)),
+    )
+
+
+def _apply_provenance(signals: List[NormalizedSignal]) -> List[NormalizedSignal]:
+    return [_with_provenance(signal) for signal in signals]
 
 
 def _candidate_regions(signals: Sequence[NormalizedSignal]) -> List[str]:
@@ -122,7 +153,9 @@ def _signal_weight(signal: NormalizedSignal) -> float:
             val_mult = min(val_mult, 0.0)
         elif flag_value == "SUSPICIOUS":
             val_mult = min(val_mult, 0.6)
-    return trust * val_mult
+    return trust * val_mult * float(getattr(signal, "trust_weight_base", 1.0)) * float(
+        getattr(signal, "confidence", 1.0)
+    )
 
 
 def _with_case_meta(
@@ -133,7 +166,7 @@ def _with_case_meta(
 ) -> EvaluationCase:
     return EvaluationCase(
         case_id=f"{base_case.case_id}__{attack_type}",
-        signals=signals,
+        signals=_apply_provenance(signals),
         true_region=base_case.true_region,
         difficulty=base_case.difficulty,
         notes=f"{base_case.notes} | attack={attack_type} | {attack_note}",

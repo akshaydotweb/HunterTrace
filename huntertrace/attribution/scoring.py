@@ -26,6 +26,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
+from huntertrace.atlas.provenance import PROVENANCE_RANK, ProvenanceClass
+
 
 # --------------------------
 # Helpers
@@ -50,10 +52,14 @@ class NormalizedSignal:
     value: Any
     candidate_region: Optional[str]
     source: str
+    source_header: Optional[str] = None
     trust_label: str = "UNKNOWN"
     validation_flags: Tuple[str, ...] = ()
     anomaly_detail: Optional[str] = None
     excluded_reason: Optional[str] = None
+    provenance_class: str = "sender_controlled"
+    trust_weight_base: float = 0.2
+    confidence: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -67,6 +73,11 @@ class SignalContribution:
     base_weight: float
     effective_weight: float
     penalty: float
+    source_header: Optional[str]
+    provenance_class: str
+    trust_weight_base: float
+    confidence: float
+    explanation: str
     trust_label: str
     validation_flags: Tuple[str, ...]
     source: str
@@ -144,6 +155,7 @@ class ScoringConfig:
     evidence_penalties: Mapping[str, float] = field(default_factory=lambda: {
         "non_attributable": 0.1,
         "anomaly": 0.05,
+        "relay_disagreement": 0.12,
     })
 
     confidence_cap: float = 0.8
@@ -179,6 +191,31 @@ class InferenceEngine:
     def _resolve_trust_multiplier(self, s: NormalizedSignal) -> float:
         return self.config.trust_multipliers.get(s.trust_label, 1.0)
 
+    def _resolve_trust_weight_base(self, s: NormalizedSignal) -> float:
+        return max(0.0, min(1.0, float(getattr(s, "trust_weight_base", 1.0))))
+
+    def _resolve_confidence(self, s: NormalizedSignal) -> float:
+        return max(0.0, min(1.0, float(getattr(s, "confidence", 1.0))))
+
+    def _provenance_rank(self, s: NormalizedSignal) -> int:
+        label = str(getattr(s, "provenance_class", "sender_controlled"))
+        try:
+            return PROVENANCE_RANK.get(ProvenanceClass(label), 0)
+        except ValueError:
+            return 0
+
+    def _build_signal_explanation(self, s: NormalizedSignal) -> str:
+        header = s.source_header or "unknown header"
+        prov = str(getattr(s, "provenance_class", "unknown"))
+        trust_weight = self._resolve_trust_weight_base(s)
+        if trust_weight >= 0.9:
+            trust_label = "high trust"
+        elif trust_weight >= 0.6:
+            trust_label = "medium trust"
+        else:
+            trust_label = "low trust"
+        return f"{header} header classified as {prov} ({trust_label}, weight={trust_weight:.2f})"
+
     # --------------------------
     # Evidence penalty
     # --------------------------
@@ -192,6 +229,16 @@ class InferenceEngine:
 
         penalty += len(anomalies) * self.config.evidence_penalties["anomaly"]
 
+        relay_regions = {
+            s.candidate_region
+            for s in signals
+            if s.candidate_region
+            and str(getattr(s, "provenance_class", ""))
+            in {"sending_mta_generated", "intermediary_relay_generated"}
+        }
+        if len(relay_regions) > 1:
+            penalty += self.config.evidence_penalties.get("relay_disagreement", 0.12)
+
         return min(1.0, penalty)
 
     # --------------------------
@@ -199,6 +246,19 @@ class InferenceEngine:
     # --------------------------
 
     def _evaluate_candidate(self, candidate, signals, anomalies):
+
+        cryptographic_regions = {
+            s.candidate_region
+            for s in signals
+            if s.candidate_region
+            and str(getattr(s, "provenance_class", "")) == "cryptographic"
+        }
+        recipient_regions = {
+            s.candidate_region
+            for s in signals
+            if s.candidate_region
+            and str(getattr(s, "provenance_class", "")) == "recipient_mta_generated"
+        }
 
         supporting_score = 0.0
         conflict_penalty = 0.0
@@ -214,6 +274,13 @@ class InferenceEngine:
         max_possible_score = 0.0
 
         for s in signals:
+
+            if (
+                str(getattr(s, "provenance_class", "")) == "sender_controlled"
+                and cryptographic_regions
+                and s.candidate_region not in cryptographic_regions
+            ):
+                continue
 
             if s.candidate_region is None:
                 continue
@@ -238,7 +305,21 @@ class InferenceEngine:
         # Scoring
         # --------------------------
 
+        support_ranks = [
+            self._provenance_rank(s)
+            for s in signals
+            if s.candidate_region == candidate and not s.excluded_reason
+        ]
+        max_support_rank = max(support_ranks) if support_ranks else 0
+
         for s in signals:
+
+            if (
+                str(getattr(s, "provenance_class", "")) == "sender_controlled"
+                and cryptographic_regions
+                and s.candidate_region not in cryptographic_regions
+            ):
+                continue
 
             base = self._resolve_base_weight(s)
             if base <= 0:
@@ -252,7 +333,18 @@ class InferenceEngine:
                 continue
 
             trust = self._resolve_trust_multiplier(s)
-            eff = base * trust * val
+            trust_weight = self._resolve_trust_weight_base(s)
+            confidence = self._resolve_confidence(s)
+
+            provenance_adjustment = 1.0
+            if recipient_regions and str(getattr(s, "provenance_class", "")) in {
+                "sending_mta_generated",
+                "intermediary_relay_generated",
+            }:
+                if s.candidate_region not in recipient_regions:
+                    provenance_adjustment *= 0.6
+
+            eff = base * trust * val * trust_weight * confidence * provenance_adjustment
 
             if s.candidate_region == candidate:
                 supporting_score += eff
@@ -262,15 +354,27 @@ class InferenceEngine:
                     s.signal_id, s.name, s.group, "supporting",
                     s.candidate_region, s.value,
                     base, eff, 0.0,
+                    s.source_header,
+                    str(getattr(s, "provenance_class", "unknown")),
+                    trust_weight,
+                    confidence,
+                    self._build_signal_explanation(s),
                     s.trust_label, s.validation_flags, s.source
                 ))
 
             else:
+                conflict_adjustment = provenance_adjustment
+                if self._provenance_rank(s) < max_support_rank:
+                    conflict_adjustment *= 0.7
+
                 penalty = (
                     base
                     * self.config.conflict_multipliers["default"]
                     * trust
                     * val
+                    * trust_weight
+                    * confidence
+                    * conflict_adjustment
                 )
 
                 conflict_penalty += penalty
@@ -279,6 +383,11 @@ class InferenceEngine:
                     s.signal_id, s.name, s.group, "conflicting",
                     s.candidate_region, s.value,
                     base, 0.0, penalty,
+                    s.source_header,
+                    str(getattr(s, "provenance_class", "unknown")),
+                    trust_weight,
+                    confidence,
+                    self._build_signal_explanation(s),
                     s.trust_label, s.validation_flags, s.source
                 ))
 

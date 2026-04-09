@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 try:
+    from huntertrace.atlas.provenance import derive_provenance
     from huntertrace.analysis.correlation import apply_correlation_adjustment
     from huntertrace.attribution.adversarial_testing import (
         ALL_ATTACK_TYPES,
@@ -26,6 +27,12 @@ except ModuleNotFoundError:  # pragma: no cover
     from config_loader import load_runtime_config  # type: ignore
     from evaluation import EvaluationCase, build_default_dataset  # type: ignore
     from scoring import InferenceEngine, NormalizedSignal  # type: ignore
+
+    class _FallbackProv:
+        value = "sender_controlled"
+
+    def derive_provenance(*_args, **_kwargs):  # type: ignore
+        return None, _FallbackProv(), 0.2
 
 
 _EPS = 1e-12
@@ -49,6 +56,22 @@ def _as_signal(signal: Any) -> NormalizedSignal:
         return signal
     if not isinstance(signal, Mapping):
         raise TypeError(f"Unsupported signal type: {type(signal)!r}")
+    source_hint = str(signal.get("source") or signal.get("source_field") or "")
+    source_header = signal.get("source_header")
+    provenance_class = signal.get("provenance_class")
+    trust_weight_base = signal.get("trust_weight_base")
+    if not provenance_class or trust_weight_base is None:
+        header, provenance, derived_weight = derive_provenance(
+            signal_name=str(signal.get("name", "")),
+            source_hint=source_hint,
+            hop_index=signal.get("hop_index") if isinstance(signal.get("hop_index"), int) else None,
+        )
+        if not source_header:
+            source_header = header
+        if not provenance_class:
+            provenance_class = provenance.value
+        if trust_weight_base is None:
+            trust_weight_base = derived_weight
     return NormalizedSignal(
         signal_id=str(signal.get("signal_id", "")),
         name=str(signal.get("name", "")),
@@ -56,10 +79,14 @@ def _as_signal(signal: Any) -> NormalizedSignal:
         value=signal.get("value"),
         candidate_region=_normalize_text(signal.get("candidate_region")),
         source=str(signal.get("source", "comparative_eval")),
+        source_header=source_header,
         trust_label=str(signal.get("trust_label", "UNKNOWN")),
         validation_flags=tuple(signal.get("validation_flags", ()) or ()),
         anomaly_detail=_normalize_text(signal.get("anomaly_detail")),
         excluded_reason=_normalize_text(signal.get("excluded_reason")),
+        provenance_class=str(provenance_class or "sender_controlled"),
+        trust_weight_base=float(trust_weight_base) if trust_weight_base is not None else 0.2,
+        confidence=float(signal.get("confidence", 1.0)),
     )
 
 
