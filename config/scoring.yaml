@@ -4,6 +4,7 @@ scoring:
     infrastructure: 1.2
     identity: 1.1
     authentication: 1.05
+    structure: 0.9
   signal_weights:
     dkim_valid: 1.15
     dkim_domain: 1.05

@@ -5,6 +5,8 @@ Correlation-Based Origin Inference (probabilistic, non-deanonymizing).
 
 from __future__ import annotations
 
+import ipaddress
+import os
 import re
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -20,6 +22,8 @@ _VPN_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _TZ_PATTERN = re.compile(r"^([+-])(\d{2}):?(\d{2})$")
+_RE_FQDN = re.compile(r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}\.?$", re.IGNORECASE)
+_RE_IP_LITERAL = re.compile(r"^\[?(?:IPv6:)?([0-9a-fA-F:.]+)\]?$")
 
 
 def _clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
@@ -132,6 +136,128 @@ def _parse_timezone_offset(raw: Any) -> Optional[str]:
     return f"{sign}{int(hours):02d}{int(mins):02d}"
 
 
+def _normalize_host(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if not text:
+        return None
+    if ":" in text and text.count(":") == 1 and text.rsplit(":", 1)[-1].isdigit():
+        text = text.rsplit(":", 1)[0]
+    text = text.strip("[]")
+    return text.rstrip(".") or None
+
+
+def _ip_from_literal(value: Any) -> Optional[str]:
+    text = _normalize_host(value)
+    if not text:
+        return None
+    match = _RE_IP_LITERAL.match(text)
+    if not match:
+        return None
+    ip_text = match.group(1)
+    try:
+        ipaddress.ip_address(ip_text)
+        return ip_text
+    except ValueError:
+        return None
+
+
+def _host_root(value: Any) -> Optional[str]:
+    host = _normalize_host(value)
+    if not host:
+        return None
+    if _ip_from_literal(host):
+        return host
+    parts = [part for part in host.split(".") if part]
+    if len(parts) < 2:
+        return host
+    return ".".join(parts[-2:])
+
+
+def _host_matches(left: Any, right: Any) -> bool:
+    left_norm = _normalize_host(left)
+    right_norm = _normalize_host(right)
+    if not left_norm or not right_norm:
+        return False
+    if left_norm == right_norm:
+        return True
+    if left_norm.endswith("." + right_norm) or right_norm.endswith("." + left_norm):
+        return True
+    return _host_root(left_norm) == _host_root(right_norm)
+
+
+def _is_fqdn(value: Any) -> bool:
+    text = _normalize_host(value)
+    if not text:
+        return False
+    return bool(_RE_FQDN.match(text))
+
+
+def _extract_hop_value(hop: Mapping[str, Any] | Any, *keys: str) -> Any:
+    if isinstance(hop, Mapping):
+        for key in keys:
+            if key in hop:
+                return hop.get(key)
+    for key in keys:
+        if hasattr(hop, key):
+            return getattr(hop, key)
+    return None
+
+
+def _hop_tls_state(hop: Mapping[str, Any] | Any) -> Optional[bool]:
+    tls_value = _extract_hop_value(hop, "tls")
+    if isinstance(tls_value, bool):
+        return tls_value
+    protocol = _extract_hop_value(hop, "protocol")
+    if protocol:
+        proto = str(protocol).upper()
+        if "SMTPS" in proto or "ESMTPS" in proto or "TLS" in proto:
+            return True
+        if "SMTP" in proto:
+            return False
+    return None
+
+
+def _provider_for_host(value: Any) -> str:
+    host = _normalize_host(value)
+    if not host or _ip_from_literal(host):
+        return "other"
+    if any(token in host for token in ("gmail.", "googlemail.", "google.", "googleusercontent.", "googlesmtp")):
+        return "google"
+    if any(token in host for token in ("outlook.", "hotmail.", "live.", "office365.", "protection.outlook.", "microsoft.", "onmicrosoft.")):
+        return "microsoft"
+    if any(token in host for token in ("amazonaws.", "amazonses.", "awsapps.", "aws.")):
+        return "aws"
+    if any(token in host for token in ("yahoo.", "ymail.", "yahoodns.", "aol.")):
+        return "yahoo"
+    return "other"
+
+
+def _compare_ip_host(
+    from_ip: Optional[str],
+    from_host: Optional[str],
+    *,
+    enable_reverse_dns: bool = False,
+) -> Tuple[bool, Optional[str]]:
+    if not from_ip or not from_host:
+        return True, None
+    literal = _ip_from_literal(from_host)
+    if literal:
+        if literal == from_ip:
+            return True, None
+        return False, f"from_host {from_host} does not match from_ip {from_ip}"
+    if enable_reverse_dns:
+        try:
+            ptr_host, _aliases, _ip_list = __import__("socket").gethostbyaddr(from_ip)
+            if _host_matches(ptr_host, from_host):
+                return True, None
+            return False, f"PTR {ptr_host} does not align with from_host {from_host}"
+        except Exception:
+            return True, None
+    return True, None
+
+
 def _trust_to_score(label: str) -> float:
     return {
         "TRUSTED": 1.0,
@@ -189,12 +315,22 @@ class OriginHypothesis:
 
 
 @dataclass(frozen=True)
+class ChainSemanticProfile:
+    temporal_consistency_score: float
+    chain_semantic_score: float
+    anomaly_flags: Tuple[str, ...]
+    anomalies: Tuple[Dict[str, Any], ...]
+    hop_results: Tuple[Dict[str, Any], ...]
+
+
+@dataclass(frozen=True)
 class CorrelationAdjustment:
     adjusted_signals: Tuple[NormalizedSignal, ...]
     anonymization: AnonymizationProfile
     correlation: CorrelationResult
     temporal: TemporalProfile
     origin_hypothesis: OriginHypothesis
+    semantic: ChainSemanticProfile
     correlation_weight_multiplier: float
     confidence_penalty: float
     downgraded_signal_ids: Tuple[str, ...]
@@ -401,6 +537,200 @@ def correlate_hops(received_chain: Sequence[Mapping[str, Any] | Any]) -> Correla
     )
 
 
+def validate_received_chain_semantics(
+    received_chain: Sequence[Mapping[str, Any] | Any],
+) -> ChainSemanticProfile:
+    hops: List[Dict[str, Any]] = []
+    for idx, hop in enumerate(received_chain):
+        position = _safe_float(_extract_hop_value(hop, "position", "hop_number"), idx)
+        hops.append(
+            {
+                "position": int(position),
+                "from_host": _extract_hop_value(hop, "from_hostname", "from_host"),
+                "by_host": _extract_hop_value(hop, "by_hostname", "by_host"),
+                "from_ip": _extract_hop_value(hop, "ip", "ip_v4", "ip_v6", "from_ip"),
+                "timestamp_raw": _extract_hop_value(hop, "timestamp_raw", "timestamp"),
+                "protocol": _extract_hop_value(hop, "protocol"),
+                "tls": _hop_tls_state(hop),
+                "ehlo": _extract_hop_value(hop, "ehlo", "helo", "ehlo_name", "helo_name"),
+            }
+        )
+
+    hops.sort(key=lambda row: row["position"])
+    anomalies: List[Dict[str, Any]] = []
+    hop_results: List[Dict[str, Any]] = []
+    anomaly_flags: List[str] = []
+
+    parsed_times: List[Optional[datetime]] = [
+        _parse_timestamp(row.get("timestamp_raw")) for row in hops
+    ]
+    temporal_regressions = 0
+    temporal_anomalies = 0
+    temporal_pairs = 0
+    temporal_flags: Dict[int, List[str]] = {}
+    for idx in range(1, len(hops)):
+        prev_time = parsed_times[idx - 1]
+        curr_time = parsed_times[idx]
+        if prev_time is None or curr_time is None:
+            continue
+        temporal_pairs += 1
+        delta = (curr_time - prev_time).total_seconds()
+        if delta < 0:
+            temporal_regressions += 1
+            temporal_flags.setdefault(hops[idx]["position"], []).append("TEMPORAL_REGRESSION")
+            anomalies.append(
+                {
+                    "type": "TEMPORAL_REGRESSION",
+                    "hop_index": hops[idx]["position"],
+                    "detail": (
+                        f"Hop {hops[idx]['position']} timestamp earlier than previous hop "
+                        f"({curr_time.isoformat()} < {prev_time.isoformat()})"
+                    ),
+                }
+            )
+        elif delta == 0:
+            temporal_anomalies += 1
+            temporal_flags.setdefault(hops[idx]["position"], []).append("TEMPORAL_ANOMALY")
+            anomalies.append(
+                {
+                    "type": "TEMPORAL_ANOMALY",
+                    "hop_index": hops[idx]["position"],
+                    "detail": (
+                        f"Hop {hops[idx]['position']} timestamp identical to previous hop "
+                        f"({curr_time.isoformat()})"
+                    ),
+                }
+            )
+
+    if temporal_pairs == 0:
+        temporal_consistency_score = 0.5
+        anomalies.append(
+            {
+                "type": "TEMPORAL_INSUFFICIENT",
+                "hop_index": None,
+                "detail": "Insufficient timestamps to assess temporal ordering",
+            }
+        )
+    else:
+        penalty = (temporal_regressions + (0.5 * temporal_anomalies)) / temporal_pairs
+        temporal_consistency_score = _clamp(1.0 - penalty)
+
+    enable_rdns = str(os.getenv("HUNTERTRACE_ENABLE_RDNS", "")).lower() in {"1", "true", "yes"}
+
+    previous_tls = None
+    for idx, hop in enumerate(hops):
+        flags: List[str] = []
+        notes: List[str] = []
+
+        from_host = hop.get("from_host")
+        by_host = hop.get("by_host")
+
+        if hop.get("position") in temporal_flags:
+            flags.extend(temporal_flags[hop["position"]])
+            notes.append("Temporal ordering anomaly detected")
+
+        if not from_host or not by_host or not hop.get("timestamp_raw"):
+            flags.append("INCOMPLETE_HOP")
+            notes.append("Missing from_host, by_host, or timestamp")
+
+        if idx + 1 < len(hops):
+            next_from = hops[idx + 1].get("from_host")
+            if from_host and next_from and by_host and not _host_matches(by_host, next_from):
+                flags.append("BROKEN_CHAIN")
+                notes.append(
+                    f"Topology continuity broken between {by_host} and {next_from}"
+                )
+
+        if hop.get("ehlo"):
+            ehlo_value = hop.get("ehlo")
+            ehlo_host = _normalize_host(ehlo_value)
+            if ehlo_host and not (_is_fqdn(ehlo_host) or _ip_from_literal(ehlo_host)):
+                flags.append("EHLO_MALFORMED")
+                notes.append(f"EHLO/HELO value '{ehlo_value}' is not a valid host literal")
+            elif from_host and ehlo_host and not _host_matches(ehlo_host, from_host):
+                flags.append("EHLO_MISMATCH")
+                notes.append(f"EHLO/HELO '{ehlo_host}' unrelated to from_host '{from_host}'")
+
+        from_ip = hop.get("from_ip")
+        ip_match, ip_reason = _compare_ip_host(from_ip, from_host, enable_reverse_dns=enable_rdns)
+        if not ip_match:
+            flags.append("IP_HOST_MISMATCH")
+            if ip_reason:
+                notes.append(ip_reason)
+
+        tls_state = hop.get("tls")
+        if previous_tls is True and tls_state is False:
+            flags.append("TLS_DOWNGRADE")
+            notes.append("TLS indicated earlier but not in subsequent hop")
+        if tls_state is not None:
+            previous_tls = tls_state
+
+        from_provider = _provider_for_host(from_host)
+        by_provider = _provider_for_host(by_host)
+        if idx > 0 and from_provider == "other" and by_provider in {"google", "microsoft", "yahoo", "aws"}:
+            flags.append("IMPOSSIBLE_HANDOFF")
+            notes.append(
+                f"Unexpected handoff from {from_host or 'unknown'} to {by_host or 'unknown'}"
+            )
+
+        hop_score = 1.0
+        for flag in flags:
+            if flag == "TEMPORAL_REGRESSION":
+                hop_score -= 0.50
+            elif flag == "TEMPORAL_ANOMALY":
+                hop_score -= 0.30
+            elif flag == "BROKEN_CHAIN":
+                hop_score -= 0.30
+            elif flag == "EHLO_MALFORMED":
+                hop_score -= 0.20
+            elif flag == "EHLO_MISMATCH":
+                hop_score -= 0.25
+            elif flag == "IP_HOST_MISMATCH":
+                hop_score -= 0.30
+            elif flag == "TLS_DOWNGRADE":
+                hop_score -= 0.20
+            elif flag == "IMPOSSIBLE_HANDOFF":
+                hop_score -= 0.50
+            elif flag == "INCOMPLETE_HOP":
+                hop_score -= 0.20
+        hop_score = _clamp(hop_score)
+
+        if flags:
+            for flag in flags:
+                anomalies.append(
+                    {
+                        "type": flag,
+                        "hop_index": hop.get("position"),
+                        "detail": "; ".join(notes) if notes else flag,
+                    }
+                )
+
+        hop_results.append(
+            {
+                "hop_index": hop.get("position"),
+                "score": round(hop_score, 12),
+                "flags": sorted(set(flags)),
+                "notes": notes,
+                "from_host": from_host,
+                "by_host": by_host,
+            }
+        )
+        anomaly_flags.extend(flags)
+
+    if hop_results:
+        chain_semantic_score = _clamp(sum(row["score"] for row in hop_results) / len(hop_results))
+    else:
+        chain_semantic_score = 0.0
+
+    return ChainSemanticProfile(
+        temporal_consistency_score=round(temporal_consistency_score, 12),
+        chain_semantic_score=round(chain_semantic_score, 12),
+        anomaly_flags=tuple(sorted(set(anomaly_flags))),
+        anomalies=tuple(anomalies),
+        hop_results=tuple(hop_results),
+    )
+
+
 def temporal_profile(signals: Sequence[NormalizedSignal | Mapping[str, Any] | Any]) -> TemporalProfile:
     normalized = [_as_signal(s, idx) for idx, s in enumerate(signals)]
 
@@ -528,6 +858,7 @@ def apply_correlation_adjustment(
 ) -> CorrelationAdjustment:
     normalized = tuple(_as_signal(s, idx) for idx, s in enumerate(signals))
     correlation = correlate_hops(received_chain or [])
+    semantic = validate_received_chain_semantics(received_chain or [])
     temporal = temporal_profile(normalized)
     anonymization = detect_anonymization(normalized)
     hypothesis = infer_pre_anonymization_region(normalized, correlation, temporal)
@@ -537,8 +868,15 @@ def apply_correlation_adjustment(
     boosted_ids: List[str] = []
     reasoning: List[str] = []
 
+    semantic_multiplier = _clamp(0.85 + (0.30 * semantic.chain_semantic_score), 0.70, 1.20)
     correlation_weight_multiplier = round(
-        _clamp((0.70 + (0.30 * correlation.path_consistency_score)) * (1.0 - (0.35 * anonymization.confidence)), 0.35, 1.15),
+        _clamp(
+            (0.70 + (0.30 * correlation.path_consistency_score))
+            * (1.0 - (0.35 * anonymization.confidence))
+            * semantic_multiplier,
+            0.35,
+            1.25,
+        ),
         12,
     )
 
@@ -597,8 +935,29 @@ def apply_correlation_adjustment(
         elif new_score > old_score + 1e-12:
             boosted_ids.append(signal.signal_id)
 
+    semantic_penalty = 0.0
+    if "BROKEN_CHAIN" in semantic.anomaly_flags:
+        semantic_penalty += 0.12
+    if "IMPOSSIBLE_HANDOFF" in semantic.anomaly_flags:
+        semantic_penalty += 0.25
+    if "TLS_DOWNGRADE" in semantic.anomaly_flags:
+        semantic_penalty += 0.10
+    if "TEMPORAL_REGRESSION" in semantic.anomaly_flags:
+        semantic_penalty += 0.15
+    if "IP_HOST_MISMATCH" in semantic.anomaly_flags:
+        semantic_penalty += 0.12
+    if len(semantic.anomalies) >= 3:
+        semantic_penalty += 0.10
+    if semantic.chain_semantic_score > 0.85 and not semantic.anomaly_flags:
+        semantic_penalty -= 0.05
     confidence_penalty = round(
-        _clamp(0.55 * anonymization.confidence + 0.25 * (1.0 - correlation.path_consistency_score), 0.0, 0.85),
+        _clamp(
+            0.55 * anonymization.confidence
+            + 0.25 * (1.0 - correlation.path_consistency_score)
+            + semantic_penalty,
+            0.0,
+            0.95,
+        ),
         12,
     )
 
@@ -615,6 +974,12 @@ def apply_correlation_adjustment(
     reasoning.extend(list(hypothesis.reasoning))
     if correlation.suspicious_transitions:
         reasoning.append(f"{len(correlation.suspicious_transitions)} suspicious hop transitions influenced weighting.")
+    reasoning.append(
+        f"Received-chain semantic score {semantic.chain_semantic_score:.6f} with temporal consistency "
+        f"{semantic.temporal_consistency_score:.6f}."
+    )
+    if semantic.anomaly_flags:
+        reasoning.append("Semantic anomalies detected: " + ", ".join(semantic.anomaly_flags))
 
     return CorrelationAdjustment(
         adjusted_signals=tuple(adjusted),
@@ -622,6 +987,7 @@ def apply_correlation_adjustment(
         correlation=correlation,
         temporal=temporal,
         origin_hypothesis=hypothesis,
+        semantic=semantic,
         correlation_weight_multiplier=correlation_weight_multiplier,
         confidence_penalty=confidence_penalty,
         downgraded_signal_ids=tuple(sorted(set(downgraded_ids))),
