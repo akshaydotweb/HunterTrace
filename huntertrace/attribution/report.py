@@ -704,6 +704,7 @@ class AttributionRunner:
                 "hop_correlation": asdict(correlation_adjustment.correlation),
                 "temporal_profile": asdict(correlation_adjustment.temporal),
                 "origin_hypothesis": asdict(correlation_adjustment.origin_hypothesis),
+                "semantic_profile": asdict(correlation_adjustment.semantic),
                 "correlation_weight_multiplier": correlation_adjustment.correlation_weight_multiplier,
                 "confidence_penalty": correlation_adjustment.confidence_penalty,
                 "downgraded_signal_ids": list(correlation_adjustment.downgraded_signal_ids),
@@ -750,7 +751,8 @@ class AttributionRunner:
                 "verdict": "inconclusive",
                 "signals_used": [],
                 "signals_rejected": rejected,
-                "anomalies": list(payload.anomalies) + [
+                "anomalies": list(payload.anomalies)
+                + [
                     {
                         "type": "correlation_inference",
                         "correlation_enabled": self.use_correlation,
@@ -758,7 +760,20 @@ class AttributionRunner:
                         "anonymization_confidence": anonymization_confidence,
                         "indicators": anonymization_indicators,
                     }
-                ],
+                ]
+                + (
+                    [
+                        {
+                            "type": "structure",
+                            "temporal_consistency_score": correlation_adjustment.semantic.temporal_consistency_score,
+                            "chain_semantic_score": correlation_adjustment.semantic.chain_semantic_score,
+                            "anomaly_flags": list(correlation_adjustment.semantic.anomaly_flags),
+                            "hop_results": list(correlation_adjustment.semantic.hop_results),
+                        }
+                    ]
+                    if self.use_correlation
+                    else []
+                ),
                 "limitations": limitations,
                 "authentication": payload.authentication or {},
             }
@@ -874,6 +889,16 @@ class AttributionRunner:
                 "boosted_signal_ids": boosted_signal_ids,
             }
         )
+        if self.use_correlation:
+            anomalies.append(
+                {
+                    "type": "structure",
+                    "temporal_consistency_score": correlation_adjustment.semantic.temporal_consistency_score,
+                    "chain_semantic_score": correlation_adjustment.semantic.chain_semantic_score,
+                    "anomaly_flags": list(correlation_adjustment.semantic.anomaly_flags),
+                    "hop_results": list(correlation_adjustment.semantic.hop_results),
+                }
+            )
         if float(best.penalty_score) > 0:
             anomalies.append(
                 {
