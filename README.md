@@ -47,11 +47,11 @@ The HunterTrace pipeline is modeled in two complementary views:
 
 Source: [assets/design/huntertrace-single-email-container.svg](assets/design/huntertrace-single-email-container.svg)
 
-### Campaign Intelligence Pipeline
+<!-- ### Campaign Intelligence Pipeline
 
 ![HunterTrace Campaign Architecture](assets/design/huntertrace-campaign-container.svg)
 
-Source: [assets/design/huntertrace-campaign-container.svg](assets/design/huntertrace-campaign-container.svg)
+Source: [assets/design/huntertrace-campaign-container.svg](assets/design/huntertrace-campaign-container.svg) -->
 
 
 
