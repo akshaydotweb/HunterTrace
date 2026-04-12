@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HunterTrace — Intelligence Pipeline</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* Carbon-inspired light theme tokens */
+  --cds-background: #f4f4f4;
+  --cds-layer: #ffffff;
+  --cds-layer-01: #f4f4f4;
+  --cds-layer-02: #ffffff;
+  --cds-layer-03: #e0e0e0;
+  --cds-border-subtle: #e0e0e0;
+  --cds-border-strong: #8d8d8d;
+  --cds-text-primary: #161616;
+  --cds-text-secondary: #525252;
+  --cds-text-helper: #6f6f6f;
+  --cds-icon-secondary: #525252;
+  --cds-focus: #0f62fe;
+
+  --cds-blue-60: #0f62fe;
+  --cds-blue-50: #4589ff;
+  --cds-blue-10: #edf5ff;
+
+  --cds-red-60: #da1e28;
+  --cds-red-10: #fff1f1;
+
+  --cds-purple-60: #8a3ffc;
+  --cds-purple-10: #f6f2ff;
+
+  --cds-teal-50: #009d9a;
+  --cds-teal-10: #d9fbfb;
+
+  --cds-green-50: #24a148;
+  --cds-green-10: #defbe6;
+
+  --cds-yellow-30: #f1c21b;
+  --cds-yellow-10: #fcf4d6;
+
+  --cds-gray-70: #525252;
+  --cds-gray-20: #e0e0e0;
+  --cds-gray-10: #f4f4f4;
+
+  /* Infographic semantic mapping */
+  --flow-mandatory: #8d8d8d;
+  --flow-primary: var(--cds-green-50);
+  --flow-optional: #a8a8a8;
+  --lane-input-bg: var(--cds-gray-10);
+  --lane-input-border: var(--cds-gray-20);
+  --lane-input-accent: var(--cds-gray-70);
+
+  --mono: 'IBM Plex Mono', monospace;
+  --sans: 'IBM Plex Sans', sans-serif;
+
+  --canvas-width: 1600px;
+  --canvas-height: 900px;
+
+  --space-02: 0.125rem;
+  --space-03: 0.25rem;
+  --space-04: 0.375rem;
+  --space-05: 0.5rem;
+  --space-06: 0.75rem;
+  --space-07: 1rem;
+  --space-08: 1.5rem;
+  --space-09: 2rem;
+}
+
+html, body {
+  width: 100%;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 10% 10%, #ffffff 0%, rgba(255,255,255,0) 42%),
+    linear-gradient(180deg, #f7f7f7 0%, var(--cds-background) 100%);
+  color: var(--cds-text-primary);
+  font-family: var(--sans);
+}
+
+.slide {
+  width: min(var(--canvas-width), 100%);
+  max-width: var(--canvas-width);
+  min-height: var(--canvas-height);
+  margin: 0 auto;
+  padding: 48px 64px 56px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  position: relative;
+}
+
+.slide::before {
+  content: "";
+  position: absolute;
+  left: 64px;
+  right: 64px;
+  top: 20px;
+  height: 4px;
+  background: linear-gradient(90deg, var(--cds-blue-60), var(--cds-blue-50));
+}
+
+/* ── HEADER ──────────────────────────────────── */
+.slide-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--cds-border-subtle);
+  padding-bottom: 16px;
+}
+
+.logo-block { display: flex; align-items: baseline; gap: 12px; }
+
+.logo {
+  font-family: var(--mono);
+  font-size: 20px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  color: var(--cds-blue-60);
+}
+
+.logo-tag {
+  font-family: var(--sans);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--cds-text-helper);
+}
+
+.slide-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--cds-text-secondary);
+  letter-spacing: 0.06em;
+}
+
+.meta-pill {
+  border: 1px solid var(--cds-border-subtle);
+  background: var(--cds-layer-03);
+  padding: 3px 10px;
+  border-radius: 12px;
+  color: var(--cds-text-secondary);
+}
+
+/* ── ZONE BANNER ─────────────────────────────── */
+.zone-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 2px 0 8px;
+  flex-wrap: wrap;
+}
+
+.zone-flag {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 4px 8px;
+  border-bottom: 1px solid transparent;
+  background: var(--cds-layer);
+  border: 1px solid var(--cds-border-subtle);
+  white-space: nowrap;
+}
+
+.zone-flag.inputs   { color: var(--lane-input-accent); border-color: var(--lane-input-accent); }
+.zone-flag.core     { color: var(--cds-blue-60);   border-color: var(--cds-blue-60); }
+.zone-flag.decision { color: #8e6a00;              border-color: var(--cds-yellow-30); }
+.zone-flag.outputs  { color: var(--cds-green-50);  border-color: var(--cds-green-50); }
+.zone-flag.action   { color: var(--cds-purple-60); border-color: var(--cds-purple-60); }
+.zone-flag.spacer   { border-color: transparent; }
+
+/* ── SWIMLANES ───────────────────────────────── */
+.swimlanes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  flex: 1;
+}
+
+.swimlane {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+}
+
+.lane-tag {
+  writing-mode: horizontal-tb;
+  transform: none;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--cds-text-helper);
+  padding: 0 0 8px 2px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+}
+
+.lane-tag.single   { color: var(--cds-blue-60); }
+.lane-tag.campaign { color: var(--cds-purple-60); }
+
+.lane-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  border: 1px solid var(--cds-border-subtle);
+  border-radius: 0;
+  padding: 14px;
+  background: var(--cds-layer);
+  box-shadow: 0 1px 2px rgba(22, 22, 22, 0.08);
+  position: relative;
+  overflow: visible;
+}
+
+.lane-zones {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 0 0 10px;
+  border-bottom: 1px solid var(--cds-border-subtle);
+  margin-bottom: 10px;
+}
+
+.lane-zones .zone-flag {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  padding: 3px 6px;
+}
+
+.lane-body.campaign-lane {
+  background: linear-gradient(90deg, var(--cds-layer) 0%, var(--cds-purple-10) 100%);
+  border-color: #d4bbff;
+}
+
+/* ── STAGE NODES ─────────────────────────────── */
+.node {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 12px;
+  border-radius: 0;
+  border: 1px solid var(--cds-border-subtle);
+  background: var(--cds-layer-01);
+  width: min(100%, 320px);
+  min-width: 0;
+  max-width: none;
+  transition: transform .24s ease, box-shadow .24s ease, border-color .24s ease;
+}
+
+.node:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 3px 8px rgba(22,22,22,0.12);
+}
+
+/* Input */
+.node.input-node {
+  background: var(--lane-input-bg);
+  border-color: var(--lane-input-border);
+  border-left: 3px solid var(--lane-input-accent);
+}
+
+/* Core analysis */
+.node.core-node {
+  background: var(--cds-blue-10);
+  border-color: #c6daff;
+  border-left: 3px solid var(--cds-blue-60);
+}
+
+/* Obfuscation */
+.node.obfusc-node {
+  background: var(--cds-yellow-10);
+  border-color: #f3d989;
+  border-left: 3px solid #b28600;
+}
+
+/* Enrichment */
+.node.enrich-node {
+  background: var(--cds-teal-10);
+  border-color: #8de1df;
+  border-left: 3px solid var(--cds-teal-50);
+}
+
+/* Signal fusion */
+.node.fusion-node {
+  background: var(--cds-blue-10);
+  border-color: #c6daff;
+  border-left: 3px solid var(--cds-blue-60);
+}
+
+/* Confidence gate */
+.node.gate-node {
+  background: var(--cds-yellow-10);
+  border: 1.5px solid #f3d989;
+  border-left: 3px solid #b28600;
+  min-width: 0;
+  max-width: none;
+}
+
+/* Output */
+.node.output-node {
+  background: var(--cds-green-10);
+  border-color: #a7f0ba;
+  border-left: 3px solid var(--cds-green-50);
+  min-width: 0;
+  max-width: none;
+}
+
+/* Action */
+.node.action-node {
+  background: var(--cds-purple-10);
+  border-color: #d4bbff;
+  border-left: 3px solid var(--cds-purple-60);
+}
+
+/* Batch input */
+.node.batch-node {
+  background: var(--lane-input-bg);
+  border-color: var(--lane-input-border);
+  border-left: 3px solid var(--lane-input-accent);
+}
+
+/* Campaign exclusive */
+.node.campaign-node {
+  background: var(--cds-purple-10);
+  border-color: #d4bbff;
+  border-left: 3px solid var(--cds-purple-60);
+  min-width: 0;
+  max-width: none;
+}
+
+/* Per-email reference block */
+.node.pipeline-ref {
+  background: var(--cds-blue-10);
+  border-color: #c6daff;
+  border-left: 3px solid var(--cds-blue-60);
+  min-width: 0;
+  max-width: none;
+  position: relative;
+}
+
+.node-label {
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--cds-icon-secondary);
+  line-height: 1;
+}
+
+.node-title {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--cds-text-primary);
+}
+
+.node-sub {
+  font-size: 10.5px;
+  color: var(--cds-text-secondary);
+  line-height: 1.3;
+  margin-top: 1px;
+}
+
+/* ── CONNECTORS ──────────────────────────────── */
+.connector {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 24px;
+  align-self: center;
+}
+
+.connector svg {
+  display: block;
+  overflow: visible;
+  transform: rotate(90deg);
+}
+
+.connector line, .connector path {
+  transition: stroke .2s ease;
+}
+
+/* ── CONFIDENCE GATE METER ───────────────────── */
+.gate-bar {
+  height: 3px;
+  background: #c6c6c6;
+  border-radius: 0;
+  margin-top: 7px;
+  overflow: hidden;
+}
+
+.gate-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #f1c21b, #b28600);
+  border-radius: 0;
+}
+
+.gate-hint {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 3px;
+  font-family: var(--mono);
+  font-size: 8px;
+  color: var(--cds-text-helper);
+}
+
+/* ── SWIMLANE DIVIDER ────────────────────────── */
+.lane-divider {
+  display: none;
+}
+
+/* ── LEGEND ──────────────────────────────────── */
+.legend {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding-top: 14px;
+  border-top: 1px solid var(--cds-border-subtle);
+  flex-wrap: wrap;
+}
+
+.legend-group {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.legend-title {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--cds-text-helper);
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--cds-text-secondary);
+}
+
+.legend-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.legend-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--cds-border-subtle);
+}
+
+/* subtle stagger reveal */
+.swimlane .node { opacity: 0; transform: translateY(4px); animation: riseIn .45s ease forwards; }
+.swimlane .node:nth-child(1)  { animation-delay: .04s; }
+.swimlane .node:nth-child(3)  { animation-delay: .08s; }
+.swimlane .node:nth-child(5)  { animation-delay: .12s; }
+.swimlane .node:nth-child(7)  { animation-delay: .16s; }
+.swimlane .node:nth-child(9)  { animation-delay: .20s; }
+.swimlane .node:nth-child(11) { animation-delay: .24s; }
+.swimlane .node:nth-child(13) { animation-delay: .28s; }
+.swimlane .node:nth-child(15) { animation-delay: .32s; }
+.swimlane .node:nth-child(17) { animation-delay: .36s; }
+.swimlane .node:nth-child(19) { animation-delay: .40s; }
+
+@keyframes riseIn {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── RESPONSIVE ──────────────────────────────── */
+@media (max-width: 1280px) {
+  .slide { min-height: auto; padding: 30px 24px 38px; gap: 18px; }
+  .slide::before { left: 24px; right: 24px; top: 14px; }
+  .swimlanes { grid-template-columns: 1fr; }
+  .zone-banner { display: none; }
+  .node { width: min(100%, 340px); }
+  .node { padding: 10px 11px; }
+  .node-title { font-size: 11.5px; }
+  .node-sub   { font-size: 10px; }
+  .connector  { height: 20px; }
+}
+
+@media (max-width: 960px) {
+  .slide { min-height: auto; padding: 20px 14px 26px; }
+  .slide-header { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .slide-meta { font-size: 10px; flex-wrap: wrap; }
+  .lane-body { overflow-x: auto; }
+  .legend { gap: 14px; }
+}
+</style>
+</head>
+<body>
+<div class="slide">
+
+  <!-- ── HEADER ──────────────────────────────── -->
+  <div class="slide-header">
+    <div class="logo-block">
+      <div class="logo">HUNTERTRACE</div>
+      <div class="logo-tag">Security Intelligence Pipeline</div>
+    </div>
+    <div class="slide-meta">
+      <span>Pipeline Architecture</span>
+      <span class="meta-pill">v3 · Overview</span>
+    </div>
+  </div>
+
+  <!-- ── SWIMLANES ───────────────────────────── -->
+  <div class="swimlanes">
+
+    <!-- ══ SWIMLANE 1: SINGLE-EMAIL ANALYSIS ══ -->
+    <div class="swimlane">
+      <div class="lane-tag single">Single email</div>
+      <div class="lane-body">
+
+        <div class="lane-zones">
+          <div class="zone-flag inputs">① Inputs</div>
+          <div class="zone-flag core">② Core Pipeline</div>
+          <div class="zone-flag decision">③ Decision / Confidence</div>
+          <div class="zone-flag outputs">④ Outputs</div>
+          <div class="zone-flag action">⑤ Action</div>
+        </div>
+
+        <!-- Ingestion -->
+        <div class="node input-node">
+          <div class="node-label">ingestion</div>
+          <div class="node-title">Raw Email</div>
+          <div class="node-sub">.eml file input</div>
+        </div>
+
+        <div class="connector">
+          <svg width="32" height="14" viewBox="0 0 32 14">
+            <line x1="0" y1="7" x2="23" y2="7" stroke="var(--flow-mandatory)" stroke-width="1.5"/>
+            <path d="M19 3.5L27 7L19 10.5" fill="none" stroke="var(--flow-mandatory)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+
+        <!-- Signal Extraction -->
+        <div class="node core-node">
+          <div class="node-label">signal extraction</div>
+          <div class="node-title">Headers &amp; Routing</div>
+          <div class="node-sub">Auth, DKIM, relay chain</div>
+        </div>
+
+        <div class="connector">
+          <svg width="32" height="14" viewBox="0 0 32 14">
+            <line x1="0" y1="7" x2="23" y2="7" stroke="var(--flow-mandatory)" stroke-width="1.5"/>
+            <path d="M19 3.5L27 7L19 10.5" fill="none" stroke="var(--flow-mandatory)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+
+        <!-- Obfuscation Analysis -->
+        <div class="node obfusc-node">
+          <div class="node-label">obfuscation analysis</div>
+          <div class="node-title">VPN / Proxy Detection</div>
+          <div class="node-sub">Relay, spoofing, backtrack</div>
+        </div>
+
+        <div class="connector">
+          <svg width="32" height="14" viewBox="0 0 32 14">
+            <line x1="0" y1="7" x2="23" y2="7" stroke="var(--flow-mandatory)" stroke-width="1.5"/>
+            <path d="M19 3.5L27 7L19 10.5" fill="none" stroke="var(--flow-mandatory)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+
+        <!-- Enrichment -->
+        <div class="node enrich-node">
+          <div class="node-label">enrichment</div>
+          <div class="node-title">Geo / ASN / WHOIS</div>
+          <div class="node-sub">Threat intel overlay</div>
+        </div>
+
+        <div class="connector">
+          <svg width="32" height="14" viewBox="0 0 32 14">
+            <line x1="0" y1="7" x2="23" y2="7" stroke="var(--flow-mandatory)" stroke-width="1.5"/>
+            <path d="M19 3.5L27 7L19 10.5" fill="none" stroke="var(--flow-mandatory)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+
+        <!-- Multi-Signal Fusion -->
+        <div class="node fusion-node">
+          <div class="node-label">signal fusion</div>
+          <div class="node-title">Probabilistic Attribution</div>
+          <div class="node-sub">Ranked candidates</div>
+        </div>
+
+        <div class="connector">
+          <svg width="32" height="14" viewBox="0 0 32 14">
+            <line x1="0" y1="7" x2="23" y2="7" stroke="var(--flow-mandatory)" stroke-width="1.5"/>
+            <path d="M19 3.5L27 7L19 10.5" fill="none" stroke="var(--flow-mandatory)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+
+        <!-- Confidence Gate -->
+        <div class="node gate-node">
+          <div class="node-label">confidence gate</div>
+          <div class="node-title">Calibration &amp; Verdict</div>
+          <div class="node-sub">False-flag check</div>
+          <div class="gate-bar"><div class="gate-fill" style="width:74%"></div></div>
+          <div class="gate-hint"><span>low</span><span>posterior</span><span>high</span></div>
+        </div>
+
+        <!-- green arrow = produces artifact -->
+        <div class="connector">
+          <svg width="32" height="14" viewBox="0 0 32 14">
+            <line x1="0" y1="7" x2="23" y2="7" stroke="var(--flow-primary)" stroke-width="1.5"/>
+            <path d="M19 3.5L27 7L19 10.5" fill="none" stroke="var(--flow-primary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+
+        <!-- Intelligence Products -->
+        <div class="node output-node">
+          <div class="node-label">intelligence products</div>
+          <div class="node-title">Analyst Report</div>
+          <div class="node-sub">Attribution verdict, MITRE</div>
+        </div>
+
+        <!-- dashed = optional downstream -->
+        <div class="connector">
+          <svg width="32" height="14" viewBox="0 0 32 14">
+            <line x1="0" y1="7" x2="23" y2="7" stroke="var(--flow-optional)" stroke-width="1.2" stroke-dasharray="4 3"/>
+            <path d="M19 3.5L27 7L19 10.5" fill="none" stroke="var(--flow-optional)" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+
+        <!-- Action Layer -->
+        <div class="node action-node">
+          <div class="node-label">action layer</div>
+          <div class="node-title">Triage &amp; Escalation</div>
+          <div class="node-sub">Investigation priorities</div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- divider -->
+    <div class="lane-divider"></div>
+
+    <!-- ══ SWIMLANE 2: CAMPAIGN INTELLIGENCE ══ -->
+    <div class="swimlane">
+      <div class="lane-tag campaign">Campaign</div>
+      <div class="lane-body campaign-lane">
+
+        <div class="lane-zones">
+          <div class="zone-flag inputs">① Inputs</div>
+          <div class="zone-flag core">② Core Pipeline</div>
+          <div class="zone-flag decision">③ Decision / Confidence</div>
+          <div class="zone-flag outputs">④ Outputs</div>
+          <div class="zone-flag action">⑤ Action</div>
+        </div>
+
+        <!-- Batch Corpus -->
+        <div class="node batch-node">
+          <div class="node-label">ingestion</div>
+          <div class="node-title">Batch Corpus</div>
+          <div class="node-sub">N email files</div>
+        </div>
+
+        <div class="connector">
+          <svg width="32" height="14" viewBox="0 0 32 14">
+            <line x1="0" y1="7" x2="23" y2="7" stroke="var(--flow-mandatory)" stroke-width="1.5"/>
+            <path d="M19 3.5L27 7L19 10.5" fill="none" stroke="var(--flow-mandatory)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+
+        <!-- Per-email pipeline reference -->
+        <div class="node pipeline-ref">
+          <div class="node-label">pipeline × N</div>
+          <div class="node-title">Per-Email Analysis</div>
+          <div class="node-sub">Full signal pipeline per email</div>
+          <div style="position:absolute;bottom:7px;right:10px;font-family:var(--mono);font-size:17px;color:var(--cds-blue-60);opacity:0.18;font-weight:600;">×N</div>
+        </div>
+
+        <div class="connector">
+          <svg width="32" height="14" viewBox="0 0 32 14">
+            <line x1="0" y1="7" x2="23" y2="7" stroke="var(--flow-mandatory)" stroke-width="1.5"/>
+            <path d="M19 3.5L27 7L19 10.5" fill="none" stroke="var(--flow-mandatory)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+
+        <!-- Campaign Correlation -->
+        <div class="node campaign-node">
+          <div class="node-label">correlation layer</div>
+          <div class="node-title">Campaign Linking</div>
+          <div class="node-sub">Infrastructure reuse</div>
+        </div>
+
+        <div class="connector">
+          <svg width="32" height="14" viewBox="0 0 32 14">
+            <line x1="0" y1="7" x2="23" y2="7" stroke="var(--flow-mandatory)" stroke-width="1.5"/>
+            <path d="M19 3.5L27 7L19 10.5" fill="none" stroke="var(--flow-mandatory)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+
+        <!-- Actor Profiling -->
+        <div class="node campaign-node">
+          <div class="node-label">actor profiling</div>
+          <div class="node-title">TTP Fingerprint</div>
+          <div class="node-sub">Cluster attribution</div>
+        </div>
+
+        <div class="connector">
+          <svg width="32" height="14" viewBox="0 0 32 14">
+            <line x1="0" y1="7" x2="23" y2="7" stroke="var(--flow-mandatory)" stroke-width="1.5"/>
+            <path d="M19 3.5L27 7L19 10.5" fill="none" stroke="var(--flow-mandatory)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+
+        <!-- Actor-Level Confidence Gate -->
+        <div class="node gate-node">
+          <div class="node-label">confidence gate</div>
+          <div class="node-title">Actor-Level Verdict</div>
+          <div class="node-sub">Aggregated posterior</div>
+          <div class="gate-bar"><div class="gate-fill" style="width:85%"></div></div>
+          <div class="gate-hint"><span>low</span><span>actor score</span><span>high</span></div>
+        </div>
+
+        <!-- green arrow -->
+        <div class="connector">
+          <svg width="32" height="14" viewBox="0 0 32 14">
+            <line x1="0" y1="7" x2="23" y2="7" stroke="var(--flow-primary)" stroke-width="1.5"/>
+            <path d="M19 3.5L27 7L19 10.5" fill="none" stroke="var(--flow-primary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+
+        <!-- Campaign Intelligence Products -->
+        <div class="node output-node">
+          <div class="node-label">intelligence products</div>
+          <div class="node-title">Attack Graph + MITRE</div>
+          <div class="node-sub">Actor profiles, graph views</div>
+        </div>
+
+        <!-- dashed -->
+        <div class="connector">
+          <svg width="32" height="14" viewBox="0 0 32 14">
+            <line x1="0" y1="7" x2="23" y2="7" stroke="var(--flow-optional)" stroke-width="1.2" stroke-dasharray="4 3"/>
+            <path d="M19 3.5L27 7L19 10.5" fill="none" stroke="var(--flow-optional)" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+
+        <!-- Action Layer (campaign) -->
+        <div class="node action-node">
+          <div class="node-label">action layer</div>
+          <div class="node-title">Strategic Response</div>
+          <div class="node-sub">Cross-case priorities</div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── LEGEND ───────────────────────────────── -->
+  <div class="legend">
+    <div class="legend-title">Legend</div>
+
+    <div class="legend-item">
+      <div class="legend-dot" style="background:var(--lane-input-bg);border:1.5px solid var(--lane-input-border);border-left:3px solid var(--lane-input-accent);"></div>
+      <span>Input</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:var(--cds-blue-10);border:1.5px solid #c6daff;border-left:3px solid var(--cds-blue-60);"></div>
+      <span>Core analysis</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:var(--cds-yellow-10);border:1.5px solid #f3d989;border-left:3px solid #b28600;"></div>
+      <span>Confidence gate</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:var(--cds-green-10);border:1.5px solid #a7f0ba;border-left:3px solid var(--cds-green-50);"></div>
+      <span>Intelligence output</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:var(--cds-purple-10);border:1.5px solid #d4bbff;border-left:3px solid var(--cds-purple-60);"></div>
+      <span>Campaign / action</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:var(--cds-teal-10);border:1.5px solid #8de1df;border-left:3px solid var(--cds-teal-50);"></div>
+      <span>Enrichment</span>
+    </div>
+
+    <div class="legend-sep"></div>
+
+    <div class="legend-item">
+      <svg width="34" height="10" viewBox="0 0 34 10">
+        <line x1="0" y1="5" x2="27" y2="5" stroke="var(--flow-primary)" stroke-width="1.5"/>
+        <path d="M23 2L31 5L23 8" fill="none" stroke="var(--flow-primary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span>Primary / produces output</span>
+    </div>
+    <div class="legend-item">
+      <svg width="34" height="10" viewBox="0 0 34 10">
+        <line x1="0" y1="5" x2="27" y2="5" stroke="var(--flow-mandatory)" stroke-width="1.5"/>
+        <path d="M23 2L31 5L23 8" fill="none" stroke="var(--flow-mandatory)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span>Mandatory flow</span>
+    </div>
+    <div class="legend-item">
+      <svg width="34" height="10" viewBox="0 0 34 10">
+        <line x1="0" y1="5" x2="27" y2="5" stroke="var(--flow-optional)" stroke-width="1.2" stroke-dasharray="4 3"/>
+        <path d="M23 2L31 5L23 8" fill="none" stroke="var(--flow-optional)" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span>Optional / downstream</span>
+    </div>
+
+    <div style="margin-left:auto;font-family:var(--mono);font-size:9px;color:var(--cds-text-helper);letter-spacing:0.1em;">CONFIDENTIAL · INTERNAL USE</div>
+  </div>
+
+</div>
+</body>
+</html>

@@ -4381,11 +4381,15 @@ class BatchProcessor:
             result = self.pipeline.run(str(eml_file))
             
             if result:
+                from_value = str(result.header_analysis.email_from) if result.header_analysis and result.header_analysis.email_from is not None else 'UNKNOWN'
+                subject_value = str(result.header_analysis.email_subject) if result.header_analysis and result.header_analysis.email_subject is not None else 'UNKNOWN'
+                date_value = str(result.header_analysis.email_date) if result.header_analysis and result.header_analysis.email_date is not None else 'UNKNOWN'
+
                 attacker_data = {
                     'file': eml_file.name,
-                    'from': result.header_analysis.email_from if result.header_analysis else 'UNKNOWN',
-                    'subject': result.header_analysis.email_subject if result.header_analysis else 'UNKNOWN',
-                    'date': result.header_analysis.email_date if result.header_analysis else 'UNKNOWN',
+                    'from': from_value,
+                    'subject': subject_value,
+                    'date': date_value,
                     'VPN_detected': result.proxy_analysis.obfuscation_count > 0 if result.proxy_analysis else False,
                     'full_result': result
                 }

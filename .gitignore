@@ -56,3 +56,5 @@ tests/
 samples/
 output/
 docs/
+demo/
+design/*.html
