@@ -44,7 +44,7 @@ The HunterTrace pipeline is modeled in two complementary views:
 ### Single Email Pipeline
 
 <p align="center">
-  <img src="assets/design/huntertrace-single-email-container.svg" alt="HunterTrace Single Email Architecture" width="980" style="max-width: 100%; height: auto;">
+  <img src="assets/design/huntertrace-single-email-container.svg" alt="HunterTrace Single Email Architecture" width="680" style="max-width: 100%; height: auto;">
 </p>
 
 Source: [assets/design/huntertrace-single-email-container.svg](assets/design/huntertrace-single-email-container.svg)
