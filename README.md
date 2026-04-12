@@ -32,6 +32,16 @@ HunterTrace currently has two analysis layers:
 - `huntertrace.core.pipeline.CompletePipeline` handles single-message and batch email analysis, including header parsing, authentication checks, enrichment, threat analysis, real-IP extraction, and stage-rich reporting.
 - `huntertrace.core.orchestrator.HunterTraceV3` adds campaign correlation, actor profiling, graph building, Bayesian actor attribution, and MITRE ATT&CK output across multiple emails or previously saved JSON reports.
 
+The current single-email pipeline diagram is preserved below:
+
+### Single Email Pipeline Diagram
+
+<p align="center">
+  <img src="assets/design/huntertrace-single-email-container.svg" alt="HunterTrace Single Email Architecture" width="680" style="max-width: 100%; height: auto;">
+</p>
+
+Source: `assets/design/huntertrace-single-email-container.svg`
+
 ## How It Works (Step-by-Step)
 
 1. **Parse the email**
@@ -114,6 +124,80 @@ Equivalent module-style invocation:
 
 ```bash
 python -m huntertrace.cli analyze path/to/message.eml -v
+```
+
+### Example CLI output
+
+```text
+huntertrace analyze path/to/message.eml
+
+  HUNTERTRACE vX.Y.Z
+[START] Complete Attacker IP Identification Pipeline
+================================================================================
+
+[STAGE 1] Extracting email headers...
+[SUCCESS] Found <N> hops in email chain
+[INFO] Unique IPs found: <ip_1>, <ip_2>, <ip_3>
+  [AUTH] DKIM present: <yes|no> | valid: <yes|no>
+    Domain/selector: <domain> / <selector>
+    Failure reason: <reason_if_any>
+
+[EMAIL AUTHENTICATION]
+  Verdict: <CLEAN|SUSPICIOUS|MALICIOUS>
+  SPF: <PASS|FAIL|NONE> | Aligned (relaxed): <True|False>
+  DKIM: <VALID|INVALID|NONE>
+  DMARC: <PASS|FAIL|NONE>
+  ARC: <VALID|INVALID|NONE>
+  [WEBMAIL] <webmail leak summary>
+
+[PHASE 0] Profiling attacker techniques...
+  Risk: <LOW|MEDIUM|HIGH> (<score%>)
+  Header integrity: <percent%>
+  Header semantics: <percent%>
+  Semantic anomalies: <comma-separated list or none>
+
+[STAGE 2] Classifying IPs...
+  <ip_1>: <classification> (confidence: <%>, threat: <score>/100)
+  <ip_2>: <classification> (confidence: <%>, threat: <score>/100)
+
+[STAGE 3A] Analyzing proxy chain...
+  Obfuscation layers detected: <count>
+  Real origin status: <ip_or_status>
+
+[STAGE 3B] Enriching with WHOIS/DNS data...
+  <ip_1>: <owner_or_asn>
+  <ip_2>: <owner_or_asn>
+
+[STAGE 3C] Analyzing infrastructure correlation...
+  Clusters detected: <count>
+  Patterns found: <count>
+  Est. infrastructure size: <count> IPs
+  Est. team size: <range>
+
+[STAGE 4] Aggregating threat intelligence...
+  Overall threat assessment: <LOW|MEDIUM|HIGH>
+
+[REAL IP EXTRACTION] Identifying true attacker IP (VPN/Proxy bypass)...
+  Using ADVANCED Real IP Extractor (...)
+  [+] EXTRACTED ATTACKER IP: <ip> (<confidence%> confidence)
+
+[GEOLOCATION] Enriching attacker IP location...
+  Using real IP extraction result: <ip>
+
+[ATTRIBUTION] Running Bayesian multi-signal attribution (Layer 5)...
+  Primary region : <region>
+  Confidence     : <%> (ACI-adjusted: <%>)
+  ACI score      : <score>
+  Tier           : <tier> - <label>
+  Reliability    : <reliability_mode>
+  Signals used   : <signal_1>, <signal_2>, <signal_3>
+  Top candidates :
+    <region_a>                       <%>
+    <region_b>                       <%>
+    <region_c>                       <%>
+
+[STAGE COMPLETE] All stages finished successfully
+Analysis complete
 ```
 
 ### Dataset / bulk processing
@@ -222,17 +306,24 @@ Important fields:
 
 The stage-rich pipeline report additionally includes parsed hops, classifications, enrichment, threat intelligence, geolocation, real-IP analysis, and stage-level attribution summaries.
 
-## Explainability
+## Performance
 
-HunterTrace is designed to keep scoring auditable.
+Evaluated on a labeled corpus of 53 phishing emails with known ground-truth origins:
 
-- Signals are normalized before scoring instead of being used as ad hoc text matches.
-- Provenance is derived from the source header and hop position, so the system can treat sender-controlled values differently from relay-generated or cryptographic ones.
-- Each candidate evaluation preserves supporting signals, conflicting signals, penalties, and group participation.
-- Confidence breakdowns expose evidence strength, reliability, agreement, coverage, anonymization effects, and penalties.
-- Trace data links the final outcome back to the input source, signal count, candidate list, authentication state, and correlation decisions.
+| Method | Top-1 Country Accuracy | Notes |
+|--------|------------------------|-------|
+| IP Geolocation Only | ~31% | Industry baseline |
+| Timezone Only | ~52% | VPN-resistant, coarse |
+| **HUNTERTRACE (Bayesian)** | **52.8%** | Multi-signal fusion |
+| **HUNTERTRACE (+ Graph)** | **56.6%** | Region-level accuracy |
 
-This makes it possible to answer: *which signal mattered, where did it come from, how much was it trusted, and why did the system abstain or decide anyway?*
+**95% Confidence Interval**: 39.7% – 65.6% (n=53)  
+**Webmail IP Leak Rate**: 37.7% of analyzed emails  
+**Coverage**: 100% (no failed predictions)
+
+> ⚠️ **Note**: Performance numbers are based on an initial corpus of 53 labeled
+> emails. Larger-scale validation is in progress. Region-level accuracy (56.6%)
+> is more reliable than country-level given current corpus size.
 
 ## Evaluation
 
@@ -301,6 +392,17 @@ Recommended workflow:
 3. Add or update tests for scoring, provenance, validation, or CLI behavior when those paths change.
 4. Prefer changes that preserve explainability and abstention safety over aggressive attribution.
 5. Run the relevant evaluation or adversarial modules when modifying scoring logic.
+
+## Citation
+
+```bibtex
+@software{huntertrace2026,
+  author = {[Your Name]},
+  title = {HUNTERTRACE: Multi-Signal Phishing Attribution},
+  year = {2026},
+  url = {https://github.com/akshaydotweb/HunterTrace}
+}
+```
 
 If you change scoring, provenance, or validation behavior, update the documentation and example outputs at the same time.
 
