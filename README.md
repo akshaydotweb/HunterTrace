@@ -36,38 +36,24 @@ Traditional email forensics relies on IP geolocation alone (~31% accuracy). HUNT
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    HUNTERTRACE PIPELINE                     │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  Stage 1: Header Extraction (RFC 2822 parsing)              │
-│      ↓                                                      │
-│  Webmail IP Leak Detection (X-Originating-IP extraction)    │
-│      ↓                                                      │
-│  Stage 2: IP Classification (VPN/Tor/Proxy/Residential)     │
-│      ↓                                                      │
-│  Stage 3A: Enrichment (WHOIS, ASN, hosting provider)        │
-│      ↓                                                      │
-│  VPN Backtrack Analysis (12 bypass techniques)              │
-│      ↓                                                      │
-│  Real IP Extraction (strips proxy layers)                   │
-│      ↓                                                      │
-│  Stage 3B: Threat Intelligence                              │
-│  Stage 3C: Correlation Analysis                             │
-│      ↓                                                      │
-│  Stage 4: Geolocation (city-level, IPv4 + IPv6)             │
-│      ↓                                                      │
-│  Stage 5: Attribution Analysis (evidence packaging)         │
-│      ↓                                                      │
-│  Bayesian Multi-Signal Fusion (ACI confidence scoring)      │
-│      ↓                                                      │
-│  Sender Classification (hop forgery + timezone analysis)    │
-│      ↓                                                      │
-│  Output: JSON report + text summary + attack graph HTML     │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-```
+The HunterTrace pipeline is modeled in two complementary views:
+
+- **Single Email Pipeline**: end-to-end analysis for one `.eml` sample
+- **Campaign Intelligence Pipeline**: cross-email correlation and actor-level attribution
+
+### Single Email Pipeline
+
+![HunterTrace Single Email Architecture](assets/design/huntertrace-single-email-container.svg)
+
+Source: [assets/design/huntertrace-single-email-container.svg](assets/design/huntertrace-single-email-container.svg)
+
+### Campaign Intelligence Pipeline
+
+![HunterTrace Campaign Architecture](assets/design/huntertrace-campaign-container.svg)
+
+Source: [assets/design/huntertrace-campaign-container.svg](assets/design/huntertrace-campaign-container.svg)
+
+
 
 ## Quick Start
 

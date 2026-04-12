@@ -32,6 +32,12 @@ class InferencePolicy:
     min_supporting_signals: int = 2
     min_contributing_groups: int = 2
     min_distinct_supporting_groups: int = 2
+    min_signal_count_for_confidence: int = 2
+    anonymization_high_threshold: float = 0.75
+    contradiction_penalty: float = 0.5
+    clean_case_floor: float = 0.75
+    minimum_evidence_cap: float = 0.35
+    anonymization_cap: float = 0.4
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> "InferencePolicy":
@@ -41,7 +47,398 @@ class InferencePolicy:
             min_supporting_signals=int(value.get("min_supporting_signals", 2)),
             min_contributing_groups=int(value.get("min_contributing_groups", 2)),
             min_distinct_supporting_groups=int(value.get("min_distinct_supporting_groups", 2)),
+            min_signal_count_for_confidence=int(value.get("min_signal_count_for_confidence", 2)),
+            anonymization_high_threshold=float(value.get("anonymization_high_threshold", 0.75)),
+            contradiction_penalty=float(value.get("contradiction_penalty", 0.5)),
+            clean_case_floor=float(value.get("clean_case_floor", 0.75)),
+            minimum_evidence_cap=float(value.get("minimum_evidence_cap", 0.35)),
+            anonymization_cap=float(value.get("anonymization_cap", 0.4)),
         )
+
+
+def _clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
+    return max(lo, min(hi, float(value)))
+
+
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    text = str(value or "").strip().lower()
+    return text in {"1", "true", "yes", "pass", "passed", "aligned", "valid"}
+
+
+def _is_auth_pass(value: Any) -> bool:
+    text = str(value or "").strip().lower()
+    return text in {"pass", "passed", "aligned", "valid", "true", "1", "bestguesspass"}
+
+
+def _is_auth_fail(value: Any) -> bool:
+    text = str(value or "").strip().lower()
+    return text in {"fail", "failed", "temperror", "permerror", "none", "neutral", "false", "0"}
+
+
+def _provenance_reliability(label: str) -> float:
+    norm = str(label or "").strip().lower()
+    if norm in {"recipient_mta_generated", "cryptographic"}:
+        return 1.0
+    if norm in {"sending_mta_generated", "intermediary_relay_generated"}:
+        return 0.7
+    if norm == "sender_controlled":
+        return 0.3
+    return 0.5
+
+
+def _build_auth_summary(
+    payload_auth: Mapping[str, Any],
+    scoring_signals: Sequence[NormalizedSignal],
+) -> Dict[str, Any]:
+    dkim_pass = None
+    spf_pass = None
+    dmarc_pass = None
+    dkim_aligned = None
+
+    dkim_obj = payload_auth.get("dkim") if isinstance(payload_auth, Mapping) else None
+    if isinstance(dkim_obj, Mapping) and "dkim_valid" in dkim_obj:
+        dkim_pass = _as_bool(dkim_obj.get("dkim_valid"))
+
+    for signal in scoring_signals:
+        name = str(signal.name or "").strip().lower()
+        value = signal.value
+        if name in {"dkim_valid", "dkim_result"}:
+            if _is_auth_pass(value):
+                dkim_pass = True
+            elif _is_auth_fail(value):
+                dkim_pass = False
+        elif name in {"spf_result", "spf"}:
+            if _is_auth_pass(value):
+                spf_pass = True
+            elif _is_auth_fail(value):
+                spf_pass = False
+        elif name in {"dmarc_result", "dmarc"}:
+            if _is_auth_pass(value):
+                dmarc_pass = True
+            elif _is_auth_fail(value):
+                dmarc_pass = False
+        elif name in {"dkim_aligned"}:
+            dkim_aligned = _as_bool(value)
+
+    if dkim_aligned is None and dkim_pass is True:
+        dkim_aligned = True
+
+    return {
+        "dkim_pass": dkim_pass,
+        "spf_pass": spf_pass,
+        "dmarc_pass": dmarc_pass,
+        "dkim_aligned": dkim_aligned,
+    }
+
+
+def _compute_confidence_breakdown(
+    *,
+    engine: InferenceEngine,
+    best: Any,
+    evaluations: Sequence[Any],
+    scoring_signals: Sequence[NormalizedSignal],
+    rejected: Sequence[Mapping[str, Any]],
+    anomalies: Sequence[Mapping[str, Any]],
+    correlation_adjustment: Any,
+    confidence_penalty: float,
+    anonymization_detected: bool,
+    anonymization_confidence: float,
+    anonymization_indicators: Sequence[str],
+    policy: InferencePolicy,
+    payload_authentication: Mapping[str, Any],
+) -> Dict[str, Any]:
+    supporting_count = len(best.supporting_signals)
+    conflicting_count = len(best.conflicting_signals)
+
+    signals_used_count = sum(
+        1
+        for signal in scoring_signals
+        if signal.candidate_region is not None
+        and (not signal.excluded_reason)
+        and engine._resolve_base_weight(signal) > 0
+        and engine._resolve_validation_multiplier(signal) > 0
+    )
+
+    independent_families = sorted(
+        {
+            signal.group
+            for signal in scoring_signals
+            if signal.candidate_region is not None
+            and (not signal.excluded_reason)
+            and engine._resolve_base_weight(signal) > 0
+            and engine._resolve_validation_multiplier(signal) > 0
+        }
+    )
+
+    evidence_strength = 0.0
+    if float(best.max_possible_score) > 0.0:
+        evidence_strength = _clamp(float(best.weighted_score) / float(best.max_possible_score))
+
+    reliability_numer = 0.0
+    reliability_denom = 0.0
+    low_trust_count = 0
+    usable_count = 0
+    for signal in scoring_signals:
+        if signal.candidate_region is None:
+            continue
+        if signal.excluded_reason:
+            continue
+        base_weight = engine._resolve_base_weight(signal)
+        if base_weight <= 0 or engine._resolve_validation_multiplier(signal) <= 0:
+            continue
+        usable_count += 1
+        provenance_rel = _provenance_reliability(signal.provenance_class)
+        signal_weight = max(0.01, base_weight * engine._resolve_confidence(signal))
+        reliability_numer += provenance_rel * signal_weight
+        reliability_denom += signal_weight
+        if provenance_rel <= 0.35:
+            low_trust_count += 1
+
+    reliability = (reliability_numer / reliability_denom) if reliability_denom > 0 else 0.0
+
+    auth_summary = _build_auth_summary(payload_authentication, scoring_signals)
+    auth_failures = 0
+    for key in ("dkim_pass", "spf_pass", "dmarc_pass"):
+        if auth_summary.get(key) is False:
+            auth_failures += 1
+    if auth_failures:
+        reliability *= (0.85 ** auth_failures)
+
+    if usable_count > 0 and (low_trust_count / float(usable_count)) >= 0.5:
+        reliability *= 0.75
+
+    reliability = round(_clamp(reliability), 12)
+
+    geo_consistency = 0.5
+    infra_total = 0
+    infra_supporting = 0
+    for signal in scoring_signals:
+        if signal.group != "infrastructure" or signal.candidate_region is None:
+            continue
+        if signal.excluded_reason:
+            continue
+        if engine._resolve_base_weight(signal) <= 0 or engine._resolve_validation_multiplier(signal) <= 0:
+            continue
+        infra_total += 1
+        if str(signal.candidate_region) == str(best.candidate):
+            infra_supporting += 1
+    if infra_total > 0:
+        geo_consistency = infra_supporting / float(infra_total)
+
+    temporal_consistency = 0.5
+    asn_consistency = 0.5
+    if correlation_adjustment is not None:
+        temporal_consistency = _clamp(
+            (
+                float(correlation_adjustment.temporal.consistency_score)
+                + float(correlation_adjustment.semantic.temporal_consistency_score)
+            )
+            / 2.0
+        )
+        asn_consistency = _clamp(float(correlation_adjustment.correlation.path_consistency_score))
+
+    conflict_ratio = 0.0
+    total_decisive = supporting_count + conflicting_count
+    if total_decisive > 0:
+        conflict_ratio = conflicting_count / float(total_decisive)
+
+    agreement = _clamp(
+        (0.40 * geo_consistency)
+        + (0.30 * asn_consistency)
+        + (0.30 * temporal_consistency)
+    )
+    agreement *= (1.0 - (0.70 * conflict_ratio))
+    agreement = round(_clamp(agreement), 12)
+
+    expected_signals = max(1, signals_used_count + len(rejected))
+    coverage = signals_used_count / float(expected_signals)
+
+    if len(independent_families) < 2:
+        coverage *= 0.75
+
+    missing_auth_count = 0
+    for key in ("dkim_pass", "spf_pass", "dmarc_pass"):
+        if auth_summary.get(key) is None:
+            missing_auth_count += 1
+    if missing_auth_count > 0:
+        coverage *= (0.90 ** missing_auth_count)
+
+    has_truncated_chain = False
+    if correlation_adjustment is not None:
+        flags = set(correlation_adjustment.semantic.anomaly_flags)
+        has_truncated_chain = bool(flags.intersection({"INCOMPLETE_HOP", "BROKEN_CHAIN"}))
+    if has_truncated_chain:
+        coverage *= 0.85
+
+    dns_failure_detected = any(
+        "dns" in str(row.get("type", "")).lower() or "dns" in str(row.get("detail", "")).lower()
+        for row in anomalies
+    )
+    if dns_failure_detected:
+        coverage *= 0.85
+
+    coverage = round(_clamp(coverage), 12)
+
+    raw_conf = evidence_strength
+    calibrated = _clamp(raw_conf * reliability * agreement * coverage)
+
+    penalties_applied: List[Dict[str, Any]] = []
+
+    if confidence_penalty > 0.0:
+        prior = calibrated
+        calibrated = _clamp(calibrated * (1.0 - confidence_penalty))
+        penalties_applied.append(
+            {
+                "name": "correlation_anomaly_penalty",
+                "factor": round(1.0 - confidence_penalty, 12),
+                "before": round(prior, 12),
+                "after": round(calibrated, 12),
+            }
+        )
+
+    contradiction_strength = 0.0
+    if float(best.supporting_score) > 0.0:
+        contradiction_strength = float(best.penalty_score) / float(best.supporting_score)
+    strong_conflict = (
+        conflicting_count >= supporting_count
+        or contradiction_strength >= 0.35
+        or conflict_ratio >= 0.45
+    )
+    if strong_conflict:
+        prior = calibrated
+        factor = _clamp(policy.contradiction_penalty)
+        calibrated = _clamp(calibrated * factor)
+        penalties_applied.append(
+            {
+                "name": "contradiction_penalty",
+                "factor": round(factor, 12),
+                "before": round(prior, 12),
+                "after": round(calibrated, 12),
+            }
+        )
+
+    cloud_vpn_indicator = any(
+        token in str(ind).lower()
+        for ind in anonymization_indicators
+        for token in ("vpn", "proxy", "datacenter", "cloud", "relay")
+    )
+    if cloud_vpn_indicator:
+        # Reduce attribution confidence without collapsing to near-zero for cloud/VPN routing.
+        prior = calibrated
+        calibrated = _clamp(calibrated * 0.85)
+        penalties_applied.append(
+            {
+                "name": "cloud_vpn_attribution_damping",
+                "factor": 0.85,
+                "before": round(prior, 12),
+                "after": round(calibrated, 12),
+            }
+        )
+
+    minimum_evidence_triggered = (
+        len(independent_families) < 2
+        or signals_used_count < policy.min_signal_count_for_confidence
+    )
+    if minimum_evidence_triggered and calibrated > policy.minimum_evidence_cap:
+        prior = calibrated
+        calibrated = policy.minimum_evidence_cap
+        penalties_applied.append(
+            {
+                "name": "minimum_evidence_cap",
+                "cap": round(policy.minimum_evidence_cap, 12),
+                "before": round(prior, 12),
+                "after": round(calibrated, 12),
+            }
+        )
+
+    if anonymization_detected and calibrated < policy.anonymization_high_threshold and calibrated > policy.anonymization_cap:
+        prior = calibrated
+        calibrated = policy.anonymization_cap
+        penalties_applied.append(
+            {
+                "name": "anonymization_cap",
+                "cap": round(policy.anonymization_cap, 12),
+                "before": round(prior, 12),
+                "after": round(calibrated, 12),
+            }
+        )
+
+    clean_high_quality_case = (
+        auth_summary.get("dkim_aligned") is True
+        and auth_summary.get("spf_pass") is True
+        and auth_summary.get("dmarc_pass") is True
+        and float(anonymization_confidence) < 0.25
+        and len(independent_families) >= 2
+        and agreement >= 0.65
+    )
+    if clean_high_quality_case and calibrated < policy.clean_case_floor:
+        prior = calibrated
+        calibrated = policy.clean_case_floor
+        penalties_applied.append(
+            {
+                "name": "clean_case_floor",
+                "floor": round(policy.clean_case_floor, 12),
+                "before": round(prior, 12),
+                "after": round(calibrated, 12),
+            }
+        )
+
+    if calibrated > float(engine.config.confidence_cap):
+        prior = calibrated
+        calibrated = float(engine.config.confidence_cap)
+        penalties_applied.append(
+            {
+                "name": "default_confidence_cap",
+                "cap": round(float(engine.config.confidence_cap), 12),
+                "before": round(prior, 12),
+                "after": round(calibrated, 12),
+            }
+        )
+
+    best_top = float(evaluations[0].confidence) if evaluations else 0.0
+    ties = [
+        item for item in evaluations
+        if abs(float(item.confidence) - best_top) <= policy.tie_epsilon
+    ]
+    tie_detected = len(ties) > 1
+
+    all_rejected = signals_used_count <= 0
+
+    forced_inconclusive = (
+        minimum_evidence_triggered
+        or tie_detected
+        or all_rejected
+        or (signals_used_count == 0 and len(scoring_signals) == 0)
+    )
+
+    return {
+        "evidence_strength": round(_clamp(evidence_strength), 12),
+        "reliability": reliability,
+        "agreement": agreement,
+        "coverage": coverage,
+        "penalties_applied": penalties_applied,
+        "signals_used_count": int(signals_used_count),
+        "expected_signals": int(expected_signals),
+        "independent_signal_families": independent_families,
+        "minimum_evidence_triggered": bool(minimum_evidence_triggered),
+        "strong_conflict_detected": bool(strong_conflict),
+        "tie_detected": bool(tie_detected),
+        "all_signals_rejected": bool(all_rejected),
+        "forced_inconclusive": bool(forced_inconclusive),
+        "auth": auth_summary,
+        "agreement_inputs": {
+            "geo_agreement": round(_clamp(geo_consistency), 12),
+            "asn_consistency": round(_clamp(asn_consistency), 12),
+            "temporal_consistency": round(_clamp(temporal_consistency), 12),
+            "conflict_ratio": round(_clamp(conflict_ratio), 12),
+        },
+        "anonymization_detected": bool(anonymization_detected),
+        "anonymization_confidence": round(_clamp(anonymization_confidence), 12),
+        "anonymization_indicators": list(anonymization_indicators),
+        "final_confidence": round(_clamp(calibrated), 12),
+    }
 
 
 @dataclass(frozen=True)
@@ -804,11 +1201,23 @@ class AttributionRunner:
         )
         best = evaluations[0]
 
-        raw_best_confidence = float(best.confidence)
-        best_confidence = round(
-            max(0.0, raw_best_confidence * (1.0 - confidence_penalty)),
-            12,
+        confidence_breakdown = _compute_confidence_breakdown(
+            engine=self.engine,
+            best=best,
+            evaluations=evaluations,
+            scoring_signals=scoring_signals,
+            rejected=rejected,
+            anomalies=payload.anomalies,
+            correlation_adjustment=correlation_adjustment if self.use_correlation else None,
+            confidence_penalty=confidence_penalty,
+            anonymization_detected=anonymization_detected,
+            anonymization_confidence=anonymization_confidence,
+            anonymization_indicators=anonymization_indicators,
+            policy=self.policy,
+            payload_authentication=payload.authentication or {},
         )
+        best_confidence = float(confidence_breakdown["final_confidence"])
+        raw_best_confidence = float(best.confidence)
         ties = [
             item for item in evaluations
             if abs(float(item.confidence) - raw_best_confidence) <= self.policy.tie_epsilon
@@ -827,6 +1236,10 @@ class AttributionRunner:
             verdict = "inconclusive"
             region = None
             limitations.append("Tie between top candidate scores.")
+        if bool(confidence_breakdown.get("forced_inconclusive")):
+            verdict = "inconclusive"
+            region = None
+            limitations.append("Hard calibration rule forced inconclusive verdict.")
         if best_confidence < self.policy.confidence_threshold:
             verdict = "inconclusive"
             region = None
@@ -919,6 +1332,7 @@ class AttributionRunner:
             "anomalies": anomalies,
             "limitations": limitations,
             "authentication": payload.authentication or {},
+            "confidence_breakdown": confidence_breakdown,
         }
         result["explanation"] = _build_explanation(
             verdict=verdict,
@@ -935,6 +1349,7 @@ class AttributionRunner:
             "input_type": payload.input_type,
             "signal_count": len(payload.signals),
             "candidate_count": len(candidates),
+            "confidence_breakdown": confidence_breakdown,
             "candidates": [
                 {
                     "candidate": str(item.candidate),
@@ -943,10 +1358,6 @@ class AttributionRunner:
                     "weighted_score": float(item.weighted_score),
                     "max_possible_score": float(item.max_possible_score),
                     "confidence": float(item.confidence),
-                    "confidence_post_correlation_penalty": round(
-                        float(item.confidence) * (1.0 - confidence_penalty),
-                        12,
-                    ),
                     "supporting_count": len(item.supporting_signals),
                     "conflicting_count": len(item.conflicting_signals),
                     "supporting_groups": list(item.supporting_groups),

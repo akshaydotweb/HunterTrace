@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HunterTrace — Pipeline Architecture</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#f4f5f7;
+  --s1:#ffffff;
+  --s2:#f0f2f5;
+  --s3:#e8ebef;
+  --b1:#d8dde6;
+  --b2:#c4cad6;
+  --b3:#a0aabb;
+  --text:#1a2233;
+  --muted:#5a6a80;
+  --faint:#b0bccf;
+  --cyan:#0078a8;
+  --cyan-bg:#e8f5fb;
+  --cyan-border:#90cce0;
+  --amber:#b06800;
+  --amber-bg:#fef3e0;
+  --amber-border:#e8b850;
+  --amber2:#7a4c10;
+  --green:#156a38;
+  --green-bg:#e8f7ee;
+  --green-border:#7acca0;
+  --red:#b01828;
+  --red-bg:#fdeef0;
+  --red-border:#e89098;
+  --purple:#5040b0;
+  --purple-bg:#eeecfb;
+  --purple-border:#b0a8e8;
+  --slate:#6a7a90;
+}
+body{background:var(--bg);color:var(--text);font-family:'IBM Plex Sans',sans-serif;font-size:13px;min-height:100vh}
+.wrap{max-width:1400px;margin:0 auto;padding:0}
+
+/* HEADER */
+.hdr{display:flex;align-items:center;gap:16px;padding:20px 32px 14px;border-bottom:2px solid var(--b1);background:var(--s1)}
+.logo{font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:600;letter-spacing:.1em;color:var(--cyan)}
+.logo em{color:var(--muted);font-style:normal;font-weight:400}
+.tagline{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+.badge{margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--muted);border:1px solid var(--b2);padding:3px 10px;letter-spacing:.1em;background:var(--s2)}
+
+/* LEGEND */
+.legend{display:flex;flex-wrap:wrap;gap:5px 20px;padding:10px 32px;background:var(--s2);border-bottom:1px solid var(--b1)}
+.li{display:flex;align-items:center;gap:6px;font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted)}
+.ld{width:10px;height:10px;flex-shrink:0}
+.sb{font-family:'IBM Plex Mono',monospace;font-size:7.5px;padding:1.5px 5px;font-weight:500;letter-spacing:.04em;text-transform:uppercase}
+.sb.api{background:var(--amber-bg);color:var(--amber);border:1px solid var(--amber-border)}
+.sb.cond{background:var(--amber-bg);color:#8a5200;border:1px solid #d4a040}
+.sb.opt{background:var(--purple-bg);color:var(--purple);border:1px solid var(--purple-border)}
+.sb.act{background:var(--green-bg);color:var(--green);border:1px solid var(--green-border)}
+.sb.dead{background:var(--red-bg);color:var(--red);border:1px solid var(--red-border);font-style:italic}
+
+/* BOARD */
+.board{padding:24px 32px 36px;display:flex;flex-direction:column;gap:2px}
+
+/* LANES */
+.lane{border:1px solid var(--b1);overflow:hidden;margin-bottom:3px;background:var(--s1);box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.sec-hdr{display:flex;align-items:center;gap:12px;padding:9px 16px;background:var(--s2);border-bottom:1px solid var(--b1)}
+.sec-icon{font-size:11px}
+.sec-title{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--text)}
+.sec-sub{font-size:10px;color:var(--muted)}
+
+/* ZONE HEADER ROW */
+.zone-hdr-row{display:flex;gap:1px;background:var(--b1);margin-bottom:0}
+.zh{flex:1;padding:5px 8px;font-family:'IBM Plex Mono',monospace;font-size:8px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);background:var(--s3);text-align:center}
+.zh.active{color:var(--cyan);border-bottom:2px solid var(--cyan);background:var(--cyan-bg)}
+
+/* FLOW STAGES */
+.frow{display:flex;align-items:flex-start;gap:0;overflow-x:auto;padding-bottom:2px}
+.fstage{flex-shrink:0;width:148px;border:1px solid var(--b2);padding:9px 11px;display:flex;flex-direction:column;gap:3px;background:var(--s1)}
+.fstage.core{border-left:3px solid var(--cyan);background:var(--cyan-bg)}
+.fstage.cond{border-left:3px solid var(--amber);border-top-style:dashed;border-right-style:dashed;border-bottom-style:dashed;background:var(--amber-bg)}
+.fstage.opt{border-left:3px solid var(--purple);border-top-style:dashed;border-right-style:dashed;border-bottom-style:dashed;background:var(--purple-bg)}
+.fstage.out{border-left:3px solid var(--green);background:var(--green-bg)}
+.fstage.entry{border-left:3px solid var(--red);background:var(--red-bg)}
+
+/* CAMPAIGN STAGES */
+.cstage{flex:1;min-width:120px;border:1px solid var(--b2);padding:9px 11px;display:flex;flex-direction:column;gap:3px;background:var(--s1)}
+.cstage.core{border-left:3px solid var(--purple);background:var(--purple-bg)}
+.cstage.out{border-left:3px solid var(--green);background:var(--green-bg)}
+
+/* DUAL BLOCK */
+.dual{flex-shrink:0;width:148px;display:flex;flex-direction:column;gap:5px}
+
+/* ARROWS */
+.farrow{width:22px;flex-shrink:0;display:flex;align-items:center;align-self:center}
+.fdash{width:22px;flex-shrink:0;display:flex;align-items:center;align-self:center}
+.carrow{display:flex;align-items:center;flex-shrink:0;padding:0 2px;align-self:center}
+
+/* TEXT CLASSES */
+.sid{font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--faint);letter-spacing:.1em;text-transform:uppercase}
+.sname{font-size:11px;font-weight:600;color:var(--text);line-height:1.25}
+.sclass{font-family:'IBM Plex Mono',monospace;font-size:8.5px;color:var(--muted);line-height:1.3;margin-top:1px}
+.sout{font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--green);margin-top:2px}
+.sout.amber{color:var(--amber)}
+.sbadge-row{display:flex;flex-wrap:wrap;gap:2px;margin-top:4px}
+
+/* CONFIDENCE GATE */
+.gate{border:1.5px solid var(--cyan-border);padding:10px 12px;display:flex;flex-direction:column;gap:3px;position:relative;background:var(--cyan-bg)}
+.gate::before{content:'CONFIDENCE GATE';position:absolute;top:-9px;left:12px;font-family:'IBM Plex Mono',monospace;font-size:8px;letter-spacing:.14em;color:var(--cyan);background:var(--cyan-bg);padding:0 6px}
+.gate-bar{height:4px;background:var(--b2);margin-top:4px;position:relative;overflow:hidden}
+.gate-fill{height:100%;background:linear-gradient(90deg,var(--amber),var(--cyan));width:72%}
+.gate-labels{display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--muted);margin-top:2px}
+
+/* LEGACY NOTE */
+.legacy-note{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border:1px dashed var(--red-border);background:var(--red-bg);margin-top:8px}
+
+/* ARTIFACTS */
+.art-zone{border:1px solid var(--b1);overflow:hidden;background:var(--s1);box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.art-hdr{display:flex;align-items:center;gap:10px;padding:10px 16px;background:var(--green-bg);border-bottom:1px solid var(--green-border)}
+.art-title{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--green)}
+.art-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:1px;background:var(--b1)}
+.art-card{background:var(--s1);padding:12px 14px;border-left:3px solid var(--green)}
+.art-card.v3{border-left-color:var(--purple);background:var(--purple-bg)}
+.art-name{font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--green);margin-bottom:5px;font-weight:500}
+.art-card.v3 .art-name{color:var(--purple)}
+.art-keys{display:flex;flex-direction:column;gap:1.5px}
+.ak{font-family:'IBM Plex Mono',monospace;font-size:8.5px;color:var(--muted)}
+.ak::before{content:'→ ';color:var(--faint)}
+.ak.dead{color:var(--red)}
+
+/* CAMPAIGN PER-EMAIL block */
+.per-email-block{flex-shrink:0;width:150px;border:1px solid var(--cyan-border);border-left:3px solid var(--cyan);padding:9px 11px;display:flex;flex-direction:column;gap:3px;background:var(--cyan-bg);position:relative}
+
+@media(max-width:860px){
+  .board{padding:14px 12px 24px}
+  .hdr{padding:14px 12px 10px}
+  .legend{padding:8px 12px}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<!-- HEADER -->
+<div class="hdr">
+  <div class="logo">HUNTER<em>TRACE</em></div>
+  <div class="tagline">Email Forensics &amp; Threat Attribution</div>
+  <div class="badge">v3 · Architecture Reference</div>
+</div>
+
+<!-- LEGEND -->
+<div class="legend">
+  <div class="li"><div class="ld" style="background:var(--red)"></div>Entry</div>
+  <div class="li"><div class="ld" style="background:var(--cyan)"></div>Core / Mandatory</div>
+  <div class="li"><div class="ld" style="background:var(--amber)"></div>Conditional</div>
+  <div class="li"><div class="ld" style="background:var(--purple)"></div>Optional module</div>
+  <div class="li"><div class="ld" style="background:var(--green)"></div>Output</div>
+  <div class="li">
+    <svg width="28" height="8"><line x1="0" y1="4" x2="22" y2="4" stroke="#a0aabb" stroke-width="1.5"/><polygon points="22,1 28,4 22,7" fill="#a0aabb"/></svg>
+    Mandatory path
+  </div>
+  <div class="li">
+    <svg width="28" height="8"><line x1="0" y1="4" x2="22" y2="4" stroke="#e8b850" stroke-width="1.5" stroke-dasharray="3 3"/><polygon points="22,1 28,4 22,7" fill="#e8b850"/></svg>
+    Conditional path
+  </div>
+  <div class="li"><div class="sb api" style="font-size:8px">API</div>&nbsp;External API</div>
+  <div class="li"><div class="sb opt" style="font-size:8px">Optional</div>&nbsp;Module-gated</div>
+</div>
+
+<div class="board">
+
+<!-- ══════════════════════════════════════════════
+     LANE 1: SINGLE-EMAIL RUNTIME
+══════════════════════════════════════════════ -->
+<div class="lane">
+  <div class="sec-hdr">
+    <div class="sec-icon">✉</div>
+    <div class="sec-title">Single-Email Runtime</div>
+    <div class="sec-sub">· CompletePipeline.run()</div>
+  </div>
+
+  <!-- ZONE HEADERS -->
+  <div class="zone-hdr-row">
+    <div class="zh active">① Input</div>
+    <div class="zh active">② Header &amp; Profiling</div>
+    <div class="zh active">③ IP Analysis</div>
+    <div class="zh active">④ Enrichment</div>
+    <div class="zh active">⑤ Attribution Engine</div>
+    <div class="zh active">⑥ Output</div>
+  </div>
+
+  <div style="padding:16px;display:flex;flex-direction:column;gap:10px;overflow-x:auto;background:var(--s1)">
+
+    <!-- ROW A -->
+    <div class="frow">
+
+      <div class="fstage entry">
+        <div class="sid">entry</div>
+        <div class="sname">Input</div>
+        <div class="sclass">.eml file</div>
+        <div class="sout amber">raw_email</div>
+      </div>
+
+      <div class="farrow"><svg width="22" height="10"><line x1="0" y1="5" x2="16" y2="5" stroke="#a0aabb" stroke-width="1.5"/><polygon points="15,2 22,5 15,8" fill="#a0aabb"/></svg></div>
+
+      <div class="fstage core">
+        <div class="sid">stage 1</div>
+        <div class="sname">Header Extraction</div>
+        <div class="sclass">HeaderExtractor</div>
+        <div class="sout">received_chain · auth_headers · dkim_data</div>
+      </div>
+
+      <div class="fdash"><svg width="22" height="10"><line x1="0" y1="5" x2="16" y2="5" stroke="#e8b850" stroke-width="1.5" stroke-dasharray="3 3"/><polygon points="15,2 22,5 15,8" fill="#e8b850"/></svg></div>
+
+      <div class="fstage cond">
+        <div class="sid">post-s1 · cond</div>
+        <div class="sname">Webmail IP Extraction</div>
+        <div class="sclass">run_webmail_extraction()</div>
+        <div class="sout">provider_ip_leaks</div>
+        <div class="sbadge-row"><div class="sb cond">if provider header</div></div>
+      </div>
+
+      <div class="farrow"><svg width="22" height="10"><line x1="0" y1="5" x2="16" y2="5" stroke="#a0aabb" stroke-width="1.5"/><polygon points="15,2 22,5 15,8" fill="#a0aabb"/></svg></div>
+
+      <div class="fstage core">
+        <div class="sid">phase 0</div>
+        <div class="sname">Technique Profiling</div>
+        <div class="sclass">AttackerTechniqueProfiler</div>
+        <div class="sout">forgery_flags · aggregate_score</div>
+        <div class="sbadge-row"><div class="sb opt">scanner module</div></div>
+      </div>
+
+      <div class="farrow"><svg width="22" height="10"><line x1="0" y1="5" x2="16" y2="5" stroke="#a0aabb" stroke-width="1.5"/><polygon points="15,2 22,5 15,8" fill="#a0aabb"/></svg></div>
+
+      <div class="fstage core">
+        <div class="sid">stage 2</div>
+        <div class="sname">IP Classification</div>
+        <div class="sclass">IPClassifierLight</div>
+        <div class="sout">classifications</div>
+        <div class="sbadge-row"><div class="sb api">API</div></div>
+      </div>
+
+      <div class="farrow"><svg width="22" height="10"><line x1="0" y1="5" x2="16" y2="5" stroke="#a0aabb" stroke-width="1.5"/><polygon points="15,2 22,5 15,8" fill="#a0aabb"/></svg></div>
+
+      <div class="fstage core">
+        <div class="sid">stage 3A</div>
+        <div class="sname">Proxy Chain Analysis</div>
+        <div class="sclass">ProxyChainTracer</div>
+        <div class="sout">proxy_chain · obfuscation_flags</div>
+      </div>
+
+    </div><!-- /ROW A -->
+
+    <!-- ROW B -->
+    <div class="frow">
+
+      <div class="fstage cond">
+        <div class="sid">post-3A · cond</div>
+        <div class="sname">VPN Backtracking</div>
+        <div class="sclass">RealIPBacktracker</div>
+        <div class="sout">backtracked_real_ip</div>
+        <div class="sbadge-row"><div class="sb cond">obfuscation detected</div></div>
+      </div>
+
+      <div class="farrow"><svg width="22" height="10"><line x1="0" y1="5" x2="16" y2="5" stroke="#a0aabb" stroke-width="1.5"/><polygon points="15,2 22,5 15,8" fill="#a0aabb"/></svg></div>
+
+      <div class="fstage cond">
+        <div class="sid">stage 3B</div>
+        <div class="sname">WHOIS / rDNS Enrichment</div>
+        <div class="sclass">IPEnrichmentStage3B</div>
+        <div class="sout">whois_data · rdns · hosting</div>
+        <div class="sbadge-row"><div class="sb api">API</div><div class="sb cond">--skip-enrichment</div></div>
+      </div>
+
+      <div class="fdash"><svg width="22" height="10"><line x1="0" y1="5" x2="16" y2="5" stroke="#e8b850" stroke-width="1.5" stroke-dasharray="3 3"/><polygon points="15,2 22,5 15,8" fill="#e8b850"/></svg></div>
+
+      <div class="fstage cond">
+        <div class="sid">stage 3C</div>
+        <div class="sname">Infra Correlation</div>
+        <div class="sclass">InfrastructureCorrelationEngine</div>
+        <div class="sout">infra_clusters</div>
+        <div class="sbadge-row"><div class="sb cond">requires 3B data</div></div>
+      </div>
+
+      <div class="fdash"><svg width="22" height="10"><line x1="0" y1="5" x2="16" y2="5" stroke="#e8b850" stroke-width="1.5" stroke-dasharray="3 3"/><polygon points="15,2 22,5 15,8" fill="#e8b850"/></svg></div>
+
+      <div class="fstage cond">
+        <div class="sid">stage 4</div>
+        <div class="sname">Threat Intelligence</div>
+        <div class="sclass">ThreatIntelligenceEngine</div>
+        <div class="sout">threat_intel_matches</div>
+        <div class="sbadge-row"><div class="sb api">API</div><div class="sb cond">requires 3B data</div></div>
+      </div>
+
+      <div class="farrow"><svg width="22" height="10"><line x1="0" y1="5" x2="16" y2="5" stroke="#a0aabb" stroke-width="1.5"/><polygon points="15,2 22,5 15,8" fill="#a0aabb"/></svg></div>
+
+      <!-- DUAL: Real IP -->
+      <div class="dual">
+        <div class="fstage opt" style="width:100%">
+          <div class="sid">real-ip · primary</div>
+          <div class="sname">Advanced Real IP</div>
+          <div class="sclass">AdvancedExtractor (11+ techniques)</div>
+          <div class="sout">real_ip_candidates</div>
+          <div class="sbadge-row"><div class="sb opt">if available</div></div>
+        </div>
+        <div class="fstage cond" style="width:100%">
+          <div class="sid">real-ip · fallback</div>
+          <div class="sname">Standard Real IP</div>
+          <div class="sclass">StandardExtractor (7 techniques)</div>
+          <div class="sout">real_ip_candidates</div>
+          <div class="sbadge-row"><div class="sb cond">fallback</div></div>
+        </div>
+      </div>
+
+      <div class="farrow"><svg width="22" height="10"><line x1="0" y1="5" x2="16" y2="5" stroke="#a0aabb" stroke-width="1.5"/><polygon points="15,2 22,5 15,8" fill="#a0aabb"/></svg></div>
+
+      <div class="fstage core">
+        <div class="sid">geo</div>
+        <div class="sname">Geolocation Enrichment</div>
+        <div class="sclass">GeolocationEnricher</div>
+        <div class="sout">geo_analysis</div>
+        <div class="sbadge-row"><div class="sb api">API</div></div>
+      </div>
+
+      <div class="fdash"><svg width="22" height="10"><line x1="0" y1="5" x2="16" y2="5" stroke="#e8b850" stroke-width="1.5" stroke-dasharray="3 3"/><polygon points="15,2 22,5 15,8" fill="#e8b850"/></svg></div>
+
+      <div class="fstage opt">
+        <div class="sid">active</div>
+        <div class="sname">Active Analysis</div>
+        <div class="sclass">ActiveAnalysisPipeline</div>
+        <div class="sout">active_signals · rtt_geo</div>
+        <div class="sbadge-row"><div class="sb opt">opt-in only</div><div class="sb api">API</div></div>
+      </div>
+
+      <div class="farrow"><svg width="22" height="10"><line x1="0" y1="5" x2="16" y2="5" stroke="#a0aabb" stroke-width="1.5"/><polygon points="15,2 22,5 15,8" fill="#a0aabb"/></svg></div>
+
+      <!-- CONFIDENCE GATE -->
+      <div style="flex-shrink:0;width:168px">
+        <div class="gate">
+          <div class="sid">final · attribution</div>
+          <div class="sname" style="color:var(--cyan)">Bayesian Attribution</div>
+          <div class="sclass">AttributionEngine.attribute()</div>
+          <div class="sout">bayesian_attribution</div>
+          <div class="sbadge-row"><div class="sb act">active layer</div></div>
+          <div class="gate-bar"><div class="gate-fill"></div></div>
+          <div class="gate-labels"><span>low</span><span>posterior</span><span>high</span></div>
+        </div>
+      </div>
+
+      <div class="farrow"><svg width="22" height="10"><line x1="0" y1="5" x2="16" y2="5" stroke="#a0aabb" stroke-width="1.5"/><polygon points="15,2 22,5 15,8" fill="#a0aabb"/></svg></div>
+
+      <div class="fstage out">
+        <div class="sid">output</div>
+        <div class="sname">Result &amp; Reports</div>
+        <div class="sclass">CompletePipelineResult</div>
+        <div class="sout">text_report · json_report</div>
+      </div>
+
+    </div><!-- /ROW B -->
+
+    <!-- LEGACY NOTE -->
+    <div class="legacy-note">
+      <div class="sb dead">Legacy</div>
+      <span style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--red)">stage5_attribution_analysis — legacy JSON key only; not executed in CompletePipeline.run(). Bayesian layer is authoritative.</span>
+    </div>
+
+  </div>
+</div><!-- /lane 1 -->
+
+<!-- ══════════════════════════════════════════════
+     LANE 2: CAMPAIGN / V3 ORCHESTRATION
+══════════════════════════════════════════════ -->
+<div class="lane">
+  <div class="sec-hdr">
+    <div class="sec-icon">⬡</div>
+    <div class="sec-title">Campaign / V3 Orchestration</div>
+    <div class="sec-sub">· HunterTraceV3 · Batch Mode — second-order analysis across N emails</div>
+  </div>
+
+  <div style="padding:14px 16px;overflow-x:auto;background:var(--s1)">
+    <div style="display:flex;align-items:stretch;gap:0;flex-wrap:nowrap">
+
+      <div class="cstage core" style="max-width:130px;border-left-color:var(--red);background:var(--red-bg)">
+        <div class="sid">entry</div>
+        <div class="sname">Batch Input</div>
+        <div class="sclass">N × .eml files</div>
+        <div class="sout amber">email_corpus</div>
+      </div>
+
+      <div class="carrow"><svg width="22" height="10"><line x1="0" y1="5" x2="16" y2="5" stroke="#a0aabb" stroke-width="1.5"/><polygon points="15,2 22,5 15,8" fill="#a0aabb"/></svg></div>
+
+      <div class="per-email-block">
+        <div class="sid">per-email · ×N</div>
+        <div class="sname" style="font-size:10px;color:var(--cyan)">CompletePipeline</div>
+        <div class="sclass" style="font-size:8px">↳ all stages above, per email</div>
+        <div class="sout">pipeline_results[]</div>
+        <div style="position:absolute;bottom:6px;right:8px;font-family:'IBM Plex Mono',monospace;font-size:20px;color:var(--cyan);opacity:.15;font-weight:700">×N</div>
+      </div>
+
+      <div class="carrow"><svg width="22" height="10"><line x1="0" y1="5" x2="16" y2="5" stroke="#a0aabb" stroke-width="1.5"/><polygon points="15,2 22,5 15,8" fill="#a0aabb"/></svg></div>
+
+      <div class="cstage core">
+        <div class="sid">step 1</div>
+        <div class="sname">Campaign Correlation</div>
+        <div class="sclass">CampaignCorrelator</div>
+        <div class="sout">campaign_clusters</div>
+      </div>
+
+      <div class="carrow"><svg width="22" height="10"><line x1="0" y1="5" x2="16" y2="5" stroke="#a0aabb" stroke-width="1.5"/><polygon points="15,2 22,5 15,8" fill="#a0aabb"/></svg></div>
+
+      <div class="cstage core">
+        <div class="sid">step 2</div>
+        <div class="sname">Actor Profiling</div>
+        <div class="sclass">ActorProfiler</div>
+        <div class="sout">actor_profiles</div>
+      </div>
+
+      <div class="carrow"><svg width="22" height="10"><line x1="0" y1="5" x2="16" y2="5" stroke="#a0aabb" stroke-width="1.5"/><polygon points="15,2 22,5 15,8" fill="#a0aabb"/></svg></div>
+
+      <!-- Actor-level Bayesian gate -->
+      <div style="flex-shrink:0;width:160px">
+        <div class="gate" style="border-color:var(--cyan-border)">
+          <div class="sid">step 2.5</div>
+          <div class="sname" style="color:var(--cyan)">Actor-Level Bayesian</div>
+          <div class="sclass">AttributionEngine (aggregated)</div>
+          <div class="sout">actor_attribution</div>
+          <div class="sbadge-row"><div class="sb act">active layer</div></div>
+          <div class="gate-bar"><div class="gate-fill" style="width:85%"></div></div>
+          <div class="gate-labels"><span>low</span><span>actor posterior</span><span>high</span></div>
+        </div>
+      </div>
+
+      <div class="carrow"><svg width="22" height="10"><line x1="0" y1="5" x2="16" y2="5" stroke="#a0aabb" stroke-width="1.5"/><polygon points="15,2 22,5 15,8" fill="#a0aabb"/></svg></div>
+
+      <div class="cstage core">
+        <div class="sid">step 3</div>
+        <div class="sname">Attack Graph Build</div>
+        <div class="sclass">AttackGraphBuilder</div>
+        <div class="sout">attack_graph</div>
+      </div>
+
+      <div class="carrow"><svg width="22" height="10"><line x1="0" y1="5" x2="16" y2="5" stroke="#a0aabb" stroke-width="1.5"/><polygon points="15,2 22,5 15,8" fill="#a0aabb"/></svg></div>
+
+      <div class="cstage core">
+        <div class="sid">step 4</div>
+        <div class="sname">MITRE ATT&amp;CK Mapping</div>
+        <div class="sclass">MitreMapper</div>
+        <div class="sout">mitre_layer</div>
+      </div>
+
+      <div class="carrow"><svg width="22" height="10"><line x1="0" y1="5" x2="16" y2="5" stroke="#a0aabb" stroke-width="1.5"/><polygon points="15,2 22,5 15,8" fill="#a0aabb"/></svg></div>
+
+      <div class="cstage out">
+        <div class="sid">step 5</div>
+        <div class="sname">Write Outputs</div>
+        <div class="sclass">v3_*.json / .html / .graphml</div>
+        <div class="sout">5 output files</div>
+      </div>
+
+    </div>
+  </div>
+</div><!-- /lane 2 -->
+
+<!-- ══════════════════════════════════════════════
+     DATA ARTIFACTS
+══════════════════════════════════════════════ -->
+<div class="art-zone">
+  <div class="art-hdr">
+    <div style="font-size:12px;color:var(--green)">◈</div>
+    <div class="art-title">Data Artifacts</div>
+    <div style="font-size:10px;color:var(--muted);margin-left:8px">· Major output objects &amp; files</div>
+  </div>
+  <div class="art-grid">
+
+    <div class="art-card">
+      <div class="art-name">json_report (CompletePipelineReport)</div>
+      <div class="art-keys">
+        <div class="ak">stage1_header_extraction</div>
+        <div class="ak">stage2_ip_classification</div>
+        <div class="ak">stage3a_proxy_chain</div>
+        <div class="ak">stage3b_whois_enrichment</div>
+        <div class="ak">stage3c_infrastructure_correlation</div>
+        <div class="ak">stage4_threat_intelligence</div>
+        <div class="ak">geolocation_analysis</div>
+        <div class="ak">real_ip_extraction</div>
+        <div class="ak dead">stage5_attribution_analysis (legacy)</div>
+      </div>
+    </div>
+
+    <div class="art-card">
+      <div class="art-name">text_report (CompletePipelineReport)</div>
+      <div class="art-keys">
+        <div class="ak">human-readable attribution summary</div>
+        <div class="ak">primary_region + posterior</div>
+        <div class="ak">ACI-adjusted confidence tier</div>
+        <div class="ak">false-flag warning</div>
+        <div class="ak">signal provenance</div>
+      </div>
+    </div>
+
+    <div class="art-card v3">
+      <div class="art-name">v3_correlation_&lt;ts&gt;.json</div>
+      <div class="art-keys">
+        <div class="ak">campaign cluster assignments</div>
+        <div class="ak">shared infrastructure links</div>
+      </div>
+    </div>
+
+    <div class="art-card v3">
+      <div class="art-name">v3_actor_profiles_&lt;ts&gt;.json</div>
+      <div class="art-keys">
+        <div class="ak">actor TTPs &amp; obfuscation flags</div>
+        <div class="ak">aggregated attribution signals</div>
+      </div>
+    </div>
+
+    <div class="art-card v3">
+      <div class="art-name">v3_mitre_layer_&lt;ts&gt;.json</div>
+      <div class="art-keys">
+        <div class="ak">ATT&amp;CK technique IDs</div>
+        <div class="ak">tactic-to-stage mapping</div>
+      </div>
+    </div>
+
+    <div class="art-card v3">
+      <div class="art-name">v3_attack_graph_&lt;ts&gt; (.html / .json / .graphml)</div>
+      <div class="art-keys">
+        <div class="ak">interactive attack graph (html)</div>
+        <div class="ak">machine-readable graph (json)</div>
+        <div class="ak">network exchange format (graphml)</div>
+      </div>
+    </div>
+
+    <div class="art-card v3">
+      <div class="art-name">v3_attribution_&lt;ts&gt;.json</div>
+      <div class="art-keys">
+        <div class="ak">actor-level Bayesian posteriors</div>
+        <div class="ak">confidence tier + false-flag signals</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</div><!-- /board -->
+</div><!-- /wrap -->
+</body>
+</html>

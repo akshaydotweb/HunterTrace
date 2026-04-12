@@ -183,6 +183,12 @@ def load_runtime_config(
         "min_supporting_signals": 2,
         "min_contributing_groups": 2,
         "min_distinct_supporting_groups": 2,
+        "min_signal_count_for_confidence": 2,
+        "anonymization_high_threshold": 0.75,
+        "contradiction_penalty": 0.5,
+        "clean_case_floor": 0.75,
+        "minimum_evidence_cap": 0.35,
+        "anonymization_cap": 0.4,
     }
     logging_defaults: Dict[str, Any] = {
         "enabled": True,
