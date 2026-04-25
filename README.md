@@ -116,6 +116,28 @@ huntertrace analyze path/to/message.eml
 
 Verbose mode:
 
+The HunterTrace pipeline is modeled in two complementary views:
+
+- **Single Email Pipeline**: end-to-end analysis for one `.eml` sample
+- **Campaign Intelligence Pipeline**: cross-email correlation and actor-level attribution
+
+### Single Email Pipeline
+
+![HunterTrace Single Email Architecture](assets/design/huntertrace-single-email-container.svg)
+
+Source: [assets/design/huntertrace-single-email-container.svg](assets/design/huntertrace-single-email-container.svg)
+
+### Campaign Intelligence Pipeline
+
+![HunterTrace Campaign Architecture](assets/design/huntertrace-campaign-container.svg)
+
+Source: [assets/design/huntertrace-campaign-container.svg](assets/design/huntertrace-campaign-container.svg)
+
+
+
+## Quick Start
+
+### Installation
 ```bash
 huntertrace analyze path/to/message.eml -v
 ```
@@ -133,7 +155,6 @@ huntertrace analyze path/to/message.eml
 
   HUNTERTRACE vX.Y.Z
 [START] Complete Attacker IP Identification Pipeline
-================================================================================
 
 [STAGE 1] Extracting email headers...
 [SUCCESS] Found <N> hops in email chain
