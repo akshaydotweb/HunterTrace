@@ -57,6 +57,6 @@ samples/
 output/
 docs/
 demo/
-design/*.html
 
 archive/
+design/*.html
